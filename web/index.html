@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="escritorio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Quest</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/themes.css">
+<link rel="stylesheet" href="/css/layout.css">
+<link rel="stylesheet" href="/css/scene.css">
+<script type="module" src="/js/main.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">⚔️</span><span>Agent Quest</span></div>
+  <div class="sess" id="session-info" hidden>
+    <select class="sess-select" id="session-select" aria-label="Sessão exibida"></select>
+  </div>
+  <div class="session" id="stats" role="group" aria-label="Resumo da sessão"></div>
+  <div class="top-actions">
+    <div id="conn" role="status" aria-label="Conexão"></div>
+    <div class="seg" id="theme-toggle" role="group" aria-label="Tema"></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="card party" id="party" aria-labelledby="party-title"></aside>
+
+  <section class="center" aria-label="Ticket e cena">
+    <div id="quest-slot"></div>
+    <div class="card scene-card">
+      <div class="scene" id="scene"></div>
+    </div>
+  </section>
+
+  <aside class="card feed" id="feed" aria-labelledby="feed-title"></aside>
+</main>
+
+<p class="foot">Roda 100% local, sem internet · atalhos: <kbd>1</kbd> <kbd>2</kbd> tema, <kbd>T</kbd> alterna</p>
+<noscript><p class="foot">O painel precisa de JavaScript ligado no navegador.</p></noscript>
+</body>
+</html>

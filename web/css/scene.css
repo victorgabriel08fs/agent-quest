@@ -1,0 +1,155 @@
+/* Cena (T12a, estática): salas, tokens, balões e "+N", portados de
+   mockups/painel.css. Animações, caminhada até a copa, bugs e estados do T8
+   chegam no T12b.
+
+   Os tokens ficam dentro da sala, na vaga (data-slot) e no arranjo
+   (data-layout) decididos por web/js/scene.js. A sala é um container, e o
+   tamanho real dela ajusta o arranjo (container queries), sem medir nada por
+   JS. test/e2e/scene-geometry.spec.js confere que balões não cobrem
+   retratos, outros balões, o nome da sala nem a borda. */
+
+.scene-card { padding: 10px; }
+/* width: 100% é necessário: com largura automática, o navegador transfere o
+   min-height pelo aspect-ratio para uma largura mínima (~604 px) e a cena passa
+   por baixo do feed em telas de 1280 px. Com largura definida, quem cede é a
+   proporção. */
+.scene {
+  position: relative; width: 100%; min-width: 0;
+  aspect-ratio: 16 / 9; min-height: 340px; max-height: 540px; overflow: hidden;
+  background: var(--scene-bg); border-radius: 12px;
+}
+.loop { position: absolute; top: 26%; right: 17.3%; bottom: 26%; left: 17.3%; border: 3px dotted var(--path); border-radius: 22px; }
+:root[data-theme="guilda"] .loop { border-style: dashed; border-width: 4px; }
+
+/* ===== Salas ===== */
+.rooms {
+  position: absolute; inset: 0;
+  display: grid; gap: 18px 22px; padding: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-template-areas: "hq design dev" "idle docs test";
+}
+.room[data-room="hq"] { grid-area: hq; }
+.room[data-room="design"] { grid-area: design; }
+.room[data-room="dev"] { grid-area: dev; }
+.room[data-room="idle"] { grid-area: idle; --agent: var(--c-idle); }
+.room[data-room="docs"] { grid-area: docs; }
+.room[data-room="test"] { grid-area: test; }
+.room { position: relative; min-width: 0; border-radius: 14px; container: room / size; }
+:root[data-theme="escritorio"] .room {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--agent) 8%, var(--room-base)), var(--room-base) 65%);
+  border: 1px solid color-mix(in srgb, var(--agent) 20%, var(--border));
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 12px 24px -16px rgba(16, 24, 40, .25);
+}
+:root[data-theme="guilda"] .room {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--agent) 12%, var(--room-base)), var(--room-base) 70%);
+  border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--agent) 35%, transparent), 0 16px 30px -18px rgba(0, 0, 0, .9);
+}
+:root[data-theme] .room.active {
+  border-color: color-mix(in srgb, var(--agent) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--agent) 22%, transparent), 0 16px 36px -14px color-mix(in srgb, var(--agent) 60%, transparent);
+}
+.room-label { position: absolute; top: 10px; right: 50px; left: 12px; display: flex; align-items: center; gap: 7px; overflow: hidden; font-size: 11.5px; font-weight: 650; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; }
+:root[data-theme="guilda"] .room-label { font-family: var(--title-font); font-size: 13px; letter-spacing: .02em; }
+.ri { display: grid; flex: none; place-items: center; width: 24px; height: 24px; font-size: 13px; border-radius: 8px; background: color-mix(in srgb, var(--agent) 16%, transparent); }
+.deco { position: absolute; right: 12px; font-size: 18px; opacity: .5; pointer-events: none; }
+.deco.d1 { top: 9px; }
+.deco.d2 { bottom: 9px; }
+.room[data-room="idle"] .deco.d2 { top: 44%; right: auto; bottom: auto; left: 50%; font-size: 22px; opacity: .65; transform: translate(-50%, -50%); }
+/* "+N" no canto de cima, no lugar da primeira decoração, longe das vagas. */
+.room-more { position: absolute; top: 9px; right: 10px; z-index: 4; padding: 1px 8px; font-size: 11px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; }
+
+/* ===== Tokens =====
+   Três arranjos (data-layout), pensados para as salas de 1280 px (cerca de
+   150 x 143 px) até as de 1920 px:
+   - single: um token na sala de trabalho. Visual do mockup (balão acima do
+     retrato, nome abaixo), ancorado no rodapé para o balão não chegar ao nome
+     da sala; em sala baixa, retrato menor e balão de uma linha.
+   - rows: dois ou três tokens. Uma linha por token, com o balão ao lado do
+     retrato, abaixo do nome da sala: nada se cobre e cada balão fica junto do
+     seu retrato.
+   - lanes: a copa (sem balões). Retratos em fila no rodapé, nome cortado na
+     largura da vaga.
+   Em sala estreita (celular), as linhas viram fila de retratos, sem balão nem
+   nome; o cartão da equipe tem a ação de cada um. */
+.token {
+  --av: 46px;
+  position: absolute; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  max-width: calc(100cqw - 16px);
+}
+.token.waiting { z-index: 3; }
+.tok-av { position: relative; display: grid; flex: none; place-items: center; width: var(--av); height: var(--av); font-size: calc(var(--av) * .48); background: var(--surface); border: max(2px, calc(var(--av) / 16)) solid var(--agent); border-radius: 50%; box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--agent) 80%, transparent); }
+.token.idle .tok-av { filter: saturate(.7); }
+.tok-name { max-width: 100%; overflow: hidden; padding: 2px 8px; font-size: 10.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; box-shadow: 0 2px 6px -2px rgba(0, 0, 0, .2); }
+.bubble {
+  position: absolute; bottom: calc(100% + 8px); left: 50%;
+  width: max-content; max-width: min(184px, calc(100cqw - 16px)); padding: 6px 10px;
+  font-size: 11.5px; font-weight: 550; line-height: 1.3;
+  color: var(--bubble-fg); background: var(--bubble-bg); border-radius: 10px;
+  box-shadow: 0 10px 24px -10px rgba(0, 0, 0, .45);
+  transform: translateX(-50%);
+}
+.bubble::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border: 6px solid transparent; border-top-color: var(--bubble-bg); }
+.bubble-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* single */
+.room[data-layout="single"] .token { left: 50%; bottom: 8px; transform: translateX(-50%); }
+
+/* rows */
+.room[data-layout="rows"] .token { --av: 28px; left: 8px; right: 8px; max-width: none; flex-direction: row; gap: 7px; }
+.room[data-layout="rows"] .token[data-slot="0"] { top: 38px; }
+.room[data-layout="rows"] .token[data-slot="1"] { top: 70px; }
+.room[data-layout="rows"] .token[data-slot="2"] { top: 102px; }
+.room[data-layout="rows"] .tok-av { order: -1; }
+.room[data-layout="rows"] .tok-name { display: none; }
+.room[data-layout="rows"] .token.idle .tok-name { display: block; }
+.room[data-layout="rows"] .bubble { position: relative; bottom: auto; left: auto; flex: 0 1 auto; min-width: 0; max-width: none; padding: 4px 8px; font-size: 10.5px; transform: none; }
+.room[data-layout="rows"] .bubble::after { top: 50%; right: 100%; left: auto; margin: -5px 0 0; border-width: 5px; border-color: transparent; border-right-color: var(--bubble-bg); }
+.room[data-layout="rows"] .bubble-text { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.room[data-layout="rows"] .deco.d2 { display: none; }
+
+/* lanes */
+.room[data-layout="lanes"] .token { --av: 36px; bottom: 8px; transform: translateX(-50%); }
+.room[data-layout="lanes"][data-count="1"] .token { left: 50%; }
+.room[data-layout="lanes"][data-count="2"] .token { max-width: calc(50cqw - 8px); }
+.room[data-layout="lanes"][data-count="2"] .token[data-slot="0"] { left: 27%; }
+.room[data-layout="lanes"][data-count="2"] .token[data-slot="1"] { left: 73%; }
+.room[data-layout="lanes"][data-count="3"] .token { max-width: calc(33cqw - 6px); }
+.room[data-layout="lanes"][data-count="3"] .token[data-slot="0"] { left: 18%; }
+.room[data-layout="lanes"][data-count="3"] .token[data-slot="1"] { left: 50%; }
+.room[data-layout="lanes"][data-count="3"] .token[data-slot="2"] { left: 82%; }
+
+/* Sala baixa (1280 a 1440 px): retrato menor e balão de uma linha. */
+@container room (max-height: 179px) {
+  .room[data-layout="single"] .token { --av: 38px; }
+  .room[data-layout="single"] .bubble { padding: 5px 9px; font-size: 11px; }
+  .room[data-layout="single"] .bubble-text { -webkit-line-clamp: 1; }
+}
+/* Sala muito baixa (celular): sem o nome abaixo do retrato, para o balão caber. */
+@container room (max-height: 129px) {
+  .room[data-layout="single"] .token { --av: 30px; }
+  .room[data-layout="single"] .tok-name { display: none; }
+  .room[data-layout="single"] .bubble { padding: 4px 8px; font-size: 10.5px; }
+}
+/* Sala estreita (celular): linhas viram fila de retratos, sem balão nem nome. */
+@container room (max-width: 139px) {
+  .room[data-layout="rows"] .token { --av: 30px; right: auto; bottom: 8px; flex-direction: column; transform: translateX(-50%); }
+  .room[data-layout="rows"] .token[data-slot] { top: auto; }
+  .room[data-layout="rows"][data-count="2"] .token[data-slot="0"] { left: 27%; }
+  .room[data-layout="rows"][data-count="2"] .token[data-slot="1"] { left: 73%; }
+  .room[data-layout="rows"][data-count="3"] .token[data-slot="0"] { left: 18%; }
+  .room[data-layout="rows"][data-count="3"] .token[data-slot="1"] { left: 50%; }
+  .room[data-layout="rows"][data-count="3"] .token[data-slot="2"] { left: 82%; }
+  .room[data-layout="rows"] .token .bubble, .room[data-layout="rows"] .token .tok-name { display: none; }
+  .room[data-layout="lanes"] .token { --av: 30px; }
+  .room[data-layout="lanes"] .token .tok-name { display: none; }
+}
+
+/* ===== Responsivo ===== */
+@media (max-width: 640px) {
+  .scene { aspect-ratio: 3 / 4; min-height: 0; }
+  .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); grid-template-areas: "hq design" "dev test" "idle docs"; gap: 12px; padding: 12px; }
+  .loop, .deco { display: none; }
+}

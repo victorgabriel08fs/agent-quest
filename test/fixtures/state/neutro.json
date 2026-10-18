@@ -1,0 +1,67 @@
+{
+  "seq": 1,
+  "sessions": [
+    {
+      "id": "0b1c2d3e-0000-4000-8000-000000000001",
+      "project": {
+        "key": "d:/projetos/agents-quest",
+        "name": "agents-quest",
+        "dir": "D:\\projetos\\agents-quest"
+      },
+      "label": "Sessão 0b1c2d",
+      "client": null,
+      "status": "idle",
+      "startedAt": 1792342800000,
+      "lastEventAt": 1792342801500,
+      "agents": [
+        {
+          "key": "main",
+          "agentId": null,
+          "agentType": null,
+          "role": "orq",
+          "label": "",
+          "status": "idle",
+          "finished": false,
+          "background": false,
+          "parentKey": null,
+          "activity": null,
+          "waitingFor": null,
+          "health": {
+            "ok": 0,
+            "total": 0
+          },
+          "context": null,
+          "startedAt": 1792342800000,
+          "lastEventAt": 1792342801500
+        }
+      ],
+      "roster": [
+        "orq"
+      ],
+      "quest": null,
+      "counters": {
+        "questsDone": 0,
+        "bugsCrushed": 0,
+        "pendingApprovals": 0
+      },
+      "bugs": {
+        "open": 0,
+        "lastRun": null
+      },
+      "feed": [
+        {
+          "id": "n0rt1:1",
+          "seq": 1,
+          "ts": 1792342800000,
+          "sessionId": "0b1c2d3e-0000-4000-8000-000000000001",
+          "agentKey": null,
+          "kind": "session.started",
+          "data": {
+            "source": "startup",
+            "projectName": "agents-quest"
+          }
+        }
+      ]
+    }
+  ]
+}

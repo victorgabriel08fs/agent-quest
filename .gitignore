@@ -4,6 +4,10 @@ dist/
 build/
 coverage/
 
+# saídas do Playwright (npm run test:e2e)
+test-results/
+playwright-report/
+
 # dados locais do Agent Quest (eventos capturados podem conter código e segredos)
 data/
 *.sqlite
