@@ -60,3 +60,7 @@ Ficam de fora: `MessageDisplay` (síncrono e carrega o texto do assistente), `Po
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. A confirmação do V10 no T0 (hooks assíncronos sem bloqueio, sem aviso e sem janela de console piscando, no terminal e no VS Code) é condição para o usuário instalar a captura no marco "Primeira luz" (`docs/plano/v1.md`, G0a). Se o V10 for refutado, esta ADR é reaberta com o usuário antes de qualquer instalação.
+
+## Complemento de 18/10/2026: teto do corpo e unidades
+
+O passo 1 da decisão ("corta strings longas") ganhou um teto: o corpo enviado nunca passa de 1 000 000 bytes, com até três passos genéricos de redução, sem o encaminhador saber o que o normalizador usa. Os cortes contam unidades UTF-16. Detalhes na seção 1 do modelo de eventos ("Unidades no encaminhador" e "Teto do corpo"). Motivo: um payload com muitas strings menores passava de 1 MiB, recebia 413 e o evento se perdia, depois de até 270 ms enviando cerca de 10 MiB.

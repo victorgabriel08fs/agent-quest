@@ -30,3 +30,7 @@ O painel só recebe dados. As ações de quem observa (tema, sessão escolhida, 
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. O plano entrega o SSE em duas partes: T9a (`hello`, `snapshot`, `update`, `session-removed`, heartbeat e limite de clientes; toda conexão recebe `snapshot`) e T9b (retomada por `Last-Event-ID` e desconexão de cliente lento). Mandar `snapshot` numa reconexão já é um comportamento previsto nesta decisão (id de outra execução ou fora do buffer), então o contrato não muda entre as duas partes.
+
+## Complemento de 18/10/2026: numeração contínua
+
+O `seq` é contínuo. Cada `update`, com ou sem evento, e cada `session-removed` recebe exatamente o anterior + 1 dentro do mesmo `runId`, e qualquer salto é lacuna para o cliente. Detalhes na seção 9 do modelo de eventos ("Numeração"). O hub só repassa o `seq`, e quem numera é a ligação de ponta a ponta do servidor.

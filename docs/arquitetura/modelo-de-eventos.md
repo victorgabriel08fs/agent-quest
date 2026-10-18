@@ -33,6 +33,18 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 - `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos.
 - `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado.
+- **Unidades no encaminhador** (definidas em 18/10/2026):
+  - os cortes de string contam **unidades UTF-16** (`String.length`): "4 KiB" quer dizer 4096 unidades, e o `N` do marcador também conta unidades;
+  - um corte nunca parte um par de surrogates: se cair no meio, recua uma unidade;
+  - o teto do corpo (abaixo) conta **bytes UTF-8**, porque é a unidade do limite de 1 MiB do servidor.
+
+  Esta é uma exceção deliberada à definição de caractere da seção 10 (ponto de código, `charLength`), que vale para textos exibidos. O encaminhador precisa ser barato com stdin de até 16 MiB, e contar pontos de código nesse tamanho custaria caro. Como os limites exibidos são bem menores e recontados no servidor, a diferença não aparece no painel.
+- **Teto do corpo** (definido em 18/10/2026). O corte por string não basta quando o payload tem muitas strings menores, como um Glob com milhares de arquivos: o envelope passava de 1 MiB, recebia 413 e o evento se perdia, depois de 170 a 270 ms enviando cerca de 10 MiB. O encaminhador garante um corpo de no máximo 1 000 000 bytes, em até três passos, parando no primeiro que couber:
+  1. o corte normal de 4096 unidades;
+  2. strings acima de 512 unidades viram 128 do início + 384 do fim, com o mesmo marcador, e listas com mais de 100 itens ficam com os 100 primeiros;
+  3. envelope mínimo: o `payload` mantém só os valores simples (texto, número, booleano, `null`) do primeiro nível e os valores simples de `tool_input`, com textos de até 512 unidades. Listas e objetos aninhados saem; `session_id` e `hook_event_name` ficam sempre.
+
+  Em qualquer passo além do primeiro, `truncated` é `true`. O encaminhador continua sem saber o que o normalizador usa: os passos são genéricos. Perda aceita no passo 3: um Stop gigante perde `background_tasks`, e o reducer trata como Stop sem tarefas.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.
 - Fila cheia não gera resposta de erro. O envelope é aceito com 204, e a fila descarta o item mais antigo e conta `dropped` (alinhado em 18/10/2026; a versão anterior desta seção citava um 429 que nunca é emitido).
 - Corpo grande: recusas pelos cabeçalhos (401, 403, 415) respondem sem ler o corpo. Com token válido, um corpo acima de 1 MiB é lido e descartado até 16 MiB, o mesmo teto do stdin do encaminhador, e depois recebe 413, para o cliente ver o status em vez de uma conexão cortada. Com `Content-Length` acima de 16 MiB, a resposta 413 sai na hora, com `Connection: close`. Se o corpo passar de 16 MiB sem ter declarado isso, a conexão é encerrada sem resposta.
@@ -92,7 +104,7 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 /**
  * @typedef {object} CanonicalEvent
  * @property {string} id        `${runId}:${seq}`
- * @property {number} seq       crescente dentro de uma execução do servidor
+ * @property {number} seq       o seq do `update` que leva o evento (contínuo; ver "Numeração", seção 9)
  * @property {number} ts        ms desde a época (sentAt do encaminhador; se faltar, a hora de chegada)
  * @property {string} sessionId
  * @property {string|null} agentKey   'main', um agent_id, ou null (evento da sessão)
@@ -295,8 +307,17 @@ data: {"seq":1236,"sessionId":"…"}
 ```
 
 - Na conexão: `hello`, depois as atualizações que faltaram (se `Last-Event-ID` for desta execução e estiver no buffer de 1000) ou um `snapshot`.
-- `update` com `event: null` carrega só mudança de estado (por exemplo, a correção de um elo de delegação).
-- O cliente ignora `seq` repetido ou menor e, se notar lacuna, busca `GET /api/state`.
+- `update` com `event: null` carrega só mudança de estado (por exemplo, a correção de um elo de delegação ou uma mudança feita pelo `tick`).
+- **Numeração** (explicitada em 18/10/2026):
+  - Cada mensagem que muda estado, ou seja `update` (com ou sem evento) e `session-removed`, recebe exatamente o `seq` anterior + 1 dentro do mesmo `runId`.
+  - `hello` e `snapshot` levam o `seq` atual, sem incrementar. O heartbeat não tem `seq`.
+  - O `seq` e o `id` de um evento canônico são os do `update` que o leva.
+  - Quem numera é a ligação de ponta a ponta do servidor (fechamento do T9a). O hub (`server/http/sse.js`) recebe o `seq` pronto.
+- **Cliente:**
+  - `seq` menor ou igual ao último aplicado: ignora;
+  - igual ao último + 1: aplica;
+  - maior que o último + 1: é lacuna, e o cliente busca `GET /api/state`;
+  - um `hello` com outro `runId` (servidor reiniciado) zera a expectativa, e o `snapshot` seguinte substitui tudo.
 - Heartbeat: linha de comentário `: ping` a cada 15 s.
 
 ### Estado da sessão
@@ -454,7 +475,7 @@ Exportações:
 |---|---|
 | `redact(text) → string` | Aplica as etapas abaixo. Entrada que não é texto vira `''`; falha interna devolve só `•••`. |
 | `redactAndCut(text, max) → string` | Redige e corta para no máximo `max` caracteres, contando o `…` final. É a única função de corte de textos exibidos: o normalizador e o `sanitize.mjs` usam esta, nenhum outro corte. |
-| `charLength(text) → number` | Quantidade de caracteres. É a única definição de "caractere" para todos os limites do projeto: os da tabela acima, os 200 do teste de campos proibidos e a conferência dos cenários. |
+| `charLength(text) → number` | Quantidade de caracteres. É a única definição de "caractere" para todos os limites do projeto: os da tabela acima, os 200 do teste de campos proibidos e a conferência dos cenários. A única exceção é o corte de transporte do encaminhador, que conta unidades UTF-16 (seção 1). |
 | `isSensitiveName(name) → boolean` | Exportada só para os testes. Não faz parte do contrato com outros módulos. |
 
 **Caractere** é um ponto de código Unicode (`Array.from(text).length`). Um par de surrogates nunca é partido.

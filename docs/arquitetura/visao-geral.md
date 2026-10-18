@@ -67,9 +67,17 @@ export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] s
 export function tick(state, now) {}          // → { events, changed, removed }
 
 // web/js/store.js
-export function applySnapshot(store, snapshot) {}
-export function applyUpdate(store, update) {}   // → 'ok' | 'ignored' | 'gap'
-export function removeSession(store, sessionId) {}
+export function createStore() {}
+export function applyHello(store, hello) {}               // → true se o runId mudou (servidor reiniciado)
+export function applySnapshot(store, snapshot) {}         // → true se aplicou
+export function applyUpdate(store, update) {}             // → 'ok' | 'ignored' | 'gap' (numeração: modelo de eventos, seção 9)
+export function applySessionRemoved(store, message) {}    // → 'ok' | 'ignored' | 'gap', mesmas regras de seq do update
+export function removeSession(store, sessionId) {}        // → true se a sessão existia
+
+// web/js/connection.js — selo de conexão:
+//   'connecting' (conectando: antes de a primeira conexão abrir) | 'live' (ao vivo)
+//   | 'reconnecting' (reconectando: o EventSource tenta de novo sozinho)
+//   | 'offline' (desconectado: a conexão fechou de vez, por exemplo com 503)
 ```
 
 ## Decisões
@@ -94,7 +102,7 @@ export function removeSession(store, sessionId) {}
 | Servidor desligado | Sem `runtime.json`, o encaminhador sai em cerca de 60 ms. O Claude Code nem espera (async) e nada aparece para o usuário. |
 | Servidor caiu sem apagar `runtime.json` (inclui o Ctrl+C e os reinícios do `npm run dev` no Windows, em que o `node --watch` encerra o processo à força) | O encaminhador vê o `pid` morto e sai; o próximo início substitui o arquivo. Se o pid tiver sido reaproveitado, a conexão é recusada em menos de 3 ms (medido). |
 | Servidor travado (aceita e não responde) | O encaminhador desiste em 1 s e se encerra em até 2 s; o Claude Code continua sem esperar. |
-| Payload grande ou malformado | Strings longas já chegam cortadas; corpo acima de 1 MiB recebe 413; envelope inválido, 400. Contadores em `/api/health`. |
+| Payload grande ou malformado | Strings longas já chegam cortadas, e o encaminhador reduz o envelope até caber em 1 000 000 bytes; corpo acima de 1 MiB recebe 413; envelope inválido, 400. Contadores em `/api/health`. |
 | Eventos fora de ordem | Regras do reducer (`modelo-de-eventos.md`, seção 8). |
 | Eventos duplicados | Descartados por hash do payload em uma janela de 5 s. |
 | Evento perdido (Esc sem Stop, processo encerrado) | Próximo pedido, `idle_prompt`, SessionEnd ou 15 min sem eventos fecham o ticket e liberam os agentes. |
@@ -121,7 +129,7 @@ export function removeSession(store, sessionId) {}
 |---|---|
 | Porta | 47821 (`--port`, `AGENT_QUEST_PORT` ou `config.json`). Aceita 0 (porta livre escolhida pelo sistema, usada nos testes) ou um inteiro de 1024 a 65535; de 1 a 1023, ou valor que não seja inteiro, o servidor sai com erro claro. O `runtime.json` sempre grava a porta real em uso, nunca 0, porque o encaminhador só aceita de 1024 a 65535 (T4) |
 | Diretório de dados | `%LOCALAPPDATA%\agent-quest\` (`AGENT_QUEST_HOME` sobrescreve). No uso normal, não definir `AGENT_QUEST_HOME`: o encaminhador roda no ambiente do Claude Code e só acha o servidor se a variável for igual nos dois lados (ADR 0005, complemento) |
-| Encaminhador | prazo de 2 s; POST com timeout de 1 s; stdin até 16 MiB; strings acima de 4 KiB viram 1 KiB do início + 3 KiB do fim |
+| Encaminhador | prazo de 2 s; POST com timeout de 1 s; stdin até 16 MiB; strings acima de 4096 unidades UTF-16 viram 1024 do início + 3072 do fim; corpo de no máximo 1 000 000 bytes, com cortes progressivos (modelo de eventos, seção 1) |
 | Corpo de `POST /hooks` | até 1 MiB. Com token válido, o excesso é lido e descartado até 16 MiB antes do 413; acima disso, 413 imediato com `Connection: close` (se declarado) ou conexão encerrada (modelo de eventos, seção 1) |
 | Fila de ingestão | 10 000 itens; cheia, descarta o mais antigo e conta `dropped`, sem recusar a requisição |
 | Deduplicação | 5 s |
