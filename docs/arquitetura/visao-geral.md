@@ -54,7 +54,7 @@ Assinaturas principais (contrato entre módulos):
 
 ```js
 // server/domain/normalize.js
-export function normalize(envelope, { receivedAt }) {}   // → Fact | null
+export function normalize(envelope, { receivedAt, homeDir }) {}   // → Fact | null; homeDir opcional (padrão os.homedir()), para testes
 
 // server/domain/redact.js (pura, sem node:*; também usada por tools/probe/sanitize.mjs; modelo de eventos, seção 10)
 export function redact(text) {}              // → string, idempotente

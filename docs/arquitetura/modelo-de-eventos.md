@@ -60,6 +60,28 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 | `turn.fail` | StopFailure | `error` (tipo: `rate_limit`, `overloaded`, `authentication_failed`, ...) |
 | `compact.pre`, `compact.post` | PreCompact, PostCompact | `trigger` (`manual` ou `auto`) |
 
+### Forma do fato e limites (definidos no T5, 18/10/2026)
+
+- **Discriminador:** `kind`, com os nomes da tabela acima (`session.start`, `tool.pre`, etc.).
+- **Campos comuns**, além dos listados acima:
+  - `client` (`'terminal'`, `'vscode'` ou `null`, a partir do `env.entrypoint`; V11);
+  - `projectDir`, que cai para o `cwd` do payload quando falta `env.projectDir`. A regra "o `cwd` do primeiro evento" da seção 7 fica com o reducer.
+- **Fatos de ferramenta** (`tool.pre`, `tool.post`, `tool.fail`) têm sempre as mesmas chaves, com `null` quando não se aplicam: `subagentType`, `description`, `linkedAgentId`, `launch` e `testResult`. Para `Agent` e `Task`, `category` é `null`, `target` é o `subagent_type` e `detail` é a `description`, como na atividade `delegate` da seção 9.
+- **Valores fora da lista** viram `null`. Valem para `source`, `reason`, `trigger`, `notification_type` e o `status` do `Agent`. Notification de outro tipo gera o fato `notice` com `type: null`, não um fato `null`. `agent_type` vazio vira `null`.
+- **`origin` do pedido:** `null` quando o `prompt` não é texto. O reducer (T8) trata `null` como pedido do usuário.
+- **Título de pedido que começa com `/`:** só o comando (`/review`, sem os argumentos).
+- **Limites sem número na tabela da seção 10** (todos contados com `charLength`):
+  - caminho exibido (`target` de arquivo): até 200, cortado com `redactAndCut`;
+  - nomes (skill, tipo de agente, modelo, nome de ferramenta, alvo MCP, campos de `background_tasks`): até 80;
+  - ids acima de 128 viram `null`;
+  - `background_tasks`: no máximo 50 itens.
+- **Caminhos guardados** (`projectDir`, `transcriptPath`, `agentTranscriptPath`): até 1024; acima disso, `null`. Uma pasta de projeto que mudaria ao passar por `redact` também vira `null`.
+
+  Esses três campos são as únicas exceções ao limite de 200 do teste da seção 10. São caminhos, não conteúdo, e um transcript de subagente passa de 200 com facilidade: conferido em 18/10/2026, um projeto de 104 caracteres dá um caminho de 214. O `project.dir` e o `project.key` do estado herdam a mesma exceção.
+- **Leitura limitada:** cada texto é redigido só nos primeiros 8192 caracteres (`SCAN_CHARS`) antes de tomar a primeira linha, para um POST local de 1 MiB não custar segundos.
+  - Quando o texto é maior que isso, o trecho termina no último espaço em branco antes do limite, para nunca partir um token no meio. Um token partido poderia escapar do tamanho mínimo da etapa 3 e aparecer pela metade.
+  - Efeito aceito: texto com mais de 8192 caracteres em branco no começo fica com título `null`.
+
 `inputHash`: SHA-256 do `tool_input` serializado com chaves ordenadas, primeiros 16 caracteres hexadecimais. Serve para casar o PermissionRequest com o PreToolUse sem guardar o conteúdo.
 
 `testResult`: `{ ok, passed, failed, total, framework }` (seção 6, "Bug na cena").
@@ -497,7 +519,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 
 Alternativa descartada: detectar segredo por entropia. Esconderia SHAs de commit, ids e hashes, que são úteis no painel, e mesmo assim não garantiria cobertura. A redação continua heurística: formatos desconhecidos podem passar, e o modo discreto cobre a tela compartilhada (ADR 0006).
 
-Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres (contados com `charLength`).
+Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres (contados com `charLength`). As únicas exceções são os caminhos guardados da seção 2 (`projectDir`, `transcriptPath` e `agentTranscriptPath`, até 1024).
 
 ## 11. A confirmar no T0
 
