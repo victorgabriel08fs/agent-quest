@@ -2,7 +2,7 @@
 
 O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a captura envia do Claude Code e serve o painel no navegador, sempre em `http://127.0.0.1`. Este guia mostra como iniciar, configurar e parar o servidor, e o que fazer com as mensagens mais comuns.
 
-> Este guia descreve o servidor como ele está agora, na fundação da v1. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Ligar a captura no Claude Code e ler o painel vão ter guias próprios.
+> Este guia descreve o servidor como ele está agora, na fundação da v1. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar a captura no Claude Code, veja [Ligar, pausar e remover a captura](captura.md). Ler o painel vai ter um guia próprio.
 
 ## Resumo rápido
 
@@ -131,7 +131,7 @@ Em Linux e macOS, a pasta é `$XDG_STATE_HOME/agent-quest` ou, sem essa variáve
 |---|---|---|
 | `runtime.json` | Como a captura encontra o servidor (veja abaixo) | O servidor, a cada início; é apagado ao parar |
 | `config.json` | Configuração opcional (porta) | Você |
-| `marketplace\` | Cópia do plugin de captura, pronta para instalar | `npm run capture:deploy` |
+| `marketplace\` | Cópia do plugin de captura, pronta para instalar ([guia da captura](captura.md)) | `npm run capture:deploy` |
 | `dumps\` | Eventos gravados com `--debug-dump` | O servidor, só com a opção |
 
 O estado das sessões fica só na memória do servidor. Fora o `--debug-dump`, nenhum evento vai para o disco.
@@ -361,7 +361,7 @@ A resposta nunca traz conteúdo de evento: só contagens e horários.
 | `events.ignored` | Eventos aceitos que não geraram nada no processamento ou deram erro nele. |
 | `lastEventAt` | Hora do último envio respondido com sucesso, repetido ou não, em milissegundos desde 1970; `null` se nada chegou desde o início. |
 | `sessions` | Sessões guardadas em memória. Nesta fase, fica em 0. |
-| `clients` | Painéis conectados ao vivo. Nesta fase, fica em 0. |
+| `clients` | Conexões ao vivo abertas em `/events`: cada aba do painel conectada conta uma. São no máximo 8. |
 
 As contas sempre fecham assim:
 
@@ -376,6 +376,13 @@ Como ler os números:
 - **`ignored`:** nesta fase, fica em 0, porque o servidor ainda só conta os eventos; o processamento chega nas próximas entregas.
 
 A forma completa dessa resposta está na seção 9 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
+
+### As rotas do painel: `/events` e `/api/state`
+
+O painel recebe o estado ao vivo por `GET /events` (Server-Sent Events) e pode buscá-lo de uma vez em `GET /api/state`. As duas rotas seguem as mesmas regras de segurança do resto do painel e saem com `Cache-Control: no-store`.
+
+- Nesta fase, as duas ficam vazias (`{ "seq": 0, "sessions": [] }`): a ligação entre os eventos recebidos e o estado das sessões chega nas próximas entregas.
+- São no máximo 8 conexões ao vivo ao mesmo tempo. A nona recebe 503, com a mensagem "Muitos painéis conectados. Feche uma aba do painel e tente de novo."
 
 ## Solução de problemas
 
@@ -396,7 +403,7 @@ Você usa o Claude Code, mas o `received` do `/api/health` não sobe e o `lastEv
    - **Os dois lados batem** quando a variável não está definida em lugar nenhum (o caso normal) ou quando tem o mesmo valor no servidor e no Claude Code.
    - **Se só o servidor tem a variável:** pare o servidor, rode `Remove-Item Env:AGENT_QUEST_HOME` (no Git Bash, `unset AGENT_QUEST_HOME`) e inicie de novo.
    - **Se você acabou de definir ou apagar a variável na conta do Windows:** feche e abra de novo os terminais e o VS Code, e reabra as sessões do Claude Code. Sessões abertas antes da mudança continuam com o valor antigo.
-3. **A captura está ligada no Claude Code?** Ela precisa estar instalada e ativa. Ligar, pausar e remover a captura vai ter um guia próprio.
+3. **A captura está ligada no Claude Code?** Ela precisa estar instalada, ativa e carregada na sessão. Siga a [solução de problemas do guia da captura](captura.md#solução-de-problemas), que também cobre a confiança da pasta e o `node` fora do PATH do VS Code.
 4. **`received` sobe, mas `rejected` sobe junto?** Os envios chegam e são recusados. Anote os números do `/api/health` e reporte o problema.
 
 ## Segurança em resumo

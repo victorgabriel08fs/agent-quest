@@ -6,6 +6,10 @@ O que muda em cada entrega do Agent Quest, do ponto de vista de quem usa. As tar
 
 ### Adicionado
 
+- Tempo real, parte adiantada: `GET /events` (Server-Sent Events) envia `hello` e o estado completo a cada conexão, com sinal de vida a cada 15 segundos e até 8 painéis ao mesmo tempo (o nono recebe 503). `GET /api/state` devolve o mesmo estado de uma vez. As duas rotas seguem as regras de segurança do painel. O `clients` do `/api/health` conta as conexões abertas. Nesta fase, o estado vem vazio, até a ligação com o processamento dos eventos. (T9a, parte adiantada)
+- Captura de eventos: plugin `agent-quest`, do marketplace local `agent-quest-local`, com os 15 hooks do ADR 0001, todos assíncronos. O encaminhador nunca imprime nada, sempre sai com código 0, termina em até 2 segundos, só envia para `127.0.0.1` e sai na hora quando o servidor está desligado. (T4)
+- `npm run capture:deploy`: confere a captura, copia para `%LOCALAPPDATA%\agent-quest\marketplace\` sem deixar arquivo pela metade (pode rodar com sessões abertas) e imprime os comandos de testar, instalar, pausar, retomar e remover. Nunca executa o `claude`, e avisa quando `AGENT_QUEST_HOME` está definida ou a pasta está no OneDrive. (T4)
+- Guia [Ligar, pausar e remover a captura](docs/guias/captura.md). Os comandos `claude plugin` do guia ainda vão ser conferidos no marco "Primeira luz". (T4)
 - Recepção dos eventos da captura em `POST /hooks`: só aceita pedidos com o token da execução (lido do `runtime.json`), sem origem de navegador, em JSON e com até 1 MiB. Responde na hora e processa depois, para nunca segurar o Claude Code. (T3)
 - Eventos repetidos em até 5 segundos são descartados, e a fila de processamento guarda até 10 000 eventos; cheia, descarta os mais antigos. (T3)
 - Contadores no `/api/health`: `received`, `accepted`, `rejected`, `deduped`, `dropped` e `ignored`, mais `lastEventAt` com a hora do último evento recebido. A resposta nunca traz conteúdo de evento. (T3)
