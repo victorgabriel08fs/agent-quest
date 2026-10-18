@@ -31,7 +31,7 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 ```
 
 - `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos.
-- `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. O encaminhador nunca manda outras variáveis de ambiente.
+- `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 413 acima de 1 MiB; 415 tipo de conteúdo errado; 429 fila cheia. O encaminhador ignora todas.
 

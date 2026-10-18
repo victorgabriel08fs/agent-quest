@@ -59,3 +59,45 @@ Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas defin
 - O próprio executor tem testes em `test/unit/scripts/`.
 
 **Consequência.** O mesmo comando funciona igual no PowerShell e no Git Bash, e uma suíte vazia por engano falha em vez de passar.
+
+## Complemento de 18/10/2026: formato e sanitização dos cenários de hooks
+
+Os cenários de `test/fixtures/hooks/` são a base comum do T5, do T7, do T9 e do injetor. Por isso o formato é um contrato entre o T0 e essas tarefas. Mudar o formato exige atualizar este complemento.
+
+**Formato.** Um arquivo `.json` por cenário:
+
+```json
+{
+  "name": "paralelo-mesmo-tipo",
+  "description": "Dois probe-worker em paralelo",
+  "events": [
+    { "dt": 0,  "env": { "projectDir": "C:\Users\usuario\…\agents-quest", "entrypoint": "cli" }, "payload": { "hook_event_name": "UserPromptSubmit", "…": "…" } },
+    { "dt": 37, "env": { "projectDir": "…", "entrypoint": "cli" }, "payload": { "hook_event_name": "PreToolUse", "…": "…" } }
+  ]
+}
+```
+
+- `events` vem na ordem em que os eventos chegaram (a ordem de gravação da sonda), inclusive quando um Post chega antes do Pre. Essa ordem é o que o reducer recebe.
+- `dt`: milissegundos desde o evento anterior do cenário, medidos pela hora de gravação da sonda (equivale à chegada no servidor). É 0 no primeiro evento e nunca negativo.
+- `env`: o mesmo `env` do envelope v1 (modelo de eventos, seção 1). `projectDir` vem de `CLAUDE_PROJECT_DIR`. `entrypoint` vem de `CLAUDE_CODE_ENTRYPOINT`, a variável candidata do V11; se o T0 indicar outra, o G0b atualiza este ponto. Fica `null` quando não há valor.
+- `payload`: o JSON do hook, sanitizado como abaixo.
+- O injetor (T9b) monta, para cada evento, um envelope v1 com `sentAt` igual à hora do envio, `env` e `payload` do cenário, e respeita `dt` (ou não, com `--fast`).
+
+**Sanitização** (`tools/probe/sanitize.mjs`). O repositório é público, e os cenários não podem ter conteúdo real nem dados pessoais:
+
+- **Mantém:**
+  - a estrutura do payload (chaves, números, booleanos e listas);
+  - nomes de eventos e de ferramentas, tipos de agente, status e outros valores curtos de enumeração;
+  - a primeira linha de cada comando, até 160 caracteres, com a redação da seção 10 do modelo de eventos. É acima do limite de 120 do normalizador, para o T5 testar o corte;
+  - descrições até 80 caracteres, padrões de busca até 60 e a primeira linha dos erros até 160, todos redigidos;
+  - de saídas e erros, só as linhas de resumo dos testes;
+  - do pedido do usuário, só o comando `/...` ou as tags `<...>` das notificações do sistema;
+  - os caminhos, com o nome do usuário da pasta pessoal trocado por `usuario`, inclusive na forma `c--Users-<nome>-...` das pastas de `~/.claude/projects/`.
+- **Troca por marcadores `«tipo#n:tamanho»`:** conteúdo de arquivo, saídas, pedidos, textos do assistente e o resto. O mesmo texto vira sempre o mesmo marcador dentro do cenário, então igualdades como o `tool_input` do PermissionRequest e o do PreToolUse, base do `inputHash`, continuam valendo.
+- **Troca ids reais por ids sintéticos.** Vale para os valores das chaves de id (`session_id`, `prompt_id`, `tool_use_id`, `agent_id`, `agentId`, `id`, `task_id`, `request_id`, `uuid` e afins) e para toda ocorrência desses mesmos valores dentro de outras strings: caminhos de transcript, `agent-<id>.jsonl`, `outputFile` e ids dentro das tags das notificações de tarefa. Regras:
+  - o mesmo id real vira sempre o mesmo id sintético no cenário, então os elos (`tool_response.agentId` com `agent_id`, `background_tasks[].id`, `session_id` dos subagentes) continuam valendo;
+  - o id sintético tem o mesmo comprimento, o mesmo prefixo (`toolu_`, o `a` inicial dos `agent_id`) e os mesmos separadores (hífens de UUID), para o normalizador ver a mesma forma.
+- **Conferência antes de gravar.** O cenário é recusado se tiver possível segredo, string acima de 200 caracteres fora dos marcadores, o nome do usuário ou qualquer id original. `--ignore-audit` só pode ser usado com revisão do orquestrador, e o tester confere o cenário de novo.
+- Os cenários não guardam `env.names` (a lista de variáveis de ambiente). Ela só aparece, resumida ao que interessa ao V11, em `docs/pesquisa/validacao-captura.md`.
+
+**O que a sonda grava no JSONL bruto** (local, em `%LOCALAPPDATA%\agent-quest\probe\`, apagado depois do T0): o payload completo; os nomes, sem valores, das variáveis `CLAUDE*` (inclusive `CLAUDECODE`), `TERM_PROGRAM*`, `VSCODE_*` e `WT_SESSION`; e os valores só de `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_ENTRYPOINT` e `TERM_PROGRAM`.
