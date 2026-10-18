@@ -32,7 +32,7 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 
 - `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos.
 - `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
-- `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado.
+- `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado. O formato exato do marcador faz parte deste contrato: o normalizador o reconhece por `…\[cortado \d+ caracteres\]…` e descarta as palavras partidas encostadas nele (seção 2, "Marcador de corte do encaminhador"). Mudar o marcador exige mudar os dois lados.
 - **Unidades no encaminhador** (definidas em 18/10/2026):
   - os cortes de string contam **unidades UTF-16** (`String.length`): "4 KiB" quer dizer 4096 unidades, e o `N` do marcador também conta unidades;
   - um corte nunca parte um par de surrogates: se cair no meio, recua uma unidade;
@@ -78,8 +78,25 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 - **Campos comuns**, além dos listados acima:
   - `client` (`'terminal'`, `'vscode'` ou `null`, a partir do `env.entrypoint`; V11);
   - `projectDir`, que cai para o `cwd` do payload quando falta `env.projectDir`. A regra "o `cwd` do primeiro evento" da seção 7 fica com o reducer.
-- **Fatos de ferramenta** (`tool.pre`, `tool.post`, `tool.fail`) têm sempre as mesmas chaves, com `null` quando não se aplicam: `subagentType`, `description`, `linkedAgentId`, `launch` e `testResult`. Para `Agent` e `Task`, `category` é `null`, `target` é o `subagent_type` e `detail` é a `description`, como na atividade `delegate` da seção 9.
-- **Valores fora da lista** viram `null`. Valem para `source`, `reason`, `trigger`, `notification_type` e o `status` do `Agent`. Notification de outro tipo gera o fato `notice` com `type: null`, não um fato `null`. `agent_type` vazio vira `null`.
+- **Fatos de ferramenta** (esclarecido em 18/10/2026). Cada fato tem exatamente as chaves da própria linha da tabela acima, mais os campos comuns. Dentro da linha, o que não se aplica vem `null`, mas a chave existe:
+  - `tool.pre`: `toolUseId`, `tool`, `category`, `target`, `detail`, `inputHash`, `background`, `subagentType` e `description`. As duas últimas são `null` fora de `Agent` e `Task`;
+  - `tool.post`: as de `tool.pre`, mais `durationMs`, `linkedAgentId`, `launch` e `testResult`;
+  - `tool.fail`: as de `tool.pre`, mais `error`, `interrupted`, `durationMs` e `testResult`.
+
+  Para `Agent` e `Task`, `category` é `null`, `target` é o `subagent_type` e `detail` é a `description`, como na atividade `delegate` da seção 9.
+- **`agent_id` presente mas inválido** (não é texto, é vazio ou passa de 128 caracteres): o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido.
+- **Identificadores** (`agent_type`, `subagent_type`, `tool_name`, nome de skill, modelo, servidor e ferramenta MCP), decididos em 18/10/2026:
+  - não passam por `redact`. São nomes de configuração local, e a redação gerava falsos positivos: `auth:tester` virava `auth:•••` e caía em `aux`;
+  - primeiro saem os caracteres invisíveis e de controle da etapa 1 da redação; o papel (`resolveRole`) e a categoria são decididos com esse valor cru;
+  - para exibir, o valor fica como está se casar com `^[A-Za-z0-9_.:@/-]{1,80}$`; senão, passa por `redactAndCut(valor, 80)`.
+- **Marcador de corte do encaminhador** (B3 do tester do T5). O corte de 1 KiB + 3 KiB (e o de 128 + 384 do teto do corpo, seção 1) pode partir um token antes da redação, de modo que o começo ou o fim de um segredo apareça ao lado do marcador. Antes de redigir, o normalizador troca cada ocorrência de `<palavra>…[cortado N caracteres]…<palavra>` por `…`. "Palavra" aqui é a sequência máxima sem espaço em branco encostada no marcador, de cada lado. Sem espaço nenhum, some tudo daquele lado, que é o resultado seguro. A mudança é do normalizador (dev-backend, ajuste do T5). O encaminhador continua cortando por posição, que é barato e não precisa conhecer tokens.
+- **Formas de caminho** reconhecidas antes de comparar com o projeto e a pasta pessoal (decididas em 18/10/2026, sem esperar o T0, porque são transformações puras de texto):
+  - prefixos `\\?\` e `\\.\` são removidos, e `\\?\UNC\servidor\pasta` vira `\\servidor\pasta`;
+  - caminho UNC mantém as duas barras do começo (`\\srv\share` e `//srv/share` viram `//srv/share`, nunca `/srv/share`);
+  - estilo MSYS e Git Bash (`/c/Users/...`) vira `c:/Users/...`, mas só quando o `projectDir` ou o `homeDir` têm letra de unidade, para não confundir um caminho Linux que comece com `/c/`.
+
+  Depois disso, a comparação com o projeto e com a pasta pessoal ignora a caixa nos caminhos com letra de unidade. As fixtures do T0 confirmam quais formas aparecem de fato. O nome do usuário dentro de comandos não é tratado: aparece só no painel local.
+- **Valores fora da lista** viram `null`. Valem para `source`, `reason`, `trigger`, `notification_type` e o `status` do `Agent`. Notification de outro tipo gera o fato `notice` com `type: null`, não um fato `null`. `agent_type` vazio vira `null`, mas o evento continua: o tipo é opcional, e só o `agent_id` identifica a instância.
 - **`origin` do pedido:** `null` quando o `prompt` não é texto. O reducer (T8) trata `null` como pedido do usuário.
 - **Título de pedido que começa com `/`:** só o comando (`/review`, sem os argumentos).
 - **Limites sem número na tabela da seção 10** (todos contados com `charLength`):
@@ -495,6 +512,14 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 **Etapas de `redact`, nesta ordem:**
 
 1. **Caracteres invisíveis.** Remove tudo da classe `[\p{Default_Ignorable_Code_Point}\p{Cf}]` (expressão com a flag `u`). Ela cobre largura zero, hífen suave, controles de direção, U+2061 a U+2064, U+180E, U+034F, seletores de variação (U+FE00 a U+FE0F), preenchedores Hangul (U+115F, U+1160, U+3164, U+FFA0) e tags (U+E0000 a U+E0FFF). Conferido no Node 24.20 em 18/10/2026: todos esses saem, e letras, acentos, emoji, `•`, `…` e `«` ficam. Efeito colateral aceito: emojis compostos com U+200D ou U+FE0F podem aparecer separados.
+
+   **Controles**, acrescentados em 18/10/2026 (ponto 5 do tester do T5), também nesta etapa, para um controle no meio de uma chave não impedir a detecção:
+   - sequências de escape ANSI saem inteiras: CSI (`ESC [ … letra final`) e OSC (`ESC ] …` até BEL ou `ESC \`);
+   - os demais controles C0 (U+0000 a U+001F, exceto `\t`, `\n` e `\r`), o DEL (U+007F) e os controles C1 (U+0080 a U+009F) saem;
+   - `\t` vira espaço;
+   - `\n` e `\r` ficam, porque a primeira linha e os blocos de chave dependem deles.
+
+   O `parseTestSummary` do T6 lê a saída crua, não redigida, então também precisa ignorar ANSI.
 2. **Blocos de chave privada:** de `-----BEGIN <rótulo>-----`, em que o rótulo contém `PRIVATE KEY`, até o `-----END <mesmo rótulo>-----`, ou até o fim do texto se o END faltar. Cobre `RSA`, `EC`, `OPENSSH`, `ENCRYPTED` e `PGP PRIVATE KEY BLOCK`.
 3. **Tokens com prefixo conhecido**, com tamanho mínimo depois do prefixo para evitar falso positivo:
    - `sk-ant-…`, `sk-…`, `sk_live_…`, `sk_test_…`, `rk_live_…`;
