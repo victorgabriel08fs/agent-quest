@@ -6,7 +6,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -18,15 +18,26 @@ import {
   DEADLINE_MS,
   FORWARDER_VERSION,
   HEAD_CHARS,
+  MAX_BODY_BYTES,
+  MAX_LIST_ITEMS,
   MAX_STRING_CHARS,
+  MINIMAL_PRIORITY_KEYS,
+  MINIMAL_REQUIRED_KEYS,
   POST_TIMEOUT_MS,
+  SHORT_HEAD_CHARS,
+  SHORT_STRING_CHARS,
+  SHORT_TAIL_CHARS,
+  STEP2_RULES,
   TAIL_CHARS,
+  buildBody,
   buildEnvelope,
   cutString,
   isPidAlive,
   isValidPort,
+  minimalPayload,
   parsePayload,
   readRuntime,
+  reduceValue,
   resolveDataDir,
   truncateStrings,
 } from '../../../capture/plugins/agent-quest/scripts/forward.mjs';
@@ -38,6 +49,9 @@ const SOURCE = readFileSync(FORWARDER, 'utf8');
 /** Limites do T4. */
 const FAST_MS = 300;
 const STUCK_MS = 2200;
+
+/** Guarda dos processos filhos: bem acima do maior caso legítimo (cerca de 2,2 s). */
+const SPAWN_GUARD_MS = 15_000;
 
 const temps = [];
 const servers = [];
@@ -142,7 +156,7 @@ function minimalEnv(extra) {
  * erro de escrita no stdin, `ms` (do spawn ao fim, visto de fora) e `ownMs`
  * (tempo do próprio processo).
  */
-function spawnTimed(args, { env, stdin = '', keepStdinOpen = false }) {
+function spawnTimed(args, { env, stdin = '', keepStdinOpen = false, guardMs = SPAWN_GUARD_MS }) {
   const timingFile = path.join(TIMING_DIR, `t${timingCount++}.txt`);
   return new Promise((resolve, reject) => {
     const begin = performance.now();
@@ -154,11 +168,22 @@ function spawnTimed(args, { env, stdin = '', keepStdinOpen = false }) {
     let stdout = '';
     let stderr = '';
     let stdinError = null;
+    let timedOut = false;
+    // Guarda: um processo que não sai sozinho (por exemplo, sem os prazos do
+    // forward.mjs) é encerrado, e o teste falha em vez de travar.
+    const guard = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, guardMs);
     child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk));
     child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk));
     child.stdin.on('error', (err) => (stdinError = err.code ?? 'erro'));
-    child.on('error', reject);
+    child.on('error', (err) => {
+      clearTimeout(guard);
+      reject(err);
+    });
     child.on('close', (code, signal) => {
+      clearTimeout(guard);
       const ms = performance.now() - begin;
       let ownMs = Infinity;
       try {
@@ -166,7 +191,7 @@ function spawnTimed(args, { env, stdin = '', keepStdinOpen = false }) {
       } catch {
         // sem arquivo: o processo não saiu normalmente
       }
-      resolve({ code, signal, stdout, stderr, stdinError, ms, ownMs });
+      resolve({ code, signal, stdout, stderr, stdinError, ms, ownMs, timedOut });
     });
     if (keepStdinOpen) child.stdin.write(stdin);
     else child.stdin.end(stdin);
@@ -182,8 +207,9 @@ function runForwarder({ home, stdin = '', env = {}, keepStdinOpen = false }) {
   return spawnTimed([FORWARDER], { env: fullEnv, stdin, keepStdinOpen });
 }
 
-/** Saída 0, sem nada em stdout nem em stderr. */
+/** Saída 0, sozinho e no prazo, sem nada em stdout nem em stderr. */
 function assertSilentExit(result, label = '') {
+  assert.equal(result.timedOut, false, `${label} não saiu sozinho em ${SPAWN_GUARD_MS} ms; foi encerrado pela guarda do teste`);
   assert.equal(result.code, 0, `${label} código de saída`);
   assert.equal(result.signal, null, `${label} sinal`);
   assert.equal(result.stdout, '', `${label} stdout`);
@@ -204,8 +230,10 @@ const OVERLOADED_NODE_MS = 150;
  * - mede o tempo do próprio processo (preload acima), não o do spawn;
  * - até 5 tentativas espaçadas, e passa na primeira abaixo do limite;
  * - em cada tentativa, a referência (Node com os mesmos módulos, medida do mesmo
- *   jeito, logo antes): passa também se o encaminhador gastar, além dela, no
- *   máximo o limite menos a folga de partida;
+ *   jeito, logo antes); se nenhuma tentativa ficou abaixo do limite, passa também
+ *   se a mediana do encaminhador passar da mediana da referência em no máximo o
+ *   limite menos a folga de partida (medianas, para um pico isolado da referência
+ *   não esconder uma regressão);
  * - se todas falharem e até a referência estiver muito acima do normal, a máquina
  *   está sobrecarregada e não há como medir: o teste é marcado como pulado, com o
  *   motivo e as medidas (as checagens de saída 0 e silêncio continuam valendo).
@@ -214,23 +242,42 @@ const OVERLOADED_NODE_MS = 150;
  */
 async function assertFast(t, run, limitMs, label) {
   const attempts = [];
-  let fastestReference = Infinity;
+  const ownTimes = [];
+  const referenceTimes = [];
   let result;
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 250));
     const reference = await spawnTimed([IMPORTS_ONLY], { env: minimalEnv({}) });
     result = await run();
     assertSilentExit(result, label);
-    fastestReference = Math.min(fastestReference, reference.ownMs);
+    ownTimes.push(result.ownMs);
+    referenceTimes.push(reference.ownMs);
     attempts.push(`${result.ownMs.toFixed(0)} ms (referência ${reference.ownMs.toFixed(0)} ms)`);
-    if (result.ownMs < limitMs || result.ownMs - reference.ownMs < limitMs - NODE_STARTUP_ALLOWANCE_MS) return result;
+    // Critério absoluto, tentativa por tentativa.
+    if (result.ownMs < limitMs) return result;
   }
-  const summary = `${label}: acima de ${limitMs} ms em todas as tentativas: ${attempts.join('; ')}`;
+  // Critério relativo pelas medianas: um pico isolado da referência não esconde uma regressão.
+  const ownMedian = median(ownTimes);
+  const referenceMedian = median(referenceTimes);
+  if (ownMedian - referenceMedian < limitMs - NODE_STARTUP_ALLOWANCE_MS) return result;
+
+  const summary =
+    `${label}: acima de ${limitMs} ms em todas as tentativas, e a mediana (${ownMedian.toFixed(0)} ms) ` +
+    `passa da mediana da referência (${referenceMedian.toFixed(0)} ms) em mais de ` +
+    `${limitMs - NODE_STARTUP_ALLOWANCE_MS} ms: ${attempts.join('; ')}`;
+  const fastestReference = Math.min(...referenceTimes);
   if (fastestReference > OVERLOADED_NODE_MS) {
     t.skip(`tempo não avaliado, máquina sobrecarregada (referência em no mínimo ${fastestReference.toFixed(0)} ms). ${summary}`);
     return result;
   }
   assert.fail(summary);
+}
+
+/** @param {number[]} values */
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 const hookPayload = (extra = {}) => ({
@@ -365,6 +412,167 @@ describe('payload e envelope', () => {
   });
 });
 
+describe('teto do corpo: 1 000 000 bytes em até três passos (modelo de eventos, seção 1)', () => {
+  const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
+  const options = { sentAt: 123, env: { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' } };
+  const s600 = (i) => `${i}-`.padEnd(600, 'x');
+  const bytes = (text) => Buffer.byteLength(text, 'utf8');
+
+  /** Corpo dentro do teto, envelope v1, `truncated: true` e os dois campos obrigatórios intactos. */
+  function assertCapped(body, label) {
+    assert.ok(body !== null, `${label}: deveria enviar`);
+    assert.ok(bytes(body) <= MAX_BODY_BYTES, `${label}: ${bytes(body)} bytes`);
+    const envelope = JSON.parse(body);
+    assert.equal(envelope.v, 1, label);
+    assert.equal(envelope.truncated, true, label);
+    assert.equal(envelope.payload.session_id, ids.session_id, label);
+    assert.equal(envelope.payload.hook_event_name, ids.hook_event_name, label);
+    return envelope;
+  }
+
+  it('limites da decisão: 1 000 000 bytes; passo 2 com 512 (128 + 384) e 100 itens', () => {
+    assert.equal(MAX_BODY_BYTES, 1_000_000);
+    assert.deepEqual([SHORT_STRING_CHARS, SHORT_HEAD_CHARS, SHORT_TAIL_CHARS, MAX_LIST_ITEMS], [512, 128, 384, 100]);
+  });
+
+  it('cutString com 128 + 384: N conta as unidades UTF-16 retiradas e não parte surrogates', () => {
+    const text = `${'i'.repeat(128)}${'m'.repeat(88)}${'f'.repeat(384)}`;
+    assert.equal(cutString(text, 128, 384), `${'i'.repeat(128)}…[cortado 88 caracteres]…${'f'.repeat(384)}`);
+    const emoji = '😀';
+    const edge = `${'a'.repeat(127)}${emoji}${'b'.repeat(1000)}${emoji}${'c'.repeat(383)}`;
+    const cut = cutString(edge, 128, 384);
+    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(cut), 'nenhum surrogate solto');
+    assert.equal(cut, `${'a'.repeat(127)}…[cortado ${edge.length - 127 - 383} caracteres]…${'c'.repeat(383)}`);
+  });
+
+  it('reduceValue não altera o original: cada passo parte do payload como chegou', () => {
+    const payload = { a: 'x'.repeat(5000), list: Array.from({ length: 150 }, (_, i) => i), nested: { s: 'y'.repeat(600) } };
+    const before = structuredClone(payload);
+    const step2 = reduceValue(payload, STEP2_RULES);
+    assert.deepEqual(payload, before);
+    assert.equal(step2.truncated, true);
+    assert.equal(step2.value.list.length, 100);
+    assert.deepEqual(step2.value.list, before.list.slice(0, 100));
+    assert.equal(step2.value.nested.s, cutString(before.nested.s, 128, 384));
+    assert.equal(step2.value.a, cutString(before.a, 128, 384), 'o N conta a partir do texto original');
+    assert.equal(reduceValue({ list: [1, 2] }, STEP2_RULES).truncated, false);
+  });
+
+  it('passo 1 basta: o corpo é o de sempre, com truncated false', () => {
+    const payload = { ...ids, tool_name: 'Read', tool_input: { file_path: 'a.md' } };
+    const body = buildBody(payload, options);
+    assert.equal(body, JSON.stringify(buildEnvelope(payload, options)));
+    assert.equal(JSON.parse(body).truncated, false);
+  });
+
+  it('20 000 strings de 600 caracteres numa lista (cerca de 12 MiB): o passo 2 resolve', () => {
+    const payload = { ...ids, tool_name: 'Bash', tool_response: { stdout: Array.from({ length: 20_000 }, (_, i) => s600(i)) } };
+    assert.ok(bytes(JSON.stringify(payload)) > 11 * 1024 * 1024);
+    const envelope = assertCapped(buildBody(payload, options), 'lista');
+    assert.equal(envelope.payload.tool_response.stdout.length, 100);
+    assert.equal(envelope.payload.tool_response.stdout[0], cutString(s600(0), 128, 384));
+  });
+
+  it('lista de 50 000 nomes de arquivo: o passo 2 deixa os 100 primeiros', () => {
+    const files = Array.from({ length: 50_000 }, (_, i) => `C:/projetos/exemplo/src/modulo${i}/arquivo-${i}.js`);
+    const payload = { ...ids, tool_name: 'Glob', tool_input: { pattern: '**/*' }, tool_response: { filenames: files } };
+    const envelope = assertCapped(buildBody(payload, options), '50 000 arquivos');
+    assert.deepEqual(envelope.payload.tool_response.filenames, files.slice(0, 100));
+    assert.equal(envelope.payload.tool_input.pattern, '**/*');
+  });
+
+  it('20 000 strings de 600 como chaves de tool_input ou do primeiro nível: o passo 3 cabe no teto', () => {
+    const many = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, s600(i)]));
+    for (const [label, payload] of [
+      ['tool_input', { ...ids, tool_name: 'X', tool_input: many, tool_response: { a: [1, 2] } }],
+      ['primeiro nível', { ...ids, ...many }],
+    ]) {
+      const envelope = assertCapped(buildBody(payload, options), label);
+      for (const value of Object.values(envelope.payload)) {
+        if (value !== null && typeof value === 'object' && value !== envelope.payload.tool_input) {
+          assert.fail(`${label}: o passo 3 só leva valores simples (e tool_input)`);
+        }
+      }
+      if (label === 'tool_input') {
+        assert.equal(envelope.payload.tool_name, 'X');
+        assert.equal(envelope.payload.tool_response, undefined, 'objetos aninhados saem');
+        assert.equal(envelope.payload.tool_input.k0, cutString(s600(0), 128, 384));
+      }
+    }
+  });
+
+  it('passo 3: obrigatórios, prioritários, demais do primeiro nível e tool_input, nessa ordem, só valores simples', () => {
+    const payload = {
+      n: 3,
+      tool_input: { file_path: 'a.md', limit: 10, nested: { x: 1 }, list: ['a'], long: 'z'.repeat(600) },
+      trigger: 'auto',
+      ok: true,
+      lista: [1, 2],
+      tool_name: 'Read',
+      agent_id: 'agente-1',
+      obj: { a: 1 },
+      hook_event_name: 'PostToolUse',
+      nada: null,
+      session_id: 's'.repeat(700),
+      agent_type: 'tester',
+      cwd: 'C:/projetos/exemplo',
+    };
+    const minimal = minimalPayload(payload, 100_000);
+    assert.deepEqual(Object.keys(minimal), [
+      'hook_event_name', 'session_id', 'agent_id',
+      'agent_type', 'tool_name', 'cwd', 'trigger',
+      'n', 'ok', 'nada',
+      'tool_input',
+    ]);
+    assert.deepEqual(minimal, {
+      hook_event_name: 'PostToolUse',
+      session_id: cutString('s'.repeat(700), 128, 384),
+      agent_id: 'agente-1',
+      agent_type: 'tester',
+      tool_name: 'Read',
+      cwd: 'C:/projetos/exemplo',
+      trigger: 'auto',
+      n: 3,
+      ok: true,
+      nada: null,
+      tool_input: { file_path: 'a.md', limit: 10, long: cutString('z'.repeat(600), 128, 384) },
+    });
+    assert.deepEqual(Object.keys(minimal.tool_input), ['file_path', 'limit', 'long'], 'tool_input na ordem do original');
+    assert.deepEqual(MINIMAL_REQUIRED_KEYS, ['hook_event_name', 'session_id', 'agent_id']);
+    assert.deepEqual(MINIMAL_PRIORITY_KEYS, ['agent_type', 'tool_name', 'tool_use_id', 'prompt_id', 'cwd', 'notification_type', 'source', 'reason', 'trigger']);
+  });
+
+  it('passo 3: com pouco espaço, os prioritários entram antes dos demais; sem agent_id no original, ele não aparece', () => {
+    const payload = { extra1: 'e'.repeat(300), hook_event_name: 'Stop', session_id: 's1', tool_use_id: 'toolu_1', extra2: 'f' };
+    const tight = minimalPayload(payload, 75);
+    assert.deepEqual(tight, { hook_event_name: 'Stop', session_id: 's1', tool_use_id: 'toolu_1' });
+    assert.ok(!('agent_id' in tight));
+    assert.equal(minimalPayload(payload, 10), null, 'os obrigatórios não cabem: não envia');
+    assert.equal(minimalPayload({ ...payload, agent_id: 'a'.repeat(500) }, 60), null, 'agent_id existe e não cabe: não envia');
+  });
+
+  it('20 000 chaves de 600 com agent_id: o passo 3 cabe no teto e leva os obrigatórios primeiro', () => {
+    const many = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, s600(i)]));
+    const payload = { ...many, tool_name: 'X', ...ids, agent_id: 'agente-subagente', agent_type: 'dev-backend', tool_input: many };
+    const envelope = assertCapped(buildBody(payload, options), '20 000 chaves com agent_id');
+    assert.deepEqual(Object.keys(envelope.payload).slice(0, 5), ['hook_event_name', 'session_id', 'agent_id', 'agent_type', 'tool_name']);
+    assert.equal(envelope.payload.agent_id, 'agente-subagente');
+    assert.equal(envelope.payload.k0, cutString(s600(0), 128, 384), 'depois, os demais na ordem do original');
+  });
+
+  it('com teto apertado: cai para o passo 3; se nem os obrigatórios couberem, não envia', () => {
+    const payload = { ...ids, tool_name: 'Read', tool_input: { file_path: 'a.md' }, tool_response: { stdout: 'x'.repeat(3000) } };
+    const body = buildBody(payload, { ...options, maxBytes: 500 });
+    assert.ok(bytes(body) <= 500);
+    const envelope = JSON.parse(body);
+    assert.equal(envelope.truncated, true);
+    assert.deepEqual(envelope.payload, { ...ids, tool_name: 'Read', tool_input: { file_path: 'a.md' } });
+    // session_id absurdo: o passo 2 (genérico) o cortaria, mas não cabe em 400 bytes;
+    // o passo 3 o mantém inteiro, e aí também não cabe: não envia.
+    assert.equal(buildBody({ ...ids, session_id: 'x'.repeat(2000) }, { ...options, maxBytes: 400 }), null);
+  });
+});
+
 describe('código do encaminhador', () => {
   it('sem dependências: só importa módulos node:*', () => {
     const imports = [...SOURCE.matchAll(/^\s*import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
@@ -394,6 +602,19 @@ describe('código do encaminhador', () => {
   it('prazos do ADR 0001: POST em 1 s, processo em 2 s', () => {
     assert.equal(POST_TIMEOUT_MS, 1000);
     assert.equal(DEADLINE_MS, 2000);
+  });
+});
+
+describe('guardas do próprio teste', () => {
+  it('processo que não sai sozinho é encerrado pela guarda, e a checagem falha em vez de travar', async () => {
+    const result = await spawnTimed(['-e', 'setInterval(() => {}, 1000)'], { env: minimalEnv({}), guardMs: 300 });
+    assert.equal(result.timedOut, true);
+    assert.throws(() => assertSilentExit(result, 'preso'), /guarda do teste/);
+  });
+
+  it('mediana: um pico isolado não decide', () => {
+    assert.equal(median([100, 5000, 110, 120, 105]), 110);
+    assert.equal(median([1, 3]), 2);
   });
 });
 
@@ -562,6 +783,49 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
     );
     assert.ok(result.ms >= DEADLINE_MS - 100, `esperou o prazo (${result.ms.toFixed(0)} ms)`);
     assert.equal(server.requests.length, 0);
+  });
+
+  it('teto do corpo com o servidor real: 12 MiB em strings e 50 000 arquivos chegam com 204, truncated e ids intactos, no prazo', async () => {
+    const home = newHome();
+    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
+    const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
+    const s600 = (i) => `${i}-`.padEnd(600, 'x');
+    const cases = [
+      ['20 000 × 600 numa lista', { ...ids, tool_name: 'Bash', tool_response: { stdout: Array.from({ length: 20_000 }, (_, i) => s600(i)) } }],
+      ['20 000 × 600 em tool_input', { ...ids, tool_name: 'X', tool_input: Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, s600(i)])) }],
+      ['50 000 arquivos', { ...ids, tool_name: 'Glob', tool_response: { filenames: Array.from({ length: 50_000 }, (_, i) => `src/modulo${i}/arquivo-${i}.js`) } }],
+    ];
+    const health = () =>
+      new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port: running.port, path: '/api/health', agent: false }, (r) => {
+          let body = '';
+          r.setEncoding('utf8').on('data', (c) => (body += c)).on('end', () => resolve(JSON.parse(body).events));
+        }).on('error', reject);
+      });
+    try {
+      for (const [label, payload] of cases) {
+        const stdin = JSON.stringify(payload);
+        const before = await health();
+        const result = await runForwarder({ home, stdin });
+        assertSilentExit(result, label);
+        assert.ok(result.ownMs < STUCK_MS, `${label}: ${result.ownMs.toFixed(0)} ms`);
+        const after = await health();
+        assert.equal(after.accepted - before.accepted, 1, `${label}: o servidor respondeu 204 e aceitou`);
+        assert.equal(after.rejected, before.rejected, `${label}: nenhum 413`);
+      }
+    } finally {
+      await running.close();
+    }
+    const dumps = path.join(home, 'dumps');
+    const lines = readdirSync(dumps).flatMap((file) => readFileSync(path.join(dumps, file), 'utf8').trim().split('\n'));
+    assert.equal(lines.length, cases.length);
+    for (const line of lines) {
+      assert.ok(Buffer.byteLength(line, 'utf8') <= MAX_BODY_BYTES);
+      const envelope = JSON.parse(line);
+      assert.equal(envelope.truncated, true);
+      assert.equal(envelope.payload.session_id, ids.session_id);
+      assert.equal(envelope.payload.hook_event_name, ids.hook_event_name);
+    }
   });
 
   it('com o servidor real (T3): o evento é aceito com o token do runtime.json', async () => {

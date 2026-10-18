@@ -272,7 +272,10 @@ export async function runDeploy({ env, platform, homedir, sourceDir = SOURCE_DIR
     steps = await deployCapture({ sourceDir, targetDir });
   } catch (err) {
     error(`Não foi possível copiar a captura para ${targetDir} (${errorKind(err)}).`);
-    error('Os arquivos que já estavam lá continuam inteiros. Se algum estava em uso, rode o deploy de novo.');
+    error(
+      'Cada arquivo da cópia está inteiro (na versão anterior ou na nova), mas a instalação pode ter ficado ' +
+        'misturada entre as duas versões. Rode o deploy de novo (se algum arquivo estava em uso, espere um instante).',
+    );
     return 1;
   }
   const after = await validateCapture(targetDir);

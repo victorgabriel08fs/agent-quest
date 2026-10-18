@@ -15,6 +15,7 @@ import process from 'node:process';
 import {
   FORWARDER,
   PLUGIN_DIR,
+  PLUGIN_VERSION,
   assertDelivered,
   assertLossesOnlyByDeadline,
   assertSilentExit,
@@ -233,17 +234,20 @@ describe('T4 integração: npm run capture:deploy', () => {
     const root = repoLayout();
     const home = newTemp('aq int deploy laço ção-');
     const { env } = envWithFakeClaude({ AGENT_QUEST_HOME: home });
-    const server = await startRealServer({ dataDir: home, env: { AGENT_QUEST_HOME: home } });
 
     const sourceForwarder = path.join(root, 'capture', 'plugins', 'agent-quest', 'scripts', 'forward.mjs');
     const extraFile = path.join(root, 'capture', 'plugins', 'agent-quest', 'scripts', 'sobra-da-versao-b.txt');
     const original = readFileSync(FORWARDER, 'utf8');
-    assert.match(original, /export const FORWARDER_VERSION = '0\.1\.0';/);
+    // A versão atual da captura (ADR 0002: igual no plugin.json e no FORWARDER_VERSION).
+    const versionA = PLUGIN_VERSION;
+    const versionB = `${PLUGIN_VERSION}-b`;
+    const versionLine = `export const FORWARDER_VERSION = '${versionA}';`;
+    assert.ok(original.includes(versionLine), `esperava ${versionLine} no forward.mjs`);
     // Versões grandes (300 KB) alargam a janela de gravação; a B muda a versão do
     // encaminhador (para o dump mostrar qual versão rodou) e tem um arquivo a mais.
     const versions = {
       A: `${original}\n// versão A ${'a'.repeat(300_000)}\n`,
-      B: `${original.replace("FORWARDER_VERSION = '0.1.0'", "FORWARDER_VERSION = '0.1.0-b'")}\n// versão B ${'b'.repeat(300_000)}\n`,
+      B: `${original.replace(versionLine, `export const FORWARDER_VERSION = '${versionB}';`)}\n// versão B ${'b'.repeat(300_000)}\n`,
     };
     const useVersion = (name) => {
       writeFileSync(sourceForwarder, versions[name]);
@@ -251,6 +255,8 @@ describe('T4 integração: npm run capture:deploy', () => {
       else rmSync(extraFile, { force: true });
     };
 
+    // O servidor sobe só depois das checagens acima e para sempre no finally.
+    const server = await startRealServer({ dataDir: home, env: { AGENT_QUEST_HOME: home } });
     try {
       useVersion('A');
       const firstDeploy = await deployCli(root, env);
@@ -300,7 +306,7 @@ describe('T4 integração: npm run capture:deploy', () => {
 
       const versionsSeen = new Set(delivered.map((r) => find(r.payload).forwarder));
       t.diagnostic(`${runs.length} encaminhadores durante 12 deploys (${delivered.length} entregues); versões vistas: ${[...versionsSeen].join(', ')}`);
-      for (const version of versionsSeen) assert.ok(['0.1.0', '0.1.0-b'].includes(version), `versão inesperada: ${version}`);
+      for (const version of versionsSeen) assert.ok([versionA, versionB].includes(version), `versão inesperada: ${version}`);
       if (versionsSeen.size < 2) {
         const load = loadFrom(samples);
         assert.ok(!load.normal, `com a máquina normal (${load.text}), o laço deveria entregar com as duas versões`);

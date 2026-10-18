@@ -69,7 +69,8 @@ describe('plugin.json', () => {
     assert.equal(plugin.name, 'agent-quest');
   });
 
-  it('mesma versão no plugin.json, no marketplace e no encaminhador', () => {
+  it('mesma versão no plugin.json, no marketplace e no encaminhador (ADR 0002, versão da captura)', () => {
+    assert.match(plugin.version, /^\d+\.\d+\.\d+$/);
     assert.equal(plugin.version, FORWARDER_VERSION);
     assert.equal(marketplace.plugins[0].version, plugin.version);
   });

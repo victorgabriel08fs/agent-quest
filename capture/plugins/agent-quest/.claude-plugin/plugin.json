@@ -1,6 +1,6 @@
 {
   "name": "agent-quest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Captura do Agent Quest: encaminha os eventos dos hooks do Claude Code ao painel local em 127.0.0.1, sem bloquear nem atrasar as sessões. Nada sai da máquina.",
   "author": {
     "name": "Agent Quest"

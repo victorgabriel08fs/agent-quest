@@ -15,6 +15,9 @@
 //   pode apontar para outra versão do Node). Por isso não usa `fetch`, que no
 //   Node 18 imprime um aviso de recurso experimental.
 //
+// O corpo enviado nunca passa de 1 000 000 bytes: a redução tem até três passos
+// genéricos, parando no primeiro que couber (`buildBody`).
+//
 // Ordem (ADR 0001): lê o stdin até o fim, depois o runtime.json; sem servidor
 // no ar, sai sem nem interpretar o JSON. Tudo fica num arquivo só, para um
 // deploy feito com sessões rodando nunca juntar versões diferentes de dois módulos.
@@ -35,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 const startedAt = Date.now();
 
 /** Versão do encaminhador (igual à do plugin.json; um teste confere). */
-export const FORWARDER_VERSION = '0.1.0';
+export const FORWARDER_VERSION = '0.1.1';
 
 /** Único destino possível (ADR 0006). */
 export const HOST = '127.0.0.1';
@@ -53,10 +56,22 @@ export const MAX_STDIN_BYTES = 16 * 1024 * 1024;
 export const DEADLINE_MS = 2000;
 export const POST_TIMEOUT_MS = 1000;
 
-/** Strings acima de 4 KiB viram 1 KiB do início + 3 KiB do fim (em caracteres). */
+/**
+ * Strings acima de 4 KiB viram 1 KiB do início + 3 KiB do fim. Unidades UTF-16
+ * (`String.length`), não bytes nem pontos de código (modelo de eventos, seção 1).
+ */
 export const MAX_STRING_CHARS = 4 * 1024;
 export const HEAD_CHARS = 1024;
 export const TAIL_CHARS = 3 * 1024;
+
+/** Teto do corpo enviado, em bytes UTF-8 (modelo de eventos, seção 1, "Teto do corpo"). */
+export const MAX_BODY_BYTES = 1_000_000;
+
+/** Passo 2 da redução: strings acima de 512 unidades viram 128 + 384; listas, 100 itens. */
+export const SHORT_STRING_CHARS = 512;
+export const SHORT_HEAD_CHARS = 128;
+export const SHORT_TAIL_CHARS = 384;
+export const MAX_LIST_ITEMS = 100;
 
 /**
  * @typedef {object} Runtime
@@ -174,26 +189,58 @@ export function parsePayload(bytes) {
 }
 
 /**
- * Corta uma string longa: 1 KiB do início + 3 KiB do fim, separados por
- * `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica
- * no fim da saída. Não parte pares substitutos (emoji e afins).
+ * Corta uma string longa: `head` unidades do início + `tail` do fim, separadas
+ * por `…[cortado N caracteres]…`, em que N conta as unidades UTF-16 retiradas
+ * (modelo de eventos, seção 1, "Unidades no encaminhador"). O fim é preservado
+ * porque o resumo dos testes fica no fim da saída. Não parte pares de
+ * surrogates: se um corte cair no meio de um, o par inteiro sai.
  * @param {string} text
+ * @param {number} [head]
+ * @param {number} [tail]
  * @returns {string}
  */
-export function cutString(text) {
-  let head = HEAD_CHARS;
-  let tail = text.length - TAIL_CHARS;
-  if (isHighSurrogate(text.charCodeAt(head - 1))) head -= 1;
-  if (isLowSurrogate(text.charCodeAt(tail))) tail += 1;
-  return `${text.slice(0, head)}…[cortado ${tail - head} caracteres]…${text.slice(tail)}`;
+export function cutString(text, head = HEAD_CHARS, tail = TAIL_CHARS) {
+  let headEnd = head;
+  let tailStart = text.length - tail;
+  if (isHighSurrogate(text.charCodeAt(headEnd - 1))) headEnd -= 1;
+  if (isLowSurrogate(text.charCodeAt(tailStart))) tailStart += 1;
+  return `${text.slice(0, headEnd)}…[cortado ${tailStart - headEnd} caracteres]…${text.slice(tailStart)}`;
 }
 
 /**
- * Corta, no próprio objeto, toda string acima de 4 KiB, em qualquer nível.
+ * Regras de um passo de redução.
+ * @typedef {object} ReduceRules
+ * @property {number} maxChars           strings acima disto são cortadas
+ * @property {number} headChars
+ * @property {number} tailChars
+ * @property {number} maxItems           listas ficam com os primeiros itens até este número
+ */
+
+/** Passo 1: o corte normal de 4 KiB. */
+export const STEP1_RULES = Object.freeze({
+  maxChars: MAX_STRING_CHARS,
+  headChars: HEAD_CHARS,
+  tailChars: TAIL_CHARS,
+  maxItems: Infinity,
+});
+
+/** Passo 2: strings acima de 512 unidades (128 + 384) e listas de até 100 itens. */
+export const STEP2_RULES = Object.freeze({
+  maxChars: SHORT_STRING_CHARS,
+  headChars: SHORT_HEAD_CHARS,
+  tailChars: SHORT_TAIL_CHARS,
+  maxItems: MAX_LIST_ITEMS,
+});
+
+/**
+ * Copia o valor aplicando as regras, em qualquer nível. Não altera o original,
+ * para cada passo partir do payload como chegou (e o N do marcador contar as
+ * unidades retiradas do texto original).
  * @param {unknown} root
+ * @param {ReduceRules} rules
  * @returns {{ value: unknown, truncated: boolean }}
  */
-export function truncateStrings(root) {
+export function reduceValue(root, rules) {
   let truncated = false;
 
   /**
@@ -202,24 +249,24 @@ export function truncateStrings(root) {
    */
   function visit(value) {
     if (typeof value === 'string') {
-      if (value.length <= MAX_STRING_CHARS) return value;
+      if (value.length <= rules.maxChars) return value;
       truncated = true;
-      return cutString(value);
+      return cutString(value, rules.headChars, rules.tailChars);
     }
     if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) value[i] = visit(value[i]);
-      return value;
+      if (value.length > rules.maxItems) truncated = true;
+      const count = Math.min(value.length, rules.maxItems);
+      const copy = new Array(count);
+      for (let i = 0; i < count; i++) copy[i] = visit(value[i]);
+      return copy;
     }
     if (value !== null && typeof value === 'object') {
-      const object = /** @type {Record<string, unknown>} */ (value);
-      for (const key of Object.keys(object)) {
-        const next = visit(object[key]);
-        // defineProperty, e não atribuição, para uma chave "__proto__" vinda do JSON continuar sendo só uma chave.
-        if (next !== object[key]) {
-          Object.defineProperty(object, key, { value: next, writable: true, enumerable: true, configurable: true });
-        }
+      /** @type {Record<string, unknown>} */
+      const copy = {};
+      for (const key of Object.keys(value)) {
+        setOwn(copy, key, visit(/** @type {Record<string, unknown>} */ (value)[key]));
       }
-      return value;
+      return copy;
     }
     return value;
   }
@@ -229,14 +276,23 @@ export function truncateStrings(root) {
 }
 
 /**
- * Monta o envelope v1 (modelo de eventos, seção 1). Das variáveis de ambiente,
- * só vai `CLAUDE_PROJECT_DIR`. `entrypoint` fica `null` até o T0 confirmar qual
- * variável diz se a sessão é do terminal ou do VS Code.
- * @param {Record<string, unknown>} payload
+ * Passo 1 isolado: corta toda string acima de 4 KiB, em qualquer nível.
+ * @param {unknown} root
+ * @returns {{ value: unknown, truncated: boolean }}
+ */
+export function truncateStrings(root) {
+  return reduceValue(root, STEP1_RULES);
+}
+
+/**
+ * Monta o envelope v1 (modelo de eventos, seção 1) com um payload já reduzido.
+ * Das variáveis de ambiente, só vai `CLAUDE_PROJECT_DIR`. `entrypoint` fica
+ * `null` até o T0 confirmar qual variável diz se a sessão é do terminal ou do VS Code.
+ * @param {unknown} payload
+ * @param {boolean} truncated
  * @param {{ sentAt: number, env: Record<string, string|undefined> }} options
  */
-export function buildEnvelope(payload, { sentAt, env }) {
-  const { value, truncated } = truncateStrings(payload);
+function envelopeOf(payload, truncated, { sentAt, env }) {
   const projectDir = env.CLAUDE_PROJECT_DIR;
   return {
     v: 1,
@@ -244,8 +300,158 @@ export function buildEnvelope(payload, { sentAt, env }) {
     forwarder: FORWARDER_VERSION,
     env: { projectDir: typeof projectDir === 'string' && projectDir !== '' ? projectDir : null, entrypoint: null },
     truncated,
-    payload: value,
+    payload,
   };
+}
+
+/**
+ * Envelope do passo 1 (o corte normal de 4 KiB).
+ * @param {Record<string, unknown>} payload
+ * @param {{ sentAt: number, env: Record<string, string|undefined> }} options
+ */
+export function buildEnvelope(payload, options) {
+  const { value, truncated } = truncateStrings(payload);
+  return envelopeOf(value, truncated, options);
+}
+
+/**
+ * Corpo do POST, com o teto de 1 000 000 bytes UTF-8 (modelo de eventos,
+ * seção 1, "Teto do corpo"). Três passos, parando no primeiro que couber:
+ * 1. o corte normal de 4 KiB;
+ * 2. strings acima de 512 unidades (128 + 384) e listas de até 100 itens;
+ * 3. envelope mínimo (`minimalPayload`).
+ * Além do primeiro passo, `truncated` é `true`. Devolve `null` se nem o
+ * envelope mínimo couber (por exemplo, um `session_id` absurdo): aí não envia.
+ * @param {Record<string, unknown>} payload
+ * @param {{ sentAt: number, env: Record<string, string|undefined>, maxBytes?: number }} options
+ * @returns {string|null}
+ */
+export function buildBody(payload, { sentAt, env, maxBytes = MAX_BODY_BYTES }) {
+  const fits = (/** @type {string} */ body) => Buffer.byteLength(body, 'utf8') <= maxBytes;
+
+  const first = reduceValue(payload, STEP1_RULES);
+  const body1 = JSON.stringify(envelopeOf(first.value, first.truncated, { sentAt, env }));
+  if (fits(body1)) return body1;
+
+  const second = reduceValue(payload, STEP2_RULES);
+  const body2 = JSON.stringify(envelopeOf(second.value, true, { sentAt, env }));
+  if (fits(body2)) return body2;
+
+  const base = JSON.stringify(envelopeOf({}, true, { sentAt, env }));
+  const minimal = minimalPayload(payload, maxBytes - Buffer.byteLength(base, 'utf8'));
+  if (!minimal) return null;
+  const body3 = JSON.stringify(envelopeOf(minimal, true, { sentAt, env }));
+  return fits(body3) ? body3 : null;
+}
+
+/** Passo 3: entram sempre, se existirem no original (sem `agent_id`, um evento de subagente iria para o `main`). */
+export const MINIMAL_REQUIRED_KEYS = Object.freeze(['hook_event_name', 'session_id', 'agent_id']);
+
+/** Passo 3: depois dos obrigatórios, nesta ordem. */
+export const MINIMAL_PRIORITY_KEYS = Object.freeze([
+  'agent_type',
+  'tool_name',
+  'tool_use_id',
+  'prompt_id',
+  'cwd',
+  'notification_type',
+  'source',
+  'reason',
+  'trigger',
+]);
+
+/**
+ * Passo 3: payload mínimo (modelo de eventos, seção 1, "Teto do corpo"). Só
+ * valores simples (texto, número, booleano, `null`), com textos de até 512
+ * unidades (128 + 384), acrescentados um a um enquanto couberem em `budget`
+ * bytes. Listas e objetos aninhados saem. Ordem:
+ * 1. obrigatórios: `hook_event_name`, `session_id` e `agent_id` (se existir);
+ * 2. prioritários (`MINIMAL_PRIORITY_KEYS`), nessa ordem;
+ * 3. os demais valores simples do primeiro nível, na ordem do original;
+ * 4. os valores simples de `tool_input`, na ordem do original.
+ * Devolve `null` se os obrigatórios não couberem: aí não envia.
+ * @param {Record<string, unknown>} payload
+ * @param {number} budget                bytes disponíveis para o JSON do payload
+ * @returns {Record<string, unknown>|null}
+ */
+export function minimalPayload(payload, budget) {
+  /** @type {Record<string, unknown>} */
+  const result = {};
+  let size = 2; // {}
+  /** Membros já gravados em cada objeto (para a vírgula), sem recontar as chaves. */
+  const members = new Map([[result, 0]]);
+
+  /** @param {unknown} value */
+  const isSimple = (value) =>
+    value === null || typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string';
+  /** @param {unknown} value */
+  const shorten = (value) =>
+    typeof value === 'string' && value.length > SHORT_STRING_CHARS
+      ? cutString(value, SHORT_HEAD_CHARS, SHORT_TAIL_CHARS)
+      : value;
+
+  /**
+   * Acrescenta `"chave":valor` a `target` se couber no orçamento.
+   * @param {Record<string, unknown>} target
+   * @param {string} key
+   * @param {unknown} value
+   * @returns {boolean}
+   */
+  function add(target, key, value) {
+    const count = members.get(target) ?? 0;
+    const extra = (count > 0 ? 1 : 0) + Buffer.byteLength(JSON.stringify(key), 'utf8') + 1 + Buffer.byteLength(JSON.stringify(value), 'utf8');
+    if (size + extra > budget) return false;
+    setOwn(target, key, value);
+    members.set(target, count + 1);
+    size += extra;
+    return true;
+  }
+
+  /** @param {string} key */
+  const has = (key) => Object.prototype.hasOwnProperty.call(payload, key);
+
+  // 1. Obrigatórios: se existirem e não couberem, não envia.
+  for (const key of MINIMAL_REQUIRED_KEYS) {
+    if (!has(key) || !isSimple(payload[key])) continue;
+    if (!add(result, key, shorten(payload[key]))) return null;
+  }
+
+  // 2 e 3. Prioritários, depois os demais simples do primeiro nível, na ordem do original.
+  const rest = Object.keys(payload).filter((key) => !MINIMAL_PRIORITY_KEYS.includes(key));
+  for (const key of [...MINIMAL_PRIORITY_KEYS.filter(has), ...rest]) {
+    if (MINIMAL_REQUIRED_KEYS.includes(key) || key === 'tool_input') continue;
+    const value = payload[key];
+    if (isSimple(value)) add(result, key, shorten(value));
+  }
+
+  // 4. Os simples de tool_input, na ordem do original.
+  const input = payload.tool_input;
+  if (input !== null && typeof input === 'object' && !Array.isArray(input)) {
+    /** @type {Record<string, unknown>} */
+    const inner = {};
+    if (add(result, 'tool_input', inner)) {
+      for (const key of Object.keys(input)) {
+        const value = /** @type {Record<string, unknown>} */ (input)[key];
+        if (isSimple(value)) add(inner, key, shorten(value));
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Cria a chave como propriedade própria. `defineProperty`, e não atribuição,
+ * para uma chave "__proto__" vinda do JSON continuar sendo só uma chave.
+ * @param {Record<string, unknown>} target
+ * @param {string} key
+ * @param {unknown} value
+ */
+function setOwn(target, key, value) {
+  if (key === '__proto__') {
+    Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+  } else {
+    target[key] = value;
+  }
 }
 
 /**
@@ -312,7 +518,8 @@ export async function forward({ stdin, env, platform, homedir, sentAt }) {
     if (!runtime || !isPidAlive(runtime.pid)) return;
     const payload = bytes && parsePayload(bytes);
     if (!payload) return;
-    const body = JSON.stringify(buildEnvelope(payload, { sentAt, env }));
+    const body = buildBody(payload, { sentAt, env });
+    if (body === null) return;
     await postEnvelope(runtime, body, POST_TIMEOUT_MS);
   } catch {
     // Falha silenciosa: a captura nunca atrapalha o Claude Code.

@@ -157,8 +157,8 @@ export function assertSilentExit(result, label = '') {
  * - se nenhuma passar, aceita quando a mediana do encaminhador ficou, além da
  *   mediana da referência, dentro do limite menos a folga de partida (máquina
  *   lenta, encaminhador rápido);
- * - se nem isso e a referência estiver acima do normal em todas as rodadas, pula
- *   com as medidas (o pulo aparece no resumo e impede a aprovação da tarefa);
+ * - se nem isso e a mediana da referência estiver acima do normal, pula com as
+ *   medidas (o pulo aparece no resumo e impede a aprovação da tarefa);
  * - senão, falha com as medidas.
  * Toda rodada precisa sair em silêncio com 0.
  * @param {import('node:test').TestContext} t
@@ -190,9 +190,12 @@ export async function assertWithinLimit(t, label, runOnce, limitMs) {
     t.diagnostic(`${label}: acima de ${limitMs} ms com a máquina lenta, mas a mediana ficou só ${excess.toFixed(0)} ms além da da referência: ${text}`);
     return last;
   }
-  const fastestReference = Math.min(...rows.map((r) => r.ref));
-  if (fastestReference > OVERLOADED_REFERENCE_MS) {
-    t.skip(`tempo não avaliado: máquina sobrecarregada (referência em no mínimo ${fastestReference.toFixed(0)} ms). ${label}: ${text}`);
+  // Sobrecarga pela mediana da referência, como o critério relativo acima: uma
+  // rodada rápida isolada não decide (com a suíte inteira em paralelo, a mediana
+  // passa de 300 ms mesmo com uma ou outra rodada abaixo de 150).
+  const load = loadFrom(rows.map((r) => r.ref));
+  if (!load.normal) {
+    t.skip(`tempo não avaliado: máquina sobrecarregada (${load.text}). ${label}: ${text}`);
     return last;
   }
   assert.fail(`${label}: acima de ${limitMs} ms em todas as rodadas: ${text}`);
@@ -261,14 +264,16 @@ export function loadFrom(samples) {
  * @param {import('node:test').TestContext} t
  * @param {string} label
  * @param {(n: number) => Promise<{ result: any, delivered: () => any }>} attempt
+ * @param {{ attempts?: number, waitMs?: number, samplesOut?: number[]|null }} [options]  `samplesOut` recebe as medidas de carga
  * @returns {Promise<any>} o valor devolvido por `delivered`, ou null se pulou
  */
-export async function assertDelivered(t, label, attempt, { attempts = 3, waitMs = 3000 } = {}) {
+export async function assertDelivered(t, label, attempt, { attempts = 3, waitMs = 3000, samplesOut = null } = {}) {
   const misses = [];
   const samples = [];
   for (let n = 0; n < attempts; n++) {
     const { value: run, samples: during } = await withLoadSamples(() => attempt(n));
     samples.push(...during);
+    samplesOut?.push(...during);
     const { result, delivered } = run;
     assertSilentExit(result, label);
     const value = await waitFor(delivered, { timeoutMs: waitMs, label }).catch(() => null);
@@ -312,6 +317,25 @@ export function assertLossesOnlyByDeadline(t, label, runs, samples) {
   );
 }
 
+/**
+ * Tempo de vida dentro do prazo do processo (ADR 0001, 2 s), com a regra de
+ * carga: acima do limite com a máquina normal (medida durante os envios) é falha;
+ * com a máquina sobrecarregada, o timer do próprio processo dispara atrasado, e o
+ * excesso vira diagnóstico com as medidas.
+ * @param {import('node:test').TestContext} t
+ * @param {string} label
+ * @param {any[]} results
+ * @param {number[]} samples
+ * @param {number} limitMs
+ */
+export function assertLifetimeWithin(t, label, results, samples, limitMs) {
+  const late = results.filter((r) => !(r.ownMs <= limitMs)).map((r) => `${r.ownMs.toFixed(0)} ms`);
+  if (late.length === 0) return;
+  const load = loadFrom(samples);
+  assert.ok(!load.normal, `${label}: acima de ${limitMs} ms com a máquina normal (${load.text}): ${late.join(', ')}`);
+  t.diagnostic(`${label}: máquina sobrecarregada (${load.text}); ${late.length} processo(s) acima de ${limitMs} ms (${late.join(', ')})`);
+}
+
 /** @param {number[]} values */
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -331,7 +355,13 @@ export async function startRealServer({ dataDir, env }) {
   const run = launchServer(['--port', '0', '--debug-dump'], minimalEnv(env));
   const started = await run.started;
   if (!started) throw new Error(`o servidor real não subiu:\n${run.output()}`);
-  const runtime = await waitFor(() => readJson(path.join(dataDir, 'runtime.json')), { label: 'runtime.json do servidor real' });
+  let runtime;
+  try {
+    runtime = await waitFor(() => readJson(path.join(dataDir, 'runtime.json')), { label: 'runtime.json do servidor real' });
+  } catch (err) {
+    await killTree(run.child); // sem runtime.json, o servidor não pode ficar sobrando
+    throw err;
+  }
   return {
     run,
     runtime,
@@ -383,7 +413,8 @@ export async function recordingHttpServer({ hang = false, host = '127.0.0.1', po
     const chunks = [];
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', () => {
-      requests.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
+      const raw = Buffer.concat(chunks);
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body: raw.toString('utf8'), bytes: raw.length });
       if (!hang) {
         res.writeHead(204);
         res.end();

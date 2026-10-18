@@ -12,6 +12,7 @@ import process from 'node:process';
 import { StartupError, VERSION } from '../../../server/config.js';
 import { installShutdownHandlers, isAgentQuestAt, startServer } from '../../../server/main.js';
 import { createToken, readRuntimeFile, runtimeFilePath, writeRuntimeFile } from '../../../server/runtime-file.js';
+import { fixedPort } from '../../integration/server-helpers.js';
 import { deadPid, isolatedEnv, killChild, request, spawnServer, tempDir } from './helpers.js';
 
 const temps = [];
@@ -170,9 +171,8 @@ describe('startServer', () => {
 
   it('runtime.json de pid vivo sem Agent Quest na porta também é sobra', async () => {
     const home = newHome();
-    const closed = await otherProgram();
-    const port = closed.address().port;
-    await new Promise((resolve) => closed.close(resolve));
+    // Porta fora da faixa dinâmica: nenhum servidor com porta 0 (de outro arquivo em paralelo) a pega.
+    const port = await fixedPort();
     await writeRuntimeFile(home, { port, token: createToken(), pid: process.pid, version: '0.0.1', startedAt: 1 });
     const result = await start(home);
     assert.equal(result.status, 'started');
@@ -372,9 +372,8 @@ describe('linha de comando (node server/main.js)', () => {
   });
 
   it('AGENT_QUEST_PORT vale quando não há --port', async () => {
-    const free = await otherProgram();
-    const port = free.address().port;
-    await new Promise((resolve) => free.close(resolve));
+    // Porta fixa fora da faixa dinâmica (fixedPort), para não disputar com servidores de porta 0.
+    const port = await fixedPort();
     const run = await cli([], newHome(), { AGENT_QUEST_PORT: String(port) });
     assert.equal(run.url, `http://127.0.0.1:${port}/`);
   });

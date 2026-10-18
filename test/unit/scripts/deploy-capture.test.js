@@ -275,6 +275,34 @@ describe('runDeploy (npm run capture:deploy)', () => {
     }
   });
 
+  it('deploy interrompido no meio: código 1 e aviso de que a instalação pode estar misturada', async () => {
+    const home = newDir();
+    const env = { AGENT_QUEST_HOME: home };
+    assert.equal(await runDeploy({ env, platform: process.platform, homedir: home, ...quiet() }), 0);
+    const target = path.join(home, 'marketplace');
+    // Fonte com tudo mudado; na cópia, uma pasta no lugar do hooks.json faz a gravação dele falhar.
+    const source = sourceCopy();
+    for (const file of [MARKETPLACE_FILE, PLUGIN_FILE, HOOKS_FILE]) {
+      const data = readJson(path.join(source, file));
+      data.description = 'versão nova';
+      writeJson(path.join(source, file), data);
+    }
+    rmSync(path.join(target, HOOKS_FILE));
+    mkdirSync(path.join(target, HOOKS_FILE, 'trava'), { recursive: true });
+
+    const io = quiet();
+    const code = await runDeploy({ env, platform: process.platform, homedir: home, sourceDir: source, ...io });
+    assert.equal(code, 1);
+    const text = io.err.join('\n');
+    assert.match(text, /Não foi possível copiar a captura/);
+    assert.match(text, /inteiro/);
+    assert.match(text, /misturada/);
+    assert.match(text, /Rode o deploy de novo/);
+    assert.doesNotMatch(text, /continuam inteiros/);
+    // Estado misturado de verdade: o marketplace.json (antes na ordem) já é o novo.
+    assert.equal(readJson(path.join(target, MARKETPLACE_FILE)).description, 'versão nova');
+  });
+
   it('sem AGENT_QUEST_HOME e fora do OneDrive: nenhum aviso', async () => {
     const base = newDir();
     const io = quiet();
