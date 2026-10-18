@@ -135,6 +135,8 @@ agents-quest/
 ├── README.md, CHANGELOG.md          (documentador)
 ├── package.json                     sem dependências de runtime; devDependency: @playwright/test
 ├── jsconfig.json                    checagem de tipos JSDoc no editor
+├── types/
+│   └── node.d.ts                    declarações mínimas de node:* só para o editor (ADR 0003)
 ├── playwright.config.js             E2E com channel 'msedge'
 ├── capture/                         marketplace local + plugin (fonte)
 │   ├── .claude-plugin/marketplace.json
@@ -158,11 +160,12 @@ agents-quest/
 │       ├── views/   topbar.js, sessions.js, party.js, quest.js, feed.js, legend.js
 │       └── themes/  contract.js, helpers.js, escritorio.js, guilda.js
 ├── scripts/
+│   ├── run-tests.mjs                npm test: acha os *.test.js e chama node --test (ADR 0010)
 │   ├── deploy-capture.mjs           npm run capture:deploy
 │   └── inject-fixture.mjs           npm run inject (desenvolvimento e testes)
 ├── tools/probe/                     sonda descartável do T0
 ├── test/
-│   ├── unit/        server/, web/, capture/
+│   ├── unit/        server/, web/, capture/, shared/, scripts/
 │   ├── integration/
 │   ├── e2e/
 │   └── fixtures/    hooks/, state/, transcripts/      (sempre .json)
@@ -177,7 +180,7 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
 ```powershell
 npm start                           # servidor em http://127.0.0.1:47821/ (não precisa de npm install)
 npm run dev                         # o mesmo, com node --watch (nativo): reinicia sozinho quando o código do servidor muda
-npm test                            # unidade + integração
+npm test                            # unidade + integração, pelo scripts/run-tests.mjs (npm test -- test/unit/shared roda só uma parte)
 npm install; npm run test:e2e       # E2E com o Edge instalado (npm install só na primeira vez, com internet)
 npm run capture:deploy              # copia o plugin para %LOCALAPPDATA%\agent-quest\marketplace e mostra os comandos
 npm run inject -- test/fixtures/hooks/<cenario>.json   # injeta um cenário gravado no servidor local

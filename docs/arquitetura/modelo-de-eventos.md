@@ -368,7 +368,23 @@ Exemplo de `update` (abreviado):
 ### Outras rotas
 
 - `GET /api/state`: o mesmo conteúdo do `snapshot`.
-- `GET /api/health`: `{ ok, version, startedAt, events: { received, accepted, rejected, deduped, dropped, ignored }, lastEventAt, sessions, clients }`, sem conteúdo de evento.
+- `GET /api/health`: `{ ok, version, startedAt, events: { received, accepted, rejected, deduped, dropped, ignored }, lastEventAt, sessions, clients }`, sem conteúdo de evento. Tipos (`HealthResponse` em `shared/contract.js`, confirmados em 18/10/2026):
+
+  ```js
+  /**
+   * @typedef {object} HealthResponse
+   * @property {boolean} ok              sempre true quando o servidor responde
+   * @property {string} version          versão do package.json
+   * @property {number} startedAt        ms desde a época
+   * @property {{ received: number, accepted: number, rejected: number, deduped: number, dropped: number, ignored: number }} events
+   * @property {number|null} lastEventAt hora de chegada (relógio do servidor, ms) do último POST /hooks respondido com 204,
+   *                                     deduplicado ou não; null se nenhum chegou desde o início
+   * @property {number} sessions         sessões em memória, inclusive encerradas ainda não limpas
+   * @property {number} clients          conexões SSE abertas em /events
+   */
+  ```
+
+  A forma é a mesma desde o T3: até o T9a, `sessions` e `clients` valem 0.
 
 ## 10. Minimização e redação
 
