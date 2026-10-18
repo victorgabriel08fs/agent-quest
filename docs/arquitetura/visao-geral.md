@@ -114,7 +114,7 @@ export function removeSession(store, sessionId) {}
 
 | Item | Valor |
 |---|---|
-| Porta | 47821 (`--port`, `AGENT_QUEST_PORT` ou `config.json`) |
+| Porta | 47821 (`--port`, `AGENT_QUEST_PORT` ou `config.json`). Aceita 0 (porta livre escolhida pelo sistema, usada nos testes) ou um inteiro de 1024 a 65535; de 1 a 1023, ou valor que não seja inteiro, o servidor sai com erro claro. O `runtime.json` sempre grava a porta real em uso, nunca 0, porque o encaminhador só aceita de 1024 a 65535 (T4) |
 | Diretório de dados | `%LOCALAPPDATA%\agent-quest\` (`AGENT_QUEST_HOME` sobrescreve) |
 | Encaminhador | prazo de 2 s; POST com timeout de 1 s; stdin até 16 MiB; strings acima de 4 KiB viram 1 KiB do início + 3 KiB do fim |
 | Corpo de `POST /hooks` | até 1 MiB |
@@ -174,6 +174,21 @@ agents-quest/
 ```
 
 O servidor serve só `web/` e `shared/`. O mockup continua como referência e não é carregado pelo produto.
+
+### Rotas e mapeamento de URL (definido no T2, 18/10/2026)
+
+| Requisição | O que responde |
+|---|---|
+| `GET /` | `web/index.html` |
+| `GET /shared/<caminho>` | `shared/<caminho>` |
+| `GET /api/health`, `GET /api/state` | API (JSON, `no-store`) |
+| `GET /events` | SSE |
+| `POST /hooks` | ingestão (só o encaminhador) |
+| `GET /<caminho>` (qualquer outro) | `web/<caminho>`; por exemplo, `/js/main.js` serve `web/js/main.js` |
+
+- As rotas de API, `/events` e `/hooks` vêm antes dos arquivos estáticos. Só `GET` é servido como arquivo.
+- O código do painel importa o contrato por caminho relativo à pasta real, por exemplo `import { ROLES } from '../../shared/contract.js'` em `web/js/main.js`, ou `'../../../shared/contract.js'` em `web/js/themes/`. O mesmo import funciona no Node (testes unitários) e no navegador. No navegador, `/js/main.js` mais `../../shared/contract.js` vira `/shared/contract.js`, porque a resolução de URL não sobe além da raiz (conferido com `new URL` em 18/10/2026).
+- Por isso não pode existir uma pasta `web/shared/`: ela ficaria escondida pela rota `/shared/`. O caminho `/web/...` não existe no servidor.
 
 ## Como rodar localmente
 

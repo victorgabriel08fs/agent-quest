@@ -62,3 +62,8 @@ Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. O usuário apro
 
 - Os tipos e contratos do próprio projeto (`shared/contract.js` e as assinaturas em JSDoc) continuam checados. As chamadas às APIs do Node não são checadas no editor e ficam cobertas pelos testes.
 - Nenhuma dependência nova, e o editor não baixa nada da internet.
+
+**Convenção para tipos do Node em JSDoc (registrada no T2, 18/10/2026).** Com o `declare module 'node:*'`, uma referência como `import('node:http').Server` num comentário JSDoc dá erro TS2694 ("Namespace '"node:*"' has no exported member 'Server'"), conferido com o mesmo TypeScript 6.0.3. Por isso:
+
+- Para dar nome a um tipo do Node em JSDoc, use um typedef local valendo `any`, com o mesmo nome do tipo no Node, ou com o módulo como prefixo quando o nome sozinho for ambíguo. Exemplo: `/** @typedef {any} IncomingMessage */`, `/** @typedef {any} ServerResponse */` e `/** @typedef {any} HttpServer */` para `http.Server`, como em `server/http/app.js`. Um comentário ao lado aponta para este ADR.
+- Quando o mesmo apelido for necessário em mais de um arquivo, ele vai para um único módulo só de typedefs, `server/node-types.js`, e os outros arquivos o referenciam com `import('../node-types.js').IncomingMessage`. Assim, se o `@types/node` for aprovado, a troca pelos tipos reais acontece num lugar só.
