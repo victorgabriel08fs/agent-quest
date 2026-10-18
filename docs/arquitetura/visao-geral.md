@@ -42,7 +42,7 @@ Meta: evento no painel em menos de 300 ms, dos quais cerca de 60 ms são o iníc
 | Encaminhador | `capture/plugins/agent-quest/scripts/forward.mjs` | stdin → envelope v1 → POST; nunca imprime; sai 0; prazo de 2 s | processo filho: stdin + variáveis de ambiente → requisição HTTP |
 | Configuração e runtime | `server/config.js`, `server/runtime-file.js` | Porta, diretório de dados, limites; gravar e apagar `runtime.json` | funções com `env` injetado |
 | HTTP e segurança | `server/http/` | Rotas, `Host`/`Origin`, token, cabeçalhos, estáticos | servidor em porta efêmera |
-| Ingestão | `server/ingest/` | Validar envelope, deduplicar, enfileirar | `POST /hooks` → 204 |
+| Ingestão | `server/ingest/` | Validar envelope, deduplicar, enfileirar; com `--debug-dump`, gravar os envelopes aceitos em `<dados>/dumps/` | `POST /hooks` → 204 |
 | Normalização | `server/domain/normalize.js`, `tools.js`, `redact.js`, `tests-detect.js`, `roles.js` | Payload do hook → fato mínimo e redigido | funções puras |
 | Estado | `server/domain/state/` | Sessões, agentes, tickets, etapas, aprovações, bugs, saúde; emite eventos canônicos | `apply(state, fact, now)` e `tick(state, now)`, determinísticas |
 | Tempo real | `server/http/sse.js` | `hello`, `snapshot`, `update`, retomada por `Last-Event-ID` | cliente SSE de teste |
@@ -117,7 +117,8 @@ export function removeSession(store, sessionId) {}
 | Porta | 47821 (`--port`, `AGENT_QUEST_PORT` ou `config.json`). Aceita 0 (porta livre escolhida pelo sistema, usada nos testes) ou um inteiro de 1024 a 65535; de 1 a 1023, ou valor que não seja inteiro, o servidor sai com erro claro. O `runtime.json` sempre grava a porta real em uso, nunca 0, porque o encaminhador só aceita de 1024 a 65535 (T4) |
 | Diretório de dados | `%LOCALAPPDATA%\agent-quest\` (`AGENT_QUEST_HOME` sobrescreve) |
 | Encaminhador | prazo de 2 s; POST com timeout de 1 s; stdin até 16 MiB; strings acima de 4 KiB viram 1 KiB do início + 3 KiB do fim |
-| Corpo de `POST /hooks` | até 1 MiB |
+| Corpo de `POST /hooks` | até 1 MiB. Com token válido, o excesso é lido e descartado até 16 MiB antes do 413; acima disso, 413 imediato com `Connection: close` (se declarado) ou conexão encerrada (modelo de eventos, seção 1) |
+| Fila de ingestão | 10 000 itens; cheia, descarta o mais antigo e conta `dropped`, sem recusar a requisição |
 | Deduplicação | 5 s |
 | Feed por sessão | 200 eventos |
 | Buffer de retomada SSE | 1000 atualizações |
@@ -147,7 +148,7 @@ agents-quest/
 ├── server/
 │   ├── main.js, config.js, runtime-file.js
 │   ├── http/        app.js, security.js, static.js, sse.js
-│   ├── ingest/      envelope.js, dedupe.js, queue.js
+│   ├── ingest/      envelope.js, dedupe.js, queue.js, debug-dump.js (só com --debug-dump)
 │   ├── domain/      normalize.js, tools.js, redact.js, tests-detect.js, roles.js
 │   │   └── state/   index.js, sessions.js, agents.js, quests.js, permissions.js
 │   └── usage/       transcript-usage.js            (opcional, T15)

@@ -33,7 +33,9 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 - `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos.
 - `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado.
-- Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 413 acima de 1 MiB; 415 tipo de conteúdo errado; 429 fila cheia. O encaminhador ignora todas.
+- Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.
+- Fila cheia não gera resposta de erro. O envelope é aceito com 204, e a fila descarta o item mais antigo e conta `dropped` (alinhado em 18/10/2026; a versão anterior desta seção citava um 429 que nunca é emitido).
+- Corpo grande: recusas pelos cabeçalhos (401, 403, 415) respondem sem ler o corpo. Com token válido, um corpo acima de 1 MiB é lido e descartado até 16 MiB, o mesmo teto do stdin do encaminhador, e depois recebe 413, para o cliente ver o status em vez de uma conexão cortada. Com `Content-Length` acima de 16 MiB, a resposta 413 sai na hora, com `Connection: close`. Se o corpo passar de 16 MiB sem ter declarado isso, a conexão é encerrada sem resposta.
 
 ## 2. Fatos (interno do servidor)
 
@@ -385,6 +387,11 @@ Exemplo de `update` (abreviado):
   ```
 
   A forma é a mesma desde o T3: até o T9a, `sessions` e `clients` valem 0.
+
+  Contadores de `events` (definidos no T3, 18/10/2026):
+  - `received` conta só os `POST /hooks` que passaram pela checagem de `Host`. Requisição com `Host` inválido (403 antes do roteamento) ou com outro método (405) não entra.
+  - `received = accepted + deduped + rejected`.
+  - `dropped` (descartado por fila cheia) e `ignored` (sem fato, ou erro no processamento) são subconjuntos de `accepted`.
 
 ## 10. Minimização e redação
 
