@@ -1,6 +1,7 @@
 # Visão geral da arquitetura (v1)
 
-> **Status:** proposta (aguarda aprovação do usuário). **Data:** 17/10/2026.
+> **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026.
+> Decisões do usuário na aprovação: captura em escopo de usuário (ADR 0002); painel mostra comandos, caminhos e títulos já redigidos, com modo discreto opcional (ADR 0006); `@playwright/test` como única devDependency (ADR 0010); barra de contexto opcional no fim da v1 e custo fora da v1 (ADR 0008). A ordem de construção, com o marco "Primeira luz", está em `docs/plano/v1.md`.
 > **Ambiente de referência:** Windows 11, Node 24.20, Claude Code 2.1.301 (terminal e extensão do VS Code).
 
 ## Em uma frase
@@ -106,7 +107,7 @@ export function removeSession(store, sessionId) {}
 - CSP restrita (`default-src 'none'`, scripts e estilos só do próprio servidor), `nosniff`, `no-referrer`, COOP e CORP.
 - Minimização: o estado nunca guarda conteúdo de arquivo, diff, saída de comando, texto do assistente nem pedido completo. Comandos, pedidos e erros são redigidos e truncados.
 - Nada de eventos em disco; `runtime.json` e o plugin instalado ficam em `%LOCALAPPDATA%\agent-quest\`, fora do OneDrive.
-- Painel com escape em todo texto dinâmico e "modo discreto" para tela compartilhada.
+- Painel com escape em todo texto dinâmico. Por padrão mostra comandos, caminhos e títulos já redigidos; o "modo discreto", opcional e desligado no início, esconde esses textos para compartilhar a tela.
 - Risco aceito: outro processo ou usuário local que acesse `127.0.0.1` pode abrir o painel.
 
 ## Limites e valores padrão
@@ -121,7 +122,7 @@ export function removeSession(store, sessionId) {}
 | Feed por sessão | 200 eventos |
 | Buffer de retomada SSE | 1000 atualizações |
 | Heartbeat SSE | 15 s |
-| Clientes SSE | 8 |
+| Clientes SSE | 8; cliente com mais de 1 MiB acumulado é desconectado e volta com snapshot |
 | Limpeza | sessão encerrada: 30 min; sem eventos: 6 h; agente "trabalhando" sem ferramenta rodando e sem eventos: 15 min |
 | Saúde | últimas 10 ações do agente |
 | Sonda de contexto (opcional) | até 1 leitura por agente a cada 5 s; últimos 64 KiB do arquivo |
@@ -175,10 +176,12 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
 
 ```powershell
 npm start                           # servidor em http://127.0.0.1:47821/ (não precisa de npm install)
+npm run dev                         # o mesmo, com node --watch (nativo): reinicia sozinho quando o código do servidor muda
 npm test                            # unidade + integração
 npm install; npm run test:e2e       # E2E com o Edge instalado (npm install só na primeira vez, com internet)
 npm run capture:deploy              # copia o plugin para %LOCALAPPDATA%\agent-quest\marketplace e mostra os comandos
 npm run inject -- test/fixtures/hooks/<cenario>.json   # injeta um cenário gravado no servidor local
+npm start -- --debug-dump           # só para depuração: grava os envelopes brutos em %LOCALAPPDATA%\agent-quest\dumps\ (dados sensíveis)
 ```
 
 Ligar a captura é uma ação do usuário, uma vez (ADR 0002):
@@ -186,6 +189,7 @@ Ligar a captura é uma ação do usuário, uma vez (ADR 0002):
 ```powershell
 claude plugin marketplace add "$env:LOCALAPPDATA\agent-quest\marketplace"
 claude plugin install agent-quest@agent-quest-local
+# numa sessão já aberta: /reload-plugins; nas demais, vale a partir da próxima sessão
 # pausar:  claude plugin disable agent-quest@agent-quest-local
 # remover: claude plugin marketplace remove agent-quest-local
 # testar sem instalar: claude --plugin-dir "<repo>\capture\plugins\agent-quest"
@@ -193,4 +197,4 @@ claude plugin install agent-quest@agent-quest-local
 
 ## Fora da v1
 
-XP, níveis, conquistas, replay, custo da sessão, regressão de testes, início automático do servidor com o Windows e token de acesso ao painel. O custo tem caminho registrado no ADR 0008 (OpenTelemetry, com aprovação do usuário).
+XP, níveis, conquistas, replay, custo da sessão, regressão de testes, início automático do servidor com o Windows e token de acesso ao painel. O custo tem caminho registrado no ADR 0008 (OpenTelemetry), que só entra depois da v1 e com nova aprovação do usuário. A barra de contexto (T15 e T16) é opcional e fica para o fim da v1.

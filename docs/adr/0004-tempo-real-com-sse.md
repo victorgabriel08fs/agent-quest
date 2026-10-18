@@ -1,7 +1,7 @@
 # ADR 0004: Tempo real com Server-Sent Events
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -26,3 +26,7 @@ O painel só recebe dados. As ações de quem observa (tema, sessão escolhida, 
 - O `EventSource` do navegador reconecta sozinho.
 - As mensagens são idempotentes por `seq`: o cliente ignora repetidas e, se notar uma lacuna, busca `/api/state`.
 - O `EventSource` não envia cabeçalhos próprios. A proteção do fluxo é por `Host` e `Origin` (ADR 0006).
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. O plano entrega o SSE em duas partes: T9a (`hello`, `snapshot`, `update`, `session-removed`, heartbeat e limite de clientes; toda conexão recebe `snapshot`) e T9b (retomada por `Last-Event-ID` e desconexão de cliente lento). Mandar `snapshot` numa reconexão já é um comportamento previsto nesta decisão (id de outra execução ou fora do buffer), então o contrato não muda entre as duas partes.

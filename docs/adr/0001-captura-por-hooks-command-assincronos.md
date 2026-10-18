@@ -1,7 +1,7 @@
 # ADR 0001: Captura por hooks `command` assíncronos
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -56,3 +56,7 @@ Ficam de fora: `MessageDisplay` (síncrono e carrega o texto do assistente), `Po
 
 - https://code.claude.com/docs/en/hooks (seções "Run hooks in the background", "HTTP hook fields", "Exit code output", "Debug hooks")
 - `docs/pesquisa/hooks-claude-code.md`, seções 5, 8 e 9
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. A confirmação do V10 no T0 (hooks assíncronos sem bloqueio, sem aviso e sem janela de console piscando, no terminal e no VS Code) é condição para o usuário instalar a captura no marco "Primeira luz" (`docs/plano/v1.md`, G0a). Se o V10 for refutado, esta ADR é reaberta com o usuário antes de qualquer instalação.

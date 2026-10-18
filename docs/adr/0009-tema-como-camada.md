@@ -1,7 +1,7 @@
 # ADR 0009: Tema como camada de apresentação
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -43,3 +43,7 @@ Regra do produto: Escritório e Guilda traduzem os mesmos eventos canônicos, e 
 
 - Um tema novo é um arquivo JS e um bloco de CSS.
 - A legenda do painel é gerada a partir dos próprios temas, então não fica desatualizada.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão.

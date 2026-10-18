@@ -1,7 +1,7 @@
 # ADR 0010: Estratégia de testes
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -36,3 +36,11 @@ O time divide os testes: cada dev escreve os unitários do que implementou, e o 
 
 - `npm install` só é necessário para o ponta a ponta, uma vez, com internet.
 - Os cenários do T0 viram a base comum de testes de backend, frontend e integração.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas definições:
+
+- `@playwright/test` aprovado como a única devDependency do projeto.
+- Sessão de teste do T0 autorizada. O próprio usuário roda o roteiro, com o orquestrador acompanhando.
+- Os roteiros manuais com o Claude Code real passam a ser três: T0, marco "Primeira luz" e marco de aceite da v1 (`docs/plano/v1.md`).

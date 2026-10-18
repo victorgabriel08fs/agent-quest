@@ -1,7 +1,7 @@
 # ADR 0007: Identidade dos agentes e papéis do time
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -47,3 +47,7 @@ O painel mostra quem fez cada ação. Segundo a documentação dos hooks:
 
 - https://code.claude.com/docs/en/hooks (campos comuns, SubagentStart, SubagentStop)
 - `docs/pesquisa/hooks-claude-code.md`, seção 3
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. A confirmação do V1 e do V9 no T0 é condição para o recorte da Primeira luz (G0a em `docs/plano/v1.md`). Se o V1 for refutado, esta ADR é reaberta com o usuário antes do T5.

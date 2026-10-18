@@ -1,7 +1,7 @@
 # ADR 0006: Segurança do servidor local e dos dados dos eventos
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -47,3 +47,7 @@ Os eventos trazem caminhos, comandos, trechos de código, saídas e pedidos do u
 - Processos locais do mesmo usuário conseguem ler o token e abrir o painel. Aceito: eles já têm acesso aos mesmos arquivos.
 - Em máquina compartilhada entre usuários do Windows, outro usuário logado poderia abrir o painel. Se isso mudar, reabrir a decisão sobre o token do painel.
 - A redação é heurística e pode deixar passar um segredo de formato desconhecido. O modo discreto cobre o caso de tela compartilhada.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com a definição do padrão de exibição: por padrão, o painel mostra comandos, caminhos e títulos de pedidos já minimizados, truncados e redigidos pelo normalizador. O modo discreto é opcional, começa desligado e é ativado por quem observa (T14 do plano).

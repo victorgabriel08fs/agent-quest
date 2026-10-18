@@ -1,7 +1,7 @@
 # ADR 0005: Estado só em memória na v1, com dados fora do OneDrive
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -28,3 +28,7 @@ O replay ficou para depois da v1. Os eventos podem conter código, comandos e se
 
 - Reiniciar o servidor zera o painel. As sessões reaparecem no próximo evento, com um ticket implícito "em andamento".
 - Os eventos canônicos já têm `seq` e `ts`, então gravá-los em JSONL quando o replay entrar não muda o contrato.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão.

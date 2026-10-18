@@ -1,7 +1,7 @@
 # ADR 0002: Captura instalada como plugin de um marketplace local
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -38,7 +38,7 @@ O que foi conferido na documentação oficial (plugins, 17/10/2026):
 ## Consequências
 
 - Nada do Agent Quest edita arquivos de configuração. O Claude Code grava só as chaves que ele mesmo gerencia (`extraKnownMarketplaces` e `enabledPlugins`).
-- A captura vale em todas as sessões de todos os projetos. Quem quiser só alguns projetos pode instalar com `--scope local` em cada um (pergunta ao usuário).
+- A captura vale em todas as sessões de todos os projetos. Quem quiser só alguns projetos pode instalar com `--scope local` em cada um (o usuário escolheu o escopo de usuário; ver "Aprovação").
 - Mudança no encaminhador só chega às sessões depois de `npm run capture:deploy` e de uma sessão nova (ou `/reload-plugins`).
 - Em pasta sem confiança de workspace, o Claude Code pode segurar os hooks até o usuário aceitar o diálogo de confiança.
 
@@ -49,3 +49,9 @@ O que foi conferido na documentação oficial (plugins, 17/10/2026):
 - https://code.claude.com/docs/en/plugins/cli-reference (`install`, `uninstall`, `enable`, `disable`, `marketplace add/remove`, escopos)
 - https://code.claude.com/docs/en/plugin-marketplaces (marketplace local)
 - https://code.claude.com/docs/en/vs-code (plugins compartilhados entre extensão e CLI)
+- https://code.claude.com/docs/en/plugins/cli-reference#reload-plugins (`/reload-plugins` aplica na sessão aberta plugins instalados por um `claude plugin` rodado em outro terminal)
+- https://code.claude.com/docs/en/prompt-caching#enabling-or-disabling-a-plugin ("Claude Code never invalidates the cache for a plugin's skills, commands, agents, hooks, monitors, or themes")
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com o **escopo de usuário**: a captura vale em todas as sessões de todos os projetos, no terminal e no VS Code. A instalação é feita pelo próprio usuário no marco "Primeira luz" (`docs/plano/v1.md`), depois de um teste curto com `--plugin-dir`. Numa sessão que já estava aberta, a captura passa a valer depois de `/reload-plugins` nela; como o plugin só tem hooks, o recarregamento não invalida o cache de prompt (fontes acima). Nas outras sessões, vale a partir da próxima sessão.

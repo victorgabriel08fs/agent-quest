@@ -1,7 +1,8 @@
 # Modelo de eventos
 
-> **Status:** proposta (aguarda aprovação do usuário). **Data:** 17/10/2026. **Base:** Claude Code 2.1.301.
+> **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026. **Base:** Claude Code 2.1.301.
 > Contrato entre a captura, o servidor e o painel na v1. Itens marcados **[T0]** dependem da validação prática da primeira tarefa do plano (`docs/plano/v1.md`). Decisões relacionadas: ADRs 0001, 0005, 0007 e 0008.
+> Nos exemplos, `<repo>` é o caminho absoluto do repositório (no ambiente de referência, uma pasta dentro do OneDrive) e `<agent-id>` é um `agent_id` real qualquer.
 
 ## Camadas
 
@@ -23,7 +24,7 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
   "v": 1,
   "sentAt": 1760731234567,
   "forwarder": "0.1.0",
-  "env": { "projectDir": "C:/Users/victo/OneDrive/Documentos/Code/agents-quest", "entrypoint": null },
+  "env": { "projectDir": "<repo>", "entrypoint": null },
   "truncated": false,
   "payload": { "hook_event_name": "PreToolUse", "session_id": "…", "tool_name": "Read", "…": "…" }
 }
@@ -96,7 +97,7 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 | `context.compacted` | o agente | `{ trigger }` | sim |
 | `context.usage` | o agente | `{ pct, usedTokens, windowTokens }` (opcional, T15) | não |
 
-`shared/contract.js` exporta essas listas (`EVENT_KINDS`, `FEED_KINDS`, `ROLES`, `TOOL_CATEGORIES`, `PHASES`, `AGENT_STATUS`, `SESSION_STATUS`).
+`shared/contract.js` exporta essas listas (`EVENT_KINDS`, `FEED_KINDS`, `ROLES`, `TOOL_CATEGORIES`, `PHASES`, `AGENT_STATUS`, `SESSION_STATUS`, `QUEST_STATUS`).
 
 ### Categorias de ferramenta
 
@@ -346,16 +347,16 @@ Exemplo de `update` (abreviado):
   "seq": 1240,
   "event": {
     "id": "k3f9q:1240", "seq": 1240, "ts": 1760731240100, "sessionId": "5f1c…",
-    "agentKey": "a36aef58c2a581388", "kind": "tool.started",
+    "agentKey": "<agent-id>", "kind": "tool.started",
     "data": { "toolUseId": "toolu_01…", "tool": "Bash", "category": "test", "target": "npm test", "detail": "Rodar a suíte" }
   },
   "session": {
-    "id": "5f1c…", "project": { "key": "c:/users/victo/onedrive/documentos/code/agents-quest", "name": "agents-quest", "dir": "C:/Users/victo/OneDrive/Documentos/Code/agents-quest" },
+    "id": "5f1c…", "project": { "key": "<repo normalizado como na seção 7>", "name": "agents-quest", "dir": "<repo>" },
     "label": "Implementar a ingestão", "client": null, "status": "active",
     "roster": ["orq", "arq", "dev", "tes", "doc"],
     "agents": [
       { "key": "main", "role": "orq", "status": "working", "activity": { "kind": "delegate", "...": "..." }, "...": "..." },
-      { "key": "a36aef58c2a581388", "agentType": "tester", "role": "tes", "label": "testar a ingestão", "status": "working", "health": { "ok": 7, "total": 8 }, "...": "..." }
+      { "key": "<agent-id>", "agentType": "tester", "role": "tes", "label": "testar a ingestão", "status": "working", "health": { "ok": 7, "total": 8 }, "...": "..." }
     ],
     "quest": { "id": "9b0e…", "n": 3, "title": "Implementar a ingestão", "status": "open", "phases": { "design": "done", "code": "done", "test": "active", "docs": "pending" }, "actions": 41, "...": "..." },
     "counters": { "questsDone": 2, "bugsCrushed": 3, "pendingApprovals": 0 },
@@ -396,6 +397,8 @@ Exemplo de `update` (abreviado):
 Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres.
 
 ## 11. A confirmar no T0
+
+V1, V9 e V10 liberam o recorte da Primeira luz e a instalação da captura (G0a do plano). Os demais itens entram na revisão completa (G0b), antes do T6 e do T8.
 
 | # | Item | Se falhar |
 |---|---|---|

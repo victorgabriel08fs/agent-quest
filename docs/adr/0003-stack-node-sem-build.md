@@ -1,7 +1,7 @@
 # ADR 0003: Node 24, JavaScript ESM sem build e zero dependências de runtime
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -28,3 +28,7 @@ O Agent Quest roda 100% local e precisa funcionar offline depois de instalado, c
 - `npm start` funciona sem `npm install`.
 - Tipos só no editor. Os contratos ficam protegidos por testes de contrato.
 - O mesmo código puro (store, temas, regras) roda no navegador e nos testes do Node.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. O usuário aprovou `@playwright/test` como a única devDependency (ADR 0010). O runtime continua sem dependências.

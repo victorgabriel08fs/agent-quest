@@ -1,5 +1,6 @@
 > Levantamento feito em 17/10/2026 por um agente de pesquisa, a partir da documentação oficial do Claude Code.
 > Itens marcados **VERIFY** não foram confirmados e precisam ser validados na prática antes de virar premissa do design.
+> Caminhos da máquina do usuário foram trocados por marcadores genéricos: `%USERPROFILE%` ou `~` (pasta pessoal), `<repo>` (caminho do repositório, que fica dentro do OneDrive), `<project>` e `<outro-projeto>` (pastas de projeto em `~/.claude/projects/`), `<session-id>` e `<agent-id>`.
 
 # Agent Quest: Claude Code hooks, subagents, and telemetry (checked 2026-10-17)
 
@@ -106,7 +107,7 @@ Cadence: SessionStart and SessionEnd once per session; UserPromptSubmit, Stop, S
 
 ## 3. Subagent attribution
 
-**a. Identity.** Subagents are Markdown files in `.claude/agents/` (project) or `~/.claude/agents/` (user). The frontmatter `name` becomes `agent_type`. Your five files in `C:\Users\victo\OneDrive\Documentos\Code\agents-quest\.claude\agents\` (arquiteto, dev-backend, dev-frontend, tester, documentador) each have a `name` equal to the file name, so `agent_type` will be exactly those strings. Built-in types include `general-purpose`, `Explore`, `Plan`. The main session has no `agent_id`, and it has an `agent_type` only when started with `--agent`.
+**a. Identity.** Subagents are Markdown files in `.claude/agents/` (project) or `~/.claude/agents/` (user). The frontmatter `name` becomes `agent_type`. Your five files in `<repo>\.claude\agents\` (arquiteto, dev-backend, dev-frontend, tester, documentador) each have a `name` equal to the file name, so `agent_type` will be exactly those strings. Built-in types include `general-purpose`, `Explore`, `Plan`. The main session has no `agent_id`, and it has an `agent_type` only when started with `--agent`.
 
 **b. Coverage.** Hooks from settings files, managed policy, and plugins also fire inside subagents. PreToolUse and PostToolUse fire for subagent tool calls the same way they do in the main conversation. So one global hook in `~/.claude/settings.json` sees every subagent's tool calls without per-agent config. Frontmatter `hooks` run only while their subagent runs. SubagentStart and SubagentStop are configured in settings files, not in frontmatter.
 
@@ -178,13 +179,13 @@ Before step 2, you can only match heuristically. SubagentStart gives `agent_id` 
 - Never print JSON or exit 2 from the observer. On UserPromptSubmit and SessionStart, stdout becomes model context.
 - SessionEnd: a 2-second per-hook timeout raises the shared budget to 2 seconds, so exit can wait that long. Use 1 second if you want exit faster.
 
-Sample `~/.claude/settings.json` (you write `forward.mjs`):
+Sample `~/.claude/settings.json` (you write `forward.mjs`; `%USERPROFILE%` stands for the absolute path of your home folder, written out in full, because exec form runs no shell):
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "node", "args": ["C:/Users/victo/.claude/agent-quest/forward.mjs"], "async": true } ] }
+      { "hooks": [ { "type": "command", "command": "node", "args": ["%USERPROFILE%/.claude/agent-quest/forward.mjs"], "async": true } ] }
     ],
     "PreToolUse": [
       { "hooks": [ { "type": "http", "url": "http://127.0.0.1:7777/hooks", "timeout": 2 } ] }
@@ -214,7 +215,7 @@ Repeat the http entry for SubagentStart, SubagentStop, Stop, StopFailure, PostTo
 { "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/agent-quest.mjs"], "async": true }
 ```
 
-My suggestion: your repo sits under OneDrive (`C:\Users\victo\OneDrive\Documentos\...`). Keep the observer script outside OneDrive, for example in `C:\Users\victo\.claude\agent-quest\`, so it is not an online-only file that stalls on first run.
+My suggestion: your repo sits under OneDrive (`%USERPROFILE%\OneDrive\...`). Keep the observer script outside OneDrive, for example in `%USERPROFILE%\.claude\agent-quest\`, so it is not an online-only file that stalls on first run.
 
 ## 7. Where hooks live
 
@@ -233,13 +234,13 @@ My suggestion: your repo sits under OneDrive (`C:\Users\victo\OneDrive\Documento
 - **Distribution:** a plugin with `hooks/hooks.json` and `${CLAUDE_PLUGIN_ROOT}`.
 - **Not suitable for global monitoring:** subagent frontmatter (repeated per agent; plugin subagents ignore it). SubagentStart and SubagentStop must live in settings.
 - `/hooks` lists all configured hooks. `"disableAllHooks": true` in any settings file turns off hooks and the status line. Edits are picked up by the file watcher without a restart.
-- **Current state here:** `C:\Users\victo\.claude\settings.json` has no `hooks`, `statusLine`, or telemetry keys, and `C:\Users\victo\OneDrive\Documentos\Code\agents-quest\.claude\` has no `settings.json`.
+- **Current state here:** `~/.claude/settings.json` has no `hooks`, `statusLine`, or telemetry keys, and `<repo>\.claude\` has no `settings.json`.
 
 ## 8. Transcripts
 
-- **Path:** `~/.claude/projects/<project>/<session-id>.jsonl`. `<project>` is the working directory with non-alphanumeric characters replaced by `-` (over 200 characters: truncated plus a hash). On this machine: `C:\Users\victo\.claude\projects\c--Users-victo-OneDrive-Documentos-Code-agents-quest\<session-id>.jsonl`. The drive-letter case differs between your projects (`c--` and `C--`), so take `transcript_path` from the payloads rather than rebuilding it.
-- **Subagents:** `~/.claude/projects/{project}/{sessionId}/subagents/agent-{agentId}.jsonl`. Example here: `C:\Users\victo\.claude\projects\c--Users-victo-OneDrive-Documentos-Code-agents-quest\89a5490e-cbe3-4ba6-a688-1cb030b1143e\subagents\agent-a36aef58c2a581388.jsonl`. SubagentStop's `agent_transcript_path` gives the exact path.
-- **Format:** one JSON object per line. The sessions page says the entry format "is internal to Claude Code and changes between versions." In a subagent file on this machine (`C:\Users\victo\.claude\projects\c--Users-victo-OneDrive-Documentos-Code-feedpass-laravel\349a65ba-8cf8-4e11-9871-1f1756328a49\subagents\agent-a63e874fb6e9b3488.jsonl`), I observed these keys, which are not documented: `type`, `uuid`, `parentUuid`, `sessionId` (the parent session's id), `agentId`, `isSidechain: true`, `timestamp`, `version` (2.1.278). Assistant entries carry `message.model` and `message.usage` with `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and `cache_creation` {`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`}.
+- **Path:** `~/.claude/projects/<project>/<session-id>.jsonl`. `<project>` is the working directory with non-alphanumeric characters replaced by `-` (over 200 characters: truncated plus a hash). On this machine: `%USERPROFILE%\.claude\projects\<project>\<session-id>.jsonl`, where `<project>` is the repo path with `:` and `\` turned into `-` (it starts with `c--Users-` and includes the OneDrive folder). The drive-letter case differs between your projects (`c--` and `C--`), so take `transcript_path` from the payloads rather than rebuilding it.
+- **Subagents:** `~/.claude/projects/{project}/{sessionId}/subagents/agent-{agentId}.jsonl`. Example here: `%USERPROFILE%\.claude\projects\<project>\<session-id>\subagents\agent-<agent-id>.jsonl`. SubagentStop's `agent_transcript_path` gives the exact path.
+- **Format:** one JSON object per line. The sessions page says the entry format "is internal to Claude Code and changes between versions." In a subagent file on this machine, from another project (`%USERPROFILE%\.claude\projects\<outro-projeto>\<session-id>\subagents\agent-<agent-id>.jsonl`), I observed these keys, which are not documented: `type`, `uuid`, `parentUuid`, `sessionId` (the parent session's id), `agentId`, `isSidechain: true`, `timestamp`, `version` (2.1.278). Assistant entries carry `message.model` and `message.usage` with `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and `cache_creation` {`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`}.
 - **Usage:** `message.usage` per assistant entry is where token counts sit in the file. The docs do not promise that. Documented alternatives are in section 9.
 - The monitoring page says assistant entries carry `requestId`, which matches OTel `request_id`, and warns that joins on these fields can break between releases.
 - Writes are asynchronous. Read the file lazily, not inside a hook.
@@ -301,7 +302,7 @@ My suggestion: your repo sits under OneDrive (`C:\Users\victo\OneDrive\Documento
 **Test (about 5 minutes):** add a dump hook for PreToolUse, PostToolUse, PermissionRequest, SubagentStart, SubagentStop, and Stop in `~/.claude/settings.json`:
 
 ```json
-{ "type": "command", "command": "node", "args": ["C:/Users/victo/.claude/agent-quest/dump.mjs"], "async": true }
+{ "type": "command", "command": "node", "args": ["%USERPROFILE%/.claude/agent-quest/dump.mjs"], "async": true }
 ```
 
 `dump.mjs`:
@@ -311,7 +312,7 @@ import { appendFileSync } from "node:fs";
 let raw = "";
 process.stdin.on("data", (c) => (raw += c));
 process.stdin.on("end", () => {
-  appendFileSync("C:/Users/victo/.claude/agent-quest/events.jsonl",
+  appendFileSync("%USERPROFILE%/.claude/agent-quest/events.jsonl", // use the absolute path
     JSON.stringify({ received: Date.now(), ...JSON.parse(raw) }) + "\n");
 });
 ```
@@ -334,6 +335,6 @@ The Agent SDK pages were not needed for CLI hooks.
 
 ## Local files checked
 
-- `C:\Users\victo\.claude\settings.json`: no `hooks`, `statusLine`, or telemetry keys.
-- `C:\Users\victo\OneDrive\Documentos\Code\agents-quest\.claude\agents\` (arquiteto.md, dev-backend.md, dev-frontend.md, tester.md, documentador.md): each `name` matches its file name, and none sets frontmatter `hooks`.
+- `~/.claude/settings.json`: no `hooks`, `statusLine`, or telemetry keys.
+- `<repo>\.claude\agents\` (arquiteto.md, dev-backend.md, dev-frontend.md, tester.md, documentador.md): each `name` matches its file name, and none sets frontmatter `hooks`.
 - Subagent transcript examples are listed in section 8.

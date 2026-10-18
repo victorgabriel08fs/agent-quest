@@ -1,7 +1,7 @@
 # ADR 0008: De onde vem cada indicador do painel
 
-- **Status:** proposta (aguarda aprovação do usuário)
-- **Data:** 17/10/2026
+- **Status:** aceita em 18/10/2026 (aprovada pelo usuário)
+- **Data da proposta:** 17/10/2026
 
 ## Contexto
 
@@ -45,3 +45,10 @@ Sobre o custo, as fontes possíveis e por que nenhuma entra na v1:
 - Todo indicador aproximado leva "≈" ou uma nota no tooltip e aparece na legenda com a fonte.
 - O topo do painel mostra: duração da sessão, bugs esmagados, tickets entregues e aprovações pendentes.
 - Quando um dado não existe (por exemplo, contexto de um agente sem transcript legível), o indicador some em vez de mostrar zero.
+
+## Aprovação
+
+Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas definições:
+
+- **Barra de contexto (Foco / Mana):** opcional, no fim da v1 (T15 e T16). Pode sair da v1 sem afetar o resto.
+- **Custo da sessão:** fora da v1. OpenTelemetry, ou qualquer outra fonte de custo, só entra depois da v1 e com nova aprovação do usuário, porque exige mudar o `env` do `~/.claude/settings.json` e criar um receptor OTLP local.
