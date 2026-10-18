@@ -197,7 +197,11 @@ function dropLastWord(text) {
   return text.slice(0, end);
 }
 
-/** Espaço em branco no sentido de \s das expressões regulares. */
+/**
+ * Espaço em branco no sentido de \s das expressões regulares.
+ * @param {number} code
+ * @returns {boolean}
+ */
 function isSpace(code) {
   return (code >= 0x09 && code <= 0x0d) || code === 0x20 || code === 0xa0 || code === 0x1680
     || (code >= 0x2000 && code <= 0x200a) || code === 0x2028 || code === 0x2029 || code === 0x202f
@@ -273,14 +277,24 @@ function redactPairs(text) {
   return out + text.slice(last);
 }
 
-/** Os primeiros `n` caracteres (pontos de código), sem partir um par de surrogates. */
+/**
+ * Os primeiros `n` caracteres (pontos de código), sem partir um par de surrogates.
+ * @param {string} text
+ * @param {number} n
+ * @returns {string}
+ */
 function takeChars(text, n) {
   let i = 0;
   for (let count = 0; count < n && i < text.length; count++) i += isPairStart(text, i) ? 2 : 1;
   return text.slice(0, i);
 }
 
-/** true quando a posição começa um par de surrogates válido. */
+/**
+ * true quando a posição começa um par de surrogates válido.
+ * @param {string} text
+ * @param {number} i
+ * @returns {boolean}
+ */
 function isPairStart(text, i) {
   const high = text.charCodeAt(i);
   if (high < 0xd800 || high > 0xdbff || i + 1 >= text.length) return false;
