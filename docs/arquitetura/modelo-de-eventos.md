@@ -42,7 +42,13 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 - **Teto do corpo** (definido em 18/10/2026). O corte por string não basta quando o payload tem muitas strings menores, como um Glob com milhares de arquivos: o envelope passava de 1 MiB, recebia 413 e o evento se perdia, depois de 170 a 270 ms enviando cerca de 10 MiB. O encaminhador garante um corpo de no máximo 1 000 000 bytes, em até três passos, parando no primeiro que couber:
   1. o corte normal de 4096 unidades;
   2. strings acima de 512 unidades viram 128 do início + 384 do fim, com o mesmo marcador, e listas com mais de 100 itens ficam com os 100 primeiros;
-  3. envelope mínimo: o `payload` mantém só os valores simples (texto, número, booleano, `null`) do primeiro nível e os valores simples de `tool_input`, com textos de até 512 unidades. Listas e objetos aninhados saem; `session_id` e `hook_event_name` ficam sempre.
+  3. envelope mínimo: o `payload` recebe só valores simples (texto, número, booleano, `null`), com textos de até 512 unidades, acrescentados um a um enquanto o corpo couber. Listas e objetos aninhados saem. A ordem de entrada (refinada em 18/10/2026) é:
+     - obrigatórios: `hook_event_name`, `session_id` e, se existir no original, `agent_id`. Sem o `agent_id`, um evento de subagente seria atribuído ao `main`;
+     - prioritários: `agent_type`, `tool_name`, `tool_use_id`, `prompt_id`, `cwd`, `notification_type`, `source`, `reason` e `trigger`;
+     - os demais valores simples do primeiro nível, na ordem do original;
+     - os valores simples de `tool_input`, na ordem do original.
+
+     Se nem os obrigatórios couberem, o encaminhador não envia e sai em silêncio, como em qualquer outra falha.
 
   Em qualquer passo além do primeiro, `truncated` é `true`. O encaminhador continua sem saber o que o normalizador usa: os passos são genéricos. Perda aceita no passo 3: um Stop gigante perde `background_tasks`, e o reducer trata como Stop sem tarefas.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.

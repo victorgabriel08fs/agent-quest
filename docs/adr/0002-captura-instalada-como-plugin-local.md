@@ -55,3 +55,14 @@ O que foi conferido na documentação oficial (plugins, 17/10/2026):
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com o **escopo de usuário**: a captura vale em todas as sessões de todos os projetos, no terminal e no VS Code. A instalação é feita pelo próprio usuário no marco "Primeira luz" (`docs/plano/v1.md`), depois de um teste curto com `--plugin-dir`. Numa sessão que já estava aberta, a captura passa a valer depois de `/reload-plugins` nela; como o plugin só tem hooks, o recarregamento não invalida o cache de prompt (fontes acima). Nas outras sessões, vale a partir da próxima sessão.
+
+## Complemento de 18/10/2026: versão da captura
+
+- **Uma versão só para a captura**, no formato semver: a mesma string em `capture/plugins/agent-quest/.claude-plugin/plugin.json`, na entrada do plugin em `capture/.claude-plugin/marketplace.json` e no `FORWARDER_VERSION` do `forward.mjs`, que vai no campo `forwarder` do envelope. Um teste unitário confere que as três são iguais. A versão da captura é independente da do servidor (`package.json`), porque a captura é implantada à parte (`npm run capture:deploy`).
+- **Quando subir:** toda mudança de comportamento em `capture/` sobe a versão.
+  - Patch para correção ou mudança compatível; por exemplo, o teto do corpo leva a `0.1.1`.
+  - Minor para hook novo ou campo novo e opcional no envelope.
+  - Major quando o envelope mudar de `v`.
+  - Mudança só de texto ou de teste não sobe.
+- **Quem sobe:** o dev que muda `capture/`, no mesmo commit. O tester confere o teste das três versões, e o documentador registra a versão no `CHANGELOG.md`.
+- **Para que serve:** um plugin de marketplace local é carregado direto da pasta, qualquer que seja a versão declarada (fonte: plugins/loading, "loads its current source files at every session start, whatever its version string says"). Por isso a versão não controla atualização: ela serve para identificar, nos dumps e no servidor, qual encaminhador mandou cada envelope, e para o orquestrador avisar o usuário de que há um deploy novo a fazer.
