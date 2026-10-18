@@ -6,7 +6,7 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 
 | Guia | O que cobre |
 |---|---|
-| [Iniciar e parar o servidor](guias/servidor.md) | Requisitos, `npm start` e `npm run dev`, porta, diretório de dados, `runtime.json`, `--debug-dump`, como parar em cada terminal, mensagens comuns, `/api/health` e segurança |
+| [Iniciar e parar o servidor](guias/servidor.md) | Requisitos, `npm start` e `npm run dev`, porta, diretório de dados e `AGENT_QUEST_HOME`, `runtime.json`, `--debug-dump`, como parar em cada terminal, mensagens comuns, `/api/health`, solução de problemas e segurança |
 
 ## Arquitetura
 

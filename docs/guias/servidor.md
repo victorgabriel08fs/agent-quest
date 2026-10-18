@@ -119,7 +119,7 @@ npm start -- --debug-dump
 
 ## Onde ficam os dados
 
-O diretório de dados é `%LOCALAPPDATA%\agent-quest\`. Ele fica fora do OneDrive de propósito: ali há um token que não deve ser sincronizado com a nuvem. Para abrir a pasta:
+O diretório de dados é `%LOCALAPPDATA%\agent-quest\`. Ele fica fora do OneDrive de propósito: ali há um token que não deve ser sincronizado com a nuvem. No uso normal, é sempre esta pasta; a variável `AGENT_QUEST_HOME`, que troca o diretório, serve para isolar testes e desenvolvimento (veja [Usar outra pasta](#usar-outra-pasta-agent_quest_home)). Para abrir a pasta:
 
 ```powershell
 explorer "$env:LOCALAPPDATA\agent-quest"
@@ -159,18 +159,33 @@ Não edite o arquivo. Ele é gravado de forma atômica (primeiro num arquivo tem
 
 ### Usar outra pasta (`AGENT_QUEST_HOME`)
 
-A variável `AGENT_QUEST_HOME` troca o diretório de dados inteiro. A pasta é criada se não existir.
+A variável `AGENT_QUEST_HOME` troca o diretório de dados inteiro (a pasta é criada se não existir). **No uso normal, não defina essa variável.** O diretório padrão já fica fora do OneDrive e funciona sem nenhum ajuste.
 
-```powershell
-$env:AGENT_QUEST_HOME = "D:\agent-quest-dados"; npm start
+O motivo: o servidor, o `npm run capture:deploy` e o encaminhador da captura procuram o diretório de dados cada um com o próprio ambiente. O encaminhador roda dentro do Claude Code e enxerga as variáveis do Claude Code, não as do terminal do servidor. Se `AGENT_QUEST_HOME` estiver definida só no terminal do servidor, a captura procura o `runtime.json` em `%LOCALAPPDATA%\agent-quest\`, não encontra e sai em silêncio: parece desligada, sem nenhum erro ([ADR 0005](../adr/0005-estado-em-memoria.md), complemento "`AGENT_QUEST_HOME` dos dois lados").
+
+Por isso, sempre que a variável está definida, o servidor avisa ao iniciar:
+
+```text
+Aviso: AGENT_QUEST_HOME está definida (<diretório>). A captura só encontra este servidor se o Claude Code tiver a mesma variável, com o mesmo valor, no ambiente dele (terminal e VS Code). No uso normal, deixe AGENT_QUEST_HOME sem valor.
 ```
 
-> **Atenção:** o encaminhador da captura procura o `runtime.json` com a mesma regra, mas no ambiente do Claude Code, não no terminal do servidor. Se você definir `AGENT_QUEST_HOME` só no terminal do servidor, a captura continua procurando em `%LOCALAPPDATA%\agent-quest\` e não encontra o servidor.
+Quando faz sentido usar:
 
-- **Para usar outra pasta no dia a dia**, defina a variável para a sua conta do Windows (no menu Iniciar, procure "Editar as variáveis de ambiente para sua conta") e abra de novo o terminal e o Claude Code.
-- **Para testes**, uma pasta temporária definida só no terminal basta. É o que os testes automáticos fazem, para nunca mexer no servidor de verdade.
+- **Para isolar testes e desenvolvimento**, sem o Claude Code no meio. Defina a variável só no terminal, com uma pasta temporária, e use também outra porta, porque a 47821 é a do servidor de uso normal:
 
-Se o diretório de dados ficar dentro do OneDrive, o servidor avisa no início e sobe assim mesmo. Nesse caso, troque por uma pasta fora do OneDrive.
+  ```powershell
+  $env:AGENT_QUEST_HOME = "$env:TEMP\agent-quest-teste"; npm start -- --port 0
+  ```
+
+  Ao terminar, limpe a variável desse terminal com `Remove-Item Env:AGENT_QUEST_HOME`. Os testes automáticos fazem o mesmo, com pasta temporária e porta livre, para nunca mexer no servidor de verdade.
+
+- **Se você precisar mesmo de outro diretório no dia a dia** (por exemplo, porque o seu `%LOCALAPPDATA%` fica dentro do OneDrive), a variável tem de valer igual para o servidor, para o `npm run capture:deploy` e para o Claude Code, no terminal e no VS Code:
+  1. No menu Iniciar, procure "Editar as variáveis de ambiente para sua conta" e crie `AGENT_QUEST_HOME` nas variáveis de usuário, com uma pasta fora do OneDrive.
+  2. Feche e abra de novo todos os terminais e o VS Code, e reabra as sessões do Claude Code. O que já estava aberto continua com o ambiente antigo.
+
+  Para voltar ao padrão, apague a variável na mesma janela e reabra tudo de novo.
+
+Se o diretório de dados ficar dentro do OneDrive, o servidor avisa no início e sobe assim mesmo; veja o que fazer em [Mensagens comuns](#mensagens-comuns).
 
 ## Parar o servidor
 
@@ -218,7 +233,20 @@ Para trocar a porta, pare o servidor atual (Ctrl+C na janela dele) e inicie de n
 
 ### "A porta 47821 já está em uso por outro programa."
 
+```text
+A porta 47821 já está em uso por outro programa.
+Escolha outra porta: npm start -- --port <número> (ou AGENT_QUEST_PORT, ou "port" no config.json do diretório de dados).
+```
+
 Um programa que não é o Agent Quest ocupa a porta. O servidor não sobe e sai com código 1. Escolha outra porta com `--port`, `AGENT_QUEST_PORT` ou `config.json` (veja [Escolher a porta](#escolher-a-porta)).
+
+O comando sugerido na segunda linha acompanha o jeito como você iniciou o servidor:
+
+| Iniciou com | Sugestão |
+|---|---|
+| `npm start` | `npm start -- --port <número>` |
+| `npm run dev` | `npm run dev -- --port <número>` |
+| `node server/main.js`, direto pelo Node | `node server/main.js --port <número>` |
 
 Para descobrir qual programa está na porta, no PowerShell:
 
@@ -228,7 +256,12 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 47821 -State Listen).OwningProc
 
 ### "Sem permissão para usar a porta ..."
 
-O Windows reserva algumas faixas de portas (por exemplo, para o Hyper-V ou o WSL), e a porta escolhida caiu numa delas. O servidor sai com código 1. Escolha outra porta. Para ver as faixas reservadas:
+```text
+Sem permissão para usar a porta 47821 (o Windows reserva algumas faixas).
+Escolha outra porta: npm start -- --port <número>.
+```
+
+O Windows reserva algumas faixas de portas (por exemplo, para o Hyper-V ou o WSL), e a porta escolhida caiu numa delas. O servidor sai com código 1. Escolha outra porta; o comando sugerido segue o modo em uso, como na mensagem anterior. Para ver as faixas reservadas:
 
 ```powershell
 netsh interface ipv4 show excludedportrange protocol=tcp
@@ -244,9 +277,28 @@ Porta inválida em --port: "80". Use um número inteiro de 1024 a 65535 (ou 0 pa
 
 A mensagem diz de onde veio o valor: `--port`, `AGENT_QUEST_PORT` ou o caminho do `config.json`. Portas de 1 a 1023, acima de 65535 ou que não sejam número inteiro são recusadas, e o servidor sai com código 1 sem subir. Corrija o valor na fonte indicada. Se a fonte for `AGENT_QUEST_PORT`, a variável pode ter ficado definida no terminal: `Remove-Item Env:AGENT_QUEST_PORT`.
 
-### "Aviso: o diretório de dados está dentro do OneDrive (...)"
+### "Aviso: AGENT_QUEST_HOME está definida (...)"
 
-O `runtime.json` guarda o token da execução, e o OneDrive o sincronizaria com a nuvem. O servidor sobe assim mesmo, mas troque o diretório: defina `AGENT_QUEST_HOME` com uma pasta fora do OneDrive (veja [Usar outra pasta](#usar-outra-pasta-agent_quest_home)).
+```text
+Aviso: AGENT_QUEST_HOME está definida (<diretório>). A captura só encontra este servidor se o Claude Code tiver a mesma variável, com o mesmo valor, no ambiente dele (terminal e VS Code). No uso normal, deixe AGENT_QUEST_HOME sem valor.
+```
+
+O servidor está usando o diretório da variável, e não o padrão. O aviso aparece sempre que a variável está definida, mesmo quando está tudo certo.
+
+- **Se você não definiu a variável de propósito**, remova-a e inicie de novo. No terminal atual: `Remove-Item Env:AGENT_QUEST_HOME` (no Git Bash, `unset AGENT_QUEST_HOME`). Confira também se ela não está nas variáveis da sua conta do Windows (veja [Nenhum evento chegando](#nenhum-evento-chegando)).
+- **Se você está isolando um teste**, o aviso é esperado: nesse caso, a captura não deve mesmo encontrar este servidor.
+- **Se você precisa de outro diretório no dia a dia**, confira se o Claude Code tem a mesma variável, com o mesmo valor (veja [Usar outra pasta](#usar-outra-pasta-agent_quest_home)).
+
+### "Aviso: a pasta de dados (...) está dentro do OneDrive."
+
+```text
+Aviso: a pasta de dados (<diretório>) está dentro do OneDrive. O runtime.json guarda o token da execução e seria sincronizado com a nuvem. Para usar outra pasta, defina AGENT_QUEST_HOME como variável de ambiente do usuário do Windows e reabra os terminais e o VS Code, porque o Claude Code precisa ver o mesmo valor.
+```
+
+O servidor sobe assim mesmo, mas resolva:
+
+- **Se apareceu também o aviso "AGENT_QUEST_HOME está definida"**, é a variável que aponta para dentro do OneDrive. Remova a variável (o padrão já fica fora do OneDrive) ou troque o valor por uma pasta fora dele, nos dois lados.
+- **Se a variável não está definida**, é o próprio `%LOCALAPPDATA%` que está dentro do OneDrive. Defina `AGENT_QUEST_HOME` como variável de ambiente do usuário do Windows, com uma pasta fora do OneDrive, e reabra os terminais, o VS Code e as sessões do Claude Code, para todos verem o mesmo valor. O passo a passo está em [Usar outra pasta](#usar-outra-pasta-agent_quest_home). Defina a variável nas variáveis da sua conta, e não só no terminal: senão a captura não encontra o servidor.
 
 O aviso aparece quando o caminho fica dentro da pasta indicada pelas variáveis do OneDrive no Windows, ou quando tem uma pasta chamada "OneDrive" ou "OneDrive - <organização>".
 
@@ -254,6 +306,7 @@ O aviso aparece quando o caminho fica dentro da pasta indicada pelas variáveis 
 
 - **"Argumentos inválidos: ..."**, seguida da linha de uso: opção desconhecida. O servidor aceita só `--port <número>` e `--debug-dump`. Sai com código 1.
 - **"Aviso: ... config.json não é um objeto JSON válido; o arquivo foi ignorado."** (ou "não foi possível ler"): corrija o arquivo. Até lá, vale o padrão.
+- **"Aviso: "roles" no config.json não é um objeto; foi ignorado."**: a chave `roles` está com formato errado. Ela ainda não tem efeito nesta fase; corrija ou remova a chave.
 - **"Não foi possível gravar o runtime.json em ..."**: o diretório de dados não pôde ser criado ou gravado, por exemplo com `AGENT_QUEST_HOME` apontando para um lugar sem permissão. Sai com código 1.
 - **O PowerShell recusa o `npm`** dizendo que a execução de scripts está desabilitada: use `npm.cmd` no lugar de `npm` (por exemplo, `npm.cmd start`). Nesse caso, o Ctrl+C também mostra a pergunta do cmd, `Deseja finalizar o arquivo em lotes (S/N)?`.
 
@@ -323,6 +376,28 @@ Como ler os números:
 - **`ignored`:** nesta fase, fica em 0, porque o servidor ainda só conta os eventos; o processamento chega nas próximas entregas.
 
 A forma completa dessa resposta está na seção 9 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
+
+## Solução de problemas
+
+### Nenhum evento chegando
+
+Você usa o Claude Code, mas o `received` do `/api/health` não sobe e o `lastEventAt` fica `null` (ou parado). A captura nunca mostra erro no Claude Code, então é preciso conferir por partes, nesta ordem:
+
+1. **O servidor está no ar?** Abra `http://127.0.0.1:47821/api/health` (ou a porta que você usa). Se não responder, inicie o servidor.
+2. **`AGENT_QUEST_HOME` é a mesma dos dois lados?** É a causa mais comum, porque a captura falha em silêncio quando o servidor e o Claude Code olham para diretórios de dados diferentes.
+   - **Lado do servidor:** no início do servidor, veja a linha `Diretório de dados:` e se apareceu o aviso "AGENT_QUEST_HOME está definida".
+   - **Lado do Claude Code:** ele herda as variáveis do terminal ou do VS Code em que foi aberto. Para ver o valor definido na sua conta do Windows, que vale para tudo o que for aberto depois:
+
+     ```powershell
+     [Environment]::GetEnvironmentVariable('AGENT_QUEST_HOME', 'User')
+     ```
+
+     Sem resposta, a variável não está definida na conta. Se você abriu o Claude Code a partir de um terminal, confira também esse terminal com `$env:AGENT_QUEST_HOME` (no Git Bash, `echo "$AGENT_QUEST_HOME"`).
+   - **Os dois lados batem** quando a variável não está definida em lugar nenhum (o caso normal) ou quando tem o mesmo valor no servidor e no Claude Code.
+   - **Se só o servidor tem a variável:** pare o servidor, rode `Remove-Item Env:AGENT_QUEST_HOME` (no Git Bash, `unset AGENT_QUEST_HOME`) e inicie de novo.
+   - **Se você acabou de definir ou apagar a variável na conta do Windows:** feche e abra de novo os terminais e o VS Code, e reabra as sessões do Claude Code. Sessões abertas antes da mudança continuam com o valor antigo.
+3. **A captura está ligada no Claude Code?** Ela precisa estar instalada e ativa. Ligar, pausar e remover a captura vai ter um guia próprio.
+4. **`received` sobe, mas `rejected` sobe junto?** Os envios chegam e são recusados. Anote os números do `/api/health` e reporte o problema.
 
 ## Segurança em resumo
 
