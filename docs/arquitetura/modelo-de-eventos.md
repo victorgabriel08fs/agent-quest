@@ -59,14 +59,14 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 
 O normalizador transforma cada envelope em no máximo um fato, já minimizado e redigido (seção 10). Payload sem `session_id` ou com evento desconhecido vira `null` e só conta em `/api/health`.
 
-Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null`), `promptId` (ou `null`), `projectDir`, `ts`, `receivedAt` e `transcriptPath` (usado só pela sonda de contexto, nunca enviado ao painel).
+Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido, ou `null`), `agentTypeKey` (cru, só para uso interno, ou `null`), `promptId` (ou `null`), `projectDir`, `ts`, `receivedAt` e `transcriptPath` (usado só pela sonda de contexto, nunca enviado ao painel).
 
 | Fato | Hook | Campos próprios |
 |---|---|---|
 | `session.start` | SessionStart | `source` (startup, resume, clear, compact, fork), `model`, `sessionTitle` |
 | `session.end` | SessionEnd | `reason` |
 | `prompt.submit` | UserPromptSubmit | `title` (primeira linha, até 80 caracteres), `origin` (`user` ou `system`), `sessionTitle` |
-| `tool.pre` | PreToolUse | `toolUseId`, `tool`, `category`, `target`, `detail`, `inputHash`, `background`. Para `Agent`/`Task`: `subagentType`, `description` |
+| `tool.pre` | PreToolUse | `toolUseId`, `tool`, `category`, `target`, `detail`, `inputHash`, `background`. Para `Agent`/`Task`: `subagentType`, `subagentTypeKey`, `description` |
 | `tool.post` | PostToolUse | os mesmos de `tool.pre` + `durationMs`. Para `Agent`/`Task`: `linkedAgentId` (de `tool_response.agentId`) e `launch` (`completed` ou `async_launched`). Para teste: `testResult` |
 | `tool.fail` | PostToolUseFailure | os mesmos de `tool.pre` + `error` (primeira linha, até 160), `interrupted`, `durationMs`, `testResult` |
 | `permission.request` | PermissionRequest | `tool`, `category`, `target`, `inputHash` |
@@ -74,18 +74,19 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 | `notice` | Notification | `type`: só `permission_prompt` e `idle_prompt`; os outros viram `null` |
 | `subagent.start` | SubagentStart | — (usa `agentId` e `agentType` comuns) |
 | `subagent.stop` | SubagentStop | `agentTranscriptPath` (só para a sonda de contexto) |
-| `turn.stop` | Stop | `backgroundTasks`: lista de `{ id, type, status, agentType }` |
+| `turn.stop` | Stop | `backgroundTasks`: lista de `{ id, type, status, agentType, agentTypeKey }` |
 | `turn.fail` | StopFailure | `error` (tipo: `rate_limit`, `overloaded`, `authentication_failed`, ...) |
 | `compact.pre`, `compact.post` | PreCompact, PostCompact | `trigger` (`manual` ou `auto`) |
 
 ### Forma do fato e limites (definidos no T5, 18/10/2026)
 
 - **Discriminador:** `kind`, com os nomes da tabela acima (`session.start`, `tool.pre`, etc.).
-- **Campos comuns**, além dos listados acima:
+- **Campos comuns**, sempre presentes em todo fato, além dos listados acima:
+  - `agentTypeKey`, o valor cru do `agent_type` para uso interno, ou `null` (ver "Identificadores" abaixo);
   - `client` (`'terminal'`, `'vscode'` ou `null`, a partir do `env.entrypoint`; V11);
   - `projectDir`, que cai para o `cwd` do payload quando falta `env.projectDir`. A regra "o `cwd` do primeiro evento" da seção 7 fica com o reducer.
 - **Fatos de ferramenta** (esclarecido em 18/10/2026). Cada fato tem exatamente as chaves da própria linha da tabela acima, mais os campos comuns. Dentro da linha, o que não se aplica vem `null`, mas a chave existe:
-  - `tool.pre`: `toolUseId`, `tool`, `category`, `target`, `detail`, `inputHash`, `background`, `subagentType` e `description`. As duas últimas são `null` fora de `Agent` e `Task`;
+  - `tool.pre`: `toolUseId`, `tool`, `category`, `target`, `detail`, `inputHash`, `background`, `subagentType`, `subagentTypeKey` e `description`. As três últimas são `null` fora de `Agent` e `Task`;
   - `tool.post`: as de `tool.pre`, mais `durationMs`, `linkedAgentId`, `launch` e `testResult`;
   - `tool.fail`: as de `tool.pre`, mais `error`, `interrupted`, `durationMs` e `testResult`.
 
