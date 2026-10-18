@@ -1,0 +1,14 @@
+{
+  "name": "agent-quest",
+  "version": "0.1.0",
+  "description": "Painel local e gamificado que mostra, em tempo real, o que cada agente do Claude Code está fazendo.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node scripts/run-tests.mjs"
+  }
+}
