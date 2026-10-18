@@ -87,7 +87,7 @@ export function removeSession(store, sessionId) {}
 | Situação | Comportamento |
 |---|---|
 | Servidor desligado | Sem `runtime.json`, o encaminhador sai em cerca de 60 ms. O Claude Code nem espera (async) e nada aparece para o usuário. |
-| Servidor caiu sem apagar `runtime.json` | O encaminhador vê o `pid` morto e sai. Se o pid tiver sido reaproveitado, a conexão é recusada em menos de 3 ms (medido). |
+| Servidor caiu sem apagar `runtime.json` (inclui o Ctrl+C e os reinícios do `npm run dev` no Windows, em que o `node --watch` encerra o processo à força) | O encaminhador vê o `pid` morto e sai; o próximo início substitui o arquivo. Se o pid tiver sido reaproveitado, a conexão é recusada em menos de 3 ms (medido). |
 | Servidor travado (aceita e não responde) | O encaminhador desiste em 1 s e se encerra em até 2 s; o Claude Code continua sem esperar. |
 | Payload grande ou malformado | Strings longas já chegam cortadas; corpo acima de 1 MiB recebe 413; envelope inválido, 400. Contadores em `/api/health`. |
 | Eventos fora de ordem | Regras do reducer (`modelo-de-eventos.md`, seção 8). |
@@ -187,7 +187,7 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
 | `POST /hooks` | ingestão (só o encaminhador) |
 | `GET /<caminho>` (qualquer outro) | `web/<caminho>`; por exemplo, `/js/main.js` serve `web/js/main.js` |
 
-- As rotas de API, `/events` e `/hooks` vêm antes dos arquivos estáticos. Só `GET` é servido como arquivo.
+- As rotas de API, `/events` e `/hooks` vêm antes dos arquivos estáticos. Arquivos são servidos só para `GET` e `HEAD` (este responde os cabeçalhos, sem corpo).
 - O código do painel importa o contrato por caminho relativo à pasta real, por exemplo `import { ROLES } from '../../shared/contract.js'` em `web/js/main.js`, ou `'../../../shared/contract.js'` em `web/js/themes/`. O mesmo import funciona no Node (testes unitários) e no navegador. No navegador, `/js/main.js` mais `../../shared/contract.js` vira `/shared/contract.js`, porque a resolução de URL não sobe além da raiz (conferido com `new URL` em 18/10/2026).
 - Por isso não pode existir uma pasta `web/shared/`: ela ficaria escondida pela rota `/shared/`. O caminho `/web/...` não existe no servidor.
 
@@ -195,7 +195,7 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
 
 ```powershell
 npm start                           # servidor em http://127.0.0.1:47821/ (não precisa de npm install)
-npm run dev                         # o mesmo, com node --watch (nativo): reinicia sozinho quando o código do servidor muda
+npm run dev                         # o mesmo, com node --watch (nativo): reinicia sozinho quando o código do servidor muda; no Windows, o Ctrl+C pode deixar o runtime.json com pid morto (inofensivo)
 npm test                            # unidade + integração, pelo scripts/run-tests.mjs (npm test -- test/unit/shared roda só uma parte)
 npm install; npm run test:e2e       # E2E com o Edge instalado (npm install só na primeira vez, com internet)
 npm run capture:deploy              # copia o plugin para %LOCALAPPDATA%\agent-quest\marketplace e mostra os comandos
