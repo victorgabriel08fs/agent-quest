@@ -1,0 +1,8 @@
+{
+  "name": "agent-quest-probe",
+  "version": "0.0.1",
+  "description": "Sonda descartável do T0 do Agent Quest: grava o payload bruto de cada hook em %LOCALAPPDATA%\\agent-quest\\probe\\events.jsonl para validar o design. Não instale: use só com claude --plugin-dir, numa sessão de teste.",
+  "author": {
+    "name": "Agent Quest"
+  }
+}
