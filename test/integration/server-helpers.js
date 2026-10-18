@@ -35,10 +35,37 @@ export const ADR_HEADERS = Object.freeze({
   'cross-origin-resource-policy': 'same-origin',
 });
 
-/** Cria uma pasta temporária. */
+/** Erros de remoção que no Windows costumam ser passageiros (antivírus, indexador, processo terminando). */
+const TRANSIENT_RM_ERRORS = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES', 'EMFILE', 'ENFILE']);
+
+/** Pausa síncrona (só para a limpeza, que precisa continuar síncrona para quem já a usa). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Apaga uma pasta, tentando de novo por até `timeoutMs` enquanto o erro for
+ * passageiro. Depois de encerrar um processo à força, o Windows pode segurar a
+ * pasta (diretório de trabalho ou arquivo aberto) por alguns instantes.
+ * Síncrona de propósito: `tempDir().cleanup()` é chamada sem `await` em vários testes.
+ */
+export function removeDir(dir, { timeoutMs = 20_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (!TRANSIENT_RM_ERRORS.has(err?.code) || Date.now() > deadline) throw err;
+      sleepSync(Math.min(100 * attempt, 1000));
+    }
+  }
+}
+
+/** Cria uma pasta temporária. `cleanup()` apaga com novas tentativas (síncrona). */
 export function tempDir(prefix = 'aq-int-') {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
+  return { dir, cleanup: () => removeDir(dir) };
 }
 
 /** Ambiente mínimo para o Node rodar, mais `extra`. */
@@ -50,16 +77,38 @@ export function minimalEnv(extra = {}) {
   return { ...env, ...extra };
 }
 
-/** Porta livre em 127.0.0.1 (nunca a 47821). */
-export async function freePort() {
-  for (;;) {
+/**
+ * Faixa das portas fixas dos testes: fora da faixa dinâmica do Windows
+ * (49152 a 65535) e da faixa padrão do Linux (32768 a 60999). Servidores com
+ * porta 0, de qualquer arquivo de teste rodando em paralelo, recebem portas da
+ * faixa dinâmica e por isso nunca disputam uma porta sorteada aqui.
+ */
+const FIXED_PORT_MIN = 20_000;
+const FIXED_PORT_MAX = 31_999;
+
+/**
+ * Porta fixa para testes que precisam repetir a mesma porta (reinício, prioridade
+ * de configuração). Sorteia fora da faixa dinâmica e confere que dá para escutar
+ * nela (porta livre e não reservada pelo sistema). Nunca a 47821.
+ */
+export async function fixedPort() {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const port = FIXED_PORT_MIN + Math.floor(Math.random() * (FIXED_PORT_MAX - FIXED_PORT_MIN + 1));
     const server = net.createServer();
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const { port } = server.address();
-    await new Promise((resolve) => server.close(resolve));
-    if (port !== 47821) return port;
+    const ok = await new Promise((resolve) => {
+      server.once('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => resolve(true));
+    });
+    if (ok) {
+      await new Promise((resolve) => server.close(resolve));
+      return port;
+    }
   }
+  throw new Error(`nenhuma porta livre entre ${FIXED_PORT_MIN} e ${FIXED_PORT_MAX}`);
 }
+
+/** Igual a `fixedPort()`; mantido pelo nome usado nos testes. */
+export const freePort = fixedPort;
 
 /**
  * Inicia um processo e espera até `ready` casar com a saída (stdout + stderr) ou o
@@ -115,7 +164,13 @@ let npmSandbox = null;
 export function npmEnv() {
   if (!npmSandbox) {
     npmSandbox = mkdtempSync(path.join(tmpdir(), 'aq-int-npm-'));
-    process.once('exit', () => rmSync(npmSandbox, { recursive: true, force: true }));
+    process.once('exit', () => {
+      try {
+        removeDir(npmSandbox, { timeoutMs: 5_000 });
+      } catch {
+        // pasta temporária do sistema; não vale derrubar o teste por ela
+      }
+    });
   }
   return {
     npm_config_cache: path.join(npmSandbox, 'cache'),

@@ -15,7 +15,7 @@ import { appendFileSync, cpSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
-import { REPO, freePort, killTree, launchNpm, minimalEnv, request, tempDir, waitFor } from './server-helpers.js';
+import { REPO, fixedPort, killTree, launchNpm, minimalEnv, request, tempDir, waitFor } from './server-helpers.js';
 
 const RESTARTS = 3;
 
@@ -41,6 +41,15 @@ describe('T2 integração: npm run dev (node --watch)', () => {
 
   after(async () => {
     if (run) await killTree(run.child);
+    // O servidor e o vigia saem logo depois do npm; até lá, o Windows segura a
+    // pasta da cópia (diretório de trabalho deles).
+    let last = null;
+    try {
+      last = JSON.parse(readFileSync(path.join(home.dir, 'runtime.json'), 'utf8'));
+    } catch {
+      // sem runtime.json: nada a esperar
+    }
+    if (last) await waitFor(() => !isAlive(last.pid), { timeoutMs: 10_000, label: 'fim do último servidor' }).catch(() => {});
     copy.cleanup();
     home.cleanup();
   });
@@ -51,7 +60,9 @@ describe('T2 integração: npm run dev (node --watch)', () => {
   });
 
   it(`editar um arquivo importado reinicia ${RESTARTS} vezes seguidas, na mesma porta e com runtime.json novo`, { timeout: 120_000 }, async () => {
-    const port = await freePort();
+    // Porta fixa fora da faixa dinâmica: nenhum servidor com porta 0 de outro
+    // teste pega a porta entre um reinício e outro.
+    const port = await fixedPort();
     const runtimeFile = path.join(home.dir, 'runtime.json');
     const readRuntime = () => {
       try {

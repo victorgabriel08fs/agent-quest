@@ -20,7 +20,7 @@ import path from 'node:path';
 import process from 'node:process';
 import {
   REPO,
-  freePort,
+  fixedPort,
   killPid,
   killTree,
   launchNpm,
@@ -121,7 +121,7 @@ describe('porta', () => {
   });
 
   it('prioridade: --port, depois AGENT_QUEST_PORT, depois config.json', { timeout: 60_000 }, async () => {
-    const [p1, p2, p3] = [await freePort(), await freePort(), await freePort()];
+    const [p1, p2, p3] = [await fixedPort(), await fixedPort(), await fixedPort()];
     const dir = home();
     writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ port: p3 }));
 
@@ -317,7 +317,7 @@ describe('instância única e porta ocupada (npm start de verdade)', () => {
   });
 
   it('mesma porta fixa, outro diretório de dados: "já está rodando" e saída 0', { timeout: 60_000 }, async () => {
-    const port = await freePort();
+    const port = await fixedPort();
     const first = await startServer(['--port', String(port)], minimalEnv({ AGENT_QUEST_HOME: home() }));
     assert.match(first.output(), /rodando em/);
     const second = launchServer(['--port', String(port)], minimalEnv({ AGENT_QUEST_HOME: home() }), { ready: /$^/ });

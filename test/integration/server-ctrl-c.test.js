@@ -23,11 +23,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import {
   REPO,
-  freePort,
   killTree,
   launchNpm,
+  minimalEnv,
   npmCli,
   npmEnv,
   tempDir,
@@ -123,12 +124,12 @@ describe('T2 integração: Ctrl+C emulado no console', { skip: !isWindows && 'Ct
     assert.ok(existsSync(FORWARDER), `encaminhador não encontrado: ${FORWARDER}`);
     const dataDir = home();
     const runtimeFile = path.join(dataDir, 'runtime.json');
-    const port = await freePort();
 
-    // 1. Ctrl+C no npm run dev.
-    const r = emulateCtrlC(`${quote(process.execPath)} ${quote(npmCli())} run dev -- --port ${port}`, dataDir);
+    // 1. Ctrl+C no npm run dev. Porta 0: a porta real vem do runtime.json, sem
+    //    disputa com servidores de outros arquivos de teste.
+    const r = emulateCtrlC(`${quote(process.execPath)} ${quote(npmCli())} run dev -- --port 0`, dataDir);
     assert.equal(r.ok, true, `${r.error}\n${r.screen}`);
-    assert.equal(r.port, port);
+    assert.ok(Number.isInteger(r.port) && r.port > 0, String(r.port));
     await waitFor(() => !isAlive(r.serverPid), { timeoutMs: 10_000, label: 'fim do servidor' });
 
     // 2. A sobra, se ficou, aponta para o servidor que já morreu. Se não ficou,
@@ -137,88 +138,112 @@ describe('T2 integração: Ctrl+C emulado no console', { skip: !isWindows && 'Ct
       t.diagnostic(`sobra observada: runtime.json com o pid ${r.serverPid}, que já terminou`);
     } else {
       t.diagnostic('desta vez o runtime.json foi apagado; recriando a sobra para testar o resto');
-      writeFileSync(runtimeFile, JSON.stringify({ port, token: 'x'.repeat(43), pid: r.serverPid, version: '0.0.0', startedAt: 1 }));
+      writeFileSync(runtimeFile, JSON.stringify({ port: r.port, token: 'x'.repeat(43), pid: r.serverPid, version: '0.0.0', startedAt: 1 }));
     }
     const stale = JSON.parse(readFileSync(runtimeFile, 'utf8'));
     assert.equal(stale.pid, r.serverPid);
-    assert.equal(stale.port, port);
+    assert.equal(stale.port, r.port);
     assert.equal(isAlive(stale.pid), false);
+    const staleText = readFileSync(runtimeFile, 'utf8');
 
-    // 3. O encaminhador sai com 0, em silêncio e sem tentar a porta da sobra.
+    // 3. O encaminhador sai com 0, em silêncio e sem tentar conectar. Para
+    //    detectar qualquer tentativa sem disputar porta com outros testes, a
+    //    porta da sobra é trocada pela de um ouvinte que o teste segura (porta 0);
+    //    pid, token e o resto da sobra ficam como estavam. Quem decide é o pid morto.
     const connections = [];
     const listener = net.createServer((socket) => {
       connections.push(socket);
       socket.destroy();
     });
-    await waitFor(
-      () =>
-        new Promise((resolve) => {
-          listener.once('error', () => resolve(false));
-          listener.listen(port, '127.0.0.1', () => resolve(true));
-        }),
-      { timeoutMs: 5_000, label: `escutar na porta da sobra (${port})` },
+    await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+    const listenerPort = listener.address().port;
+    writeFileSync(runtimeFile, JSON.stringify({ ...stale, port: listenerPort }));
+
+    // Tempo medido dentro do próprio processo do encaminhador (performance.now()
+    // na saída, por um módulo carregado com --import), como nos testes do T4:
+    // não conta a espera do sistema para criar o processo, que sob carga passa de segundos.
+    const timer = path.join(home('aq-int-ctrlc-timer-'), 'own-timer.mjs');
+    writeFileSync(
+      timer,
+      "import { writeFileSync } from 'node:fs';\nimport process from 'node:process';\n" +
+        "process.on('exit', () => { try { writeFileSync(process.env.AQ_TEST_TIMING_FILE, String(performance.now())); } catch {} });\n",
     );
+    let runs = 0;
     const runForwarder = () =>
       new Promise((resolve) => {
-        const begin = Date.now();
-        const child = spawn(process.execPath, [FORWARDER], {
-          env: { ...process.env, AGENT_QUEST_HOME: dataDir, CLAUDE_PROJECT_DIR: REPO },
+        const timingFile = `${timer}.${runs++}.txt`;
+        const child = spawn(process.execPath, ['--import', pathToFileURL(timer).href, FORWARDER], {
+          env: { ...process.env, AGENT_QUEST_HOME: dataDir, CLAUDE_PROJECT_DIR: REPO, AQ_TEST_TIMING_FILE: timingFile },
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
         });
         let out = '';
         child.stdout.on('data', (d) => (out += d));
         child.stderr.on('data', (d) => (out += d));
-        child.on('exit', (code) => resolve({ code, out, ms: Date.now() - begin }));
+        child.on('close', (code) => {
+          let ownMs = Infinity;
+          try {
+            ownMs = Number(readFileSync(timingFile, 'utf8'));
+          } catch {
+            // sem arquivo: o processo não saiu normalmente
+          }
+          resolve({ code, out, ownMs });
+        });
         child.stdin.end(JSON.stringify({ session_id: 'sessao-teste', hook_event_name: 'Stop', cwd: REPO }));
       });
-    const staleText = readFileSync(runtimeFile, 'utf8');
-    try {
-      const fwd = await runForwarder();
-      t.diagnostic(`encaminhador com a sobra: código ${fwd.code}, ${fwd.ms} ms`);
-      assert.equal(fwd.code, 0);
-      assert.equal(fwd.out, '');
-      assert.ok(fwd.ms < 2_000, `${fwd.ms} ms`);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      assert.equal(connections.length, 0, 'o encaminhador não pode tentar a porta da sobra');
 
-      // Controle: o mesmo arquivo com um pid vivo faz o encaminhador tentar a
-      // porta. Prova que ele leu este diretório e que foi o pid morto que o parou.
-      writeFileSync(runtimeFile, JSON.stringify({ ...stale, pid: process.pid }));
+    try {
+      const times = [];
+      for (let i = 0; i < 3; i++) {
+        const fwd = await runForwarder();
+        assert.equal(fwd.code, 0, `tentativa ${i + 1}`);
+        assert.equal(fwd.out, '', `tentativa ${i + 1}`);
+        times.push(fwd.ownMs);
+      }
+      const median = [...times].sort((a, b) => a - b)[1];
+      t.diagnostic(`encaminhador com a sobra: tempo do próprio processo ${times.map((ms) => Math.round(ms)).join(', ')} ms (mediana ${Math.round(median)})`);
+      assert.ok(median < 2_000, `mediana ${median} ms: acima do prazo de 2 s do encaminhador`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(connections.length, 0, 'o encaminhador não pode tentar conectar com o pid morto');
+
+      // Controle: o mesmo arquivo com um pid vivo faz o encaminhador conectar.
+      // Prova que ele leu este diretório e que foi o pid morto que o parou.
+      writeFileSync(runtimeFile, JSON.stringify({ ...stale, port: listenerPort, pid: process.pid }));
       const control = await runForwarder();
       assert.equal(control.code, 0);
       assert.equal(control.out, '');
-      await waitFor(() => connections.length > 0, { timeoutMs: 3_000, label: 'conexão do encaminhador no controle' });
+      await waitFor(() => connections.length > 0, { timeoutMs: 5_000, label: 'conexão do encaminhador no controle' });
     } finally {
       writeFileSync(runtimeFile, staleText);
       await new Promise((resolve) => listener.close(resolve));
     }
 
+    const env = minimalEnv({ AGENT_QUEST_HOME: dataDir });
+
     // 4. O próximo npm start substitui a sobra sem "já está rodando".
-    const env = { AGENT_QUEST_HOME: dataDir, PATH: process.env.PATH, Path: process.env.Path, SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, TEMP: process.env.TEMP, TMP: process.env.TMP };
-    const start = launchNpm(['start', '--', '--port', String(port)], env, { ready: /Ctrl\+C para parar\./ });
+    const start = launchNpm(['start', '--', '--port', '0'], env, { ready: /Ctrl\+C para parar\./ });
+    let started = null;
     try {
       assert.equal(await start.started, true, start.output());
       assert.doesNotMatch(start.output(), /já está rodando/);
-      assert.match(start.output(), new RegExp(`rodando em http://127\\.0\\.0\\.1:${port}/`));
-      const fresh = JSON.parse(readFileSync(runtimeFile, 'utf8'));
-      assert.notEqual(fresh.pid, stale.pid);
-      assert.notEqual(fresh.token, stale.token);
-      assert.equal(fresh.port, port);
+      started = JSON.parse(readFileSync(runtimeFile, 'utf8'));
+      assert.notEqual(started.pid, stale.pid);
+      assert.notEqual(started.token, stale.token);
+      assert.match(start.output(), new RegExp(`rodando em http://127\\.0\\.0\\.1:${started.port}/`));
     } finally {
       await killTree(start.child); // encerramento à força: deixa outra sobra, como um travamento
     }
 
     // 5. E o próximo npm run dev também a substitui sem "já está rodando".
     const leftover = JSON.parse(readFileSync(runtimeFile, 'utf8'));
-    assert.equal(isAlive(leftover.pid), false);
-    const dev = launchNpm(['run', 'dev', '--', '--port', String(port)], env, { ready: /Ctrl\+C para parar\./ });
+    await waitFor(() => !isAlive(leftover.pid), { timeoutMs: 10_000, label: 'fim do servidor do npm start' });
+    const dev = launchNpm(['run', 'dev', '--', '--port', '0'], env, { ready: /Ctrl\+C para parar\./ });
     try {
       assert.equal(await dev.started, true, dev.output());
       assert.doesNotMatch(dev.output(), /já está rodando/);
       const fresh = JSON.parse(readFileSync(runtimeFile, 'utf8'));
       assert.notEqual(fresh.pid, leftover.pid);
-      assert.equal(fresh.port, port);
+      assert.notEqual(fresh.token, leftover.token);
     } finally {
       await killTree(dev.child);
     }

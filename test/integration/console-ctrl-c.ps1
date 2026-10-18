@@ -93,7 +93,19 @@ try {
   $deadline = (Get-Date).AddMilliseconds($StartTimeoutMs)
   while (-not (Test-Path -LiteralPath $RuntimeFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
   if (-not (Test-Path -LiteralPath $RuntimeFile)) { throw 'o runtime.json não apareceu a tempo' }
-  Start-Sleep -Milliseconds 800 # o servidor termina de imprimir e instala os tratadores de sinal
+  # O servidor grava o runtime.json antes de instalar os tratadores de sinal e só
+  # depois imprime "Ctrl+C para parar.". Espera essa linha na tela (prazo fixo
+  # falharia com a máquina carregada).
+  $ready = $false
+  while (-not $ready -and (Get-Date) -lt $deadline) {
+    if ([AqConsole]::Attach([uint32]$root) -eq 'ok') {
+      $ready = ([AqConsole]::Screen()) -match 'Ctrl\+C para parar\.'
+      [AqConsole]::Detach()
+    }
+    if (-not $ready) { Start-Sleep -Milliseconds 100 }
+  }
+  if (-not $ready) { throw 'a linha "Ctrl+C para parar." não apareceu a tempo' }
+  Start-Sleep -Milliseconds 200
   $rt = Get-Content -LiteralPath $RuntimeFile -Raw | ConvertFrom-Json
   $result.serverPid = [int]$rt.pid; $result.port = [int]$rt.port
   $serverProc = Get-Process -Id $rt.pid; $null = $serverProc.Handle
