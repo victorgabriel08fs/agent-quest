@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node server/main.js",
     "dev": "node --watch server/main.js",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "capture:deploy": "node scripts/deploy-capture.mjs"
   }
 }

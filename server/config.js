@@ -204,14 +204,7 @@ export function resolveConfig({ argv, env, platform, homedir }) {
   }
 
   const insideOneDrive = isInsideOneDrive(dataDir, { env, platform });
-  if (insideOneDrive) {
-    warnings.push(
-      `Aviso: a pasta de dados (${dataDir}) está dentro do OneDrive. ` +
-        'O runtime.json guarda o token da execução e seria sincronizado com a nuvem. ' +
-        'Para usar outra pasta, defina AGENT_QUEST_HOME como variável de ambiente do usuário do Windows ' +
-        'e reabra os terminais e o VS Code, porque o Claude Code precisa ver o mesmo valor.',
-    );
-  }
+  if (insideOneDrive) warnings.push(oneDriveWarning(dataDir));
 
   const debugDump = args.debugDump === true;
   if (debugDump) {
@@ -223,6 +216,21 @@ export function resolveConfig({ argv, env, platform, homedir }) {
   }
 
   return { dataDir, port, portSource, roles, insideOneDrive, debugDump, warnings };
+}
+
+/**
+ * Aviso de pasta de dados dentro do OneDrive, com a orientação do ADR 0005
+ * (complemento). Usado pelo servidor e pelo `npm run capture:deploy`.
+ * @param {string} dataDir
+ * @returns {string}
+ */
+export function oneDriveWarning(dataDir) {
+  return (
+    `Aviso: a pasta de dados (${dataDir}) está dentro do OneDrive. ` +
+    'O runtime.json guarda o token da execução e seria sincronizado com a nuvem. ' +
+    'Para usar outra pasta, defina AGENT_QUEST_HOME como variável de ambiente do usuário do Windows ' +
+    'e reabra os terminais e o VS Code, porque o Claude Code precisa ver o mesmo valor.'
+  );
 }
 
 /**

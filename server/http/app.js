@@ -7,7 +7,8 @@
 //   3. `OPTIONS`: 405 (sem CORS);
 //   4. `/hooks`: ingestão, com as regras próprias (sem `Origin`, token, JSON, 1 MiB);
 //   5. rotas do painel: `Origin` ou `Sec-Fetch-Site` de outra origem: 403;
-//   6. `/api/*` com `Cache-Control: no-store`; o resto, estáticos de `web/` e `shared/`.
+//   6. `/events` (SSE, server/http/sse.js) e `/api/*`, com `Cache-Control: no-store`;
+//      o resto, estáticos de `web/` e `shared/`.
 //
 // Os logs nunca mostram corpo, cabeçalhos nem caminho de requisição: só o tipo
 // de um erro inesperado.
@@ -19,10 +20,13 @@ import { createDedupe, payloadHash } from '../ingest/dedupe.js';
 import { MAX_BODY_BYTES, parseEnvelope } from '../ingest/envelope.js';
 import { QUEUE_LIMIT, createQueue } from '../ingest/queue.js';
 import { applySecurityHeaders, checkHookRequest, checkPanelRequest, isAllowedHost } from './security.js';
+import { createRunId, createSseHub } from './sse.js';
 import { SHARED_DIR, WEB_DIR, readStaticFile, resolveStaticPath } from './static.js';
 
 /** @typedef {import('../../shared/contract.js').HealthResponse} HealthResponse */
 /** @typedef {import('../ingest/envelope.js').Envelope} Envelope */
+/** @typedef {import('../../shared/contract.js').SnapshotMessage} SnapshotMessage */
+/** @typedef {import('./sse.js').SseHub} SseHub */
 
 /**
  * Tipos do node:http. No editor valem `any` (types/node.d.ts, ADR 0003).
@@ -53,12 +57,24 @@ import { SHARED_DIR, WEB_DIR, readStaticFile, resolveStaticPath } from './static
  * @property {{ write(envelope: Envelope, receivedAt: number): void }|null} [dump]   --debug-dump
  * @property {number} [queueLimit]       padrão: 10 000
  * @property {(run: () => void) => unknown} [schedule]   agenda o processamento da fila (padrão: setImmediate)
+ * @property {string} [runId]            identifica esta execução no SSE (padrão: aleatório)
+ * @property {() => SnapshotMessage} [getSnapshot]
+ *   estado para o `snapshot` do SSE e para GET /api/state; até a ligação com o
+ *   estado (T7), um snapshot vazio
+ * @property {{ maxClients?: number, heartbeatMs?: number, timers?: import('./sse.js').HubTimers }} [sse]
  */
 
 const READ_METHODS = 'GET, HEAD';
 
 /** Rota de ingestão (modelo de eventos, seção 1). */
 const HOOKS_PATH = '/hooks';
+
+/** Rotas do tempo real (modelo de eventos, seção 9). */
+const EVENTS_PATH = '/events';
+const STATE_PATH = '/api/state';
+
+/** Snapshot enquanto o estado não está ligado ao servidor (até o T7). */
+const EMPTY_SNAPSHOT = () => ({ seq: 0, sessions: [] });
 
 /**
  * Corpo acima de 1 MiB numa requisição com token válido: o servidor lê e
@@ -85,7 +101,7 @@ const STATUS_TEXT = Object.freeze({
  * Cria o servidor HTTP, ainda sem escutar. Quem chama decide porta e endereço
  * (sempre 127.0.0.1; ver server/main.js).
  * @param {AppOptions} options
- * @returns {{ server: HttpServer, health: () => HealthResponse }}
+ * @returns {{ server: HttpServer, health: () => HealthResponse, hub: SseHub }}
  */
 export function createApp({
   version,
@@ -99,8 +115,12 @@ export function createApp({
   dump = null,
   queueLimit = QUEUE_LIMIT,
   schedule = setImmediate,
+  runId = createRunId(),
+  getSnapshot = EMPTY_SNAPSHOT,
+  sse = {},
 }) {
   const roots = { webDir, sharedDir };
+  const hub = createSseHub({ runId, serverVersion: version, getSnapshot, ...sse });
 
   // Contadores do /api/health. received = accepted + deduped + rejected;
   // dropped (fila cheia) e ignored (processamento) são subconjuntos de accepted.
@@ -138,7 +158,7 @@ export function createApp({
       },
       lastEventAt,
       sessions: 0,
-      clients: 0,
+      clients: hub.clientCount(),
     };
   }
 
@@ -210,14 +230,23 @@ export function createApp({
     const pathname = (req.url ?? '/').split(/[?#]/, 1)[0];
     const isHooks = pathname === HOOKS_PATH;
 
-    if (req.method === 'OPTIONS') return sendError(req, res, 405, { Allow: isHooks ? 'POST' : READ_METHODS });
+    if (req.method === 'OPTIONS') {
+      const allow = isHooks ? 'POST' : pathname === EVENTS_PATH ? 'GET' : READ_METHODS;
+      return sendError(req, res, 405, { Allow: allow });
+    }
     if (isHooks) return handleHook(req, res);
     if (checkPanelRequest(req.headers) !== null) return sendError(req, res, 403);
 
+    if (pathname === EVENTS_PATH) {
+      if (req.method !== 'GET') return sendError(req, res, 405, { Allow: 'GET' });
+      return hub.handle(req, res);
+    }
+
     if (pathname === '/api' || pathname.startsWith('/api/')) {
-      if (pathname !== '/api/health') return sendError(req, res, 404);
+      if (pathname !== '/api/health' && pathname !== STATE_PATH) return sendError(req, res, 404);
       if (!isReadMethod(req)) return sendError(req, res, 405, { Allow: READ_METHODS });
-      return sendJson(req, res, 200, health());
+      // GET /api/state: o mesmo conteúdo do snapshot do SSE (seção 9).
+      return sendJson(req, res, 200, pathname === STATE_PATH ? getSnapshot() : health());
     }
 
     if (!isReadMethod(req)) return sendError(req, res, 405, { Allow: READ_METHODS });
@@ -249,7 +278,7 @@ export function createApp({
   // Sem Host, o Node responderia 400 sozinho, sem os cabeçalhos do ADR 0006;
   // assim a requisição chega à regra de Host e recebe 403.
   const server = http.createServer({ requireHostHeader: false }, onRequest);
-  return { server, health };
+  return { server, health, hub };
 }
 
 /**
