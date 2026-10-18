@@ -211,6 +211,10 @@ Decisão em ADR 0007. Regras operacionais:
 - Sessão principal: `Stop` → `idle`, mas o token do orquestrador fica na sala dele, como no mockup.
 - No `Stop` sem tarefas em segundo plano, subagentes em primeiro plano que ainda constam como trabalhando recebem `agent.finished(unknown)`.
 - Agente "trabalhando" sem ferramenta em execução e sem eventos há 15 min → `agent.finished(unknown)`.
+- **No cartão da equipe** (decidido no T10a, 18/10/2026), por papel:
+  - instâncias trabalhando ou aguardando aparecem todas, e o "×N" conta só essas;
+  - instâncias encerradas do ticket atual (`lastEventAt` maior ou igual ao `quest.startedAt`; sem ticket, todas contam como atuais) aparecem até 3, as mais recentes por `lastEventAt`, e as demais viram "+N instâncias encerradas";
+  - encerradas antes do início do ticket atual não aparecem nem entram no "+N", para o número não crescer sem limite em sessões longas.
 
 ### Saúde
 
@@ -299,7 +303,8 @@ data: {"seq":1236,"sessionId":"…"}
  * @property {string|null} agentId
  * @property {string|null} agentType
  * @property {RoleId} role
- * @property {string} label               descrição da delegação, ou agentType
+ * @property {string} label               descrição da delegação, ou agentType; para 'main', o agent_type da sessão
+ *                                        iniciada com --agent, ou '' (o painel mostra o nome do papel orq do tema)
  * @property {'working'|'waiting'|'idle'} status
  * @property {boolean} finished           subagente que terminou (fica na copa)
  * @property {boolean} background
@@ -341,6 +346,17 @@ data: {"seq":1236,"sessionId":"…"}
  * @property {number} at
  */
 ```
+
+**`Activity` por tipo** (definido em 18/10/2026; quem produz é o reducer, a partir do T7):
+
+| `kind` | Quando | `tool` | `category` | `target` | `detail` | `state` |
+|---|---|---|---|---|---|---|
+| `tool` | `tool.pre` (ou o primeiro evento da chamada) | `tool_name` | categoria da seção 3 | alvo da seção 3 | detalhe da seção 3 | `running`; `done` no Post; `failed` no Failure |
+| `delegate` | `tool.pre` de `Agent` ou `Task` | `Agent` ou `Task` | `null` | `subagent_type` chamado (por exemplo, `tester`) | `description` da delegação (até 80, redigida) ou `null` | `running` até o Post ou o Failure dessa chamada. Em primeiro plano, isso é quando o subagente devolve; em segundo plano (`async_launched`), logo no lançamento. Depois, `done` ou `failed` |
+| `compact` | PreCompact | `null` | `null` | `null` | `trigger` (`manual` ou `auto`) | `running`; `done` no PostCompact |
+| `start` | agente criado (SubagentStart ou primeiro evento) antes de qualquer ferramenta | `null` | `null` | `null` | `null` | `running` |
+
+Com delegações em paralelo, a atividade é a da mais recente. O painel mostra `detail` e, se faltar, `target`.
 
 Exemplo de `update` (abreviado):
 

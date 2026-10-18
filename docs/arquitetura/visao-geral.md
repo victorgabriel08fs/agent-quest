@@ -158,10 +158,10 @@ agents-quest/
 ├── shared/
 │   └── contract.js                  constantes e typedefs do contrato
 ├── web/
-│   ├── index.html
-│   ├── css/         base.css, layout.css, scene.css, themes.css
+│   ├── index.html, favicon.svg
+│   ├── css/         base.css, layout.css, scene.css, themes.css   (cores e contraste: ADR 0009)
 │   └── js/          main.js, connection.js, store.js, selectors.js, follow.js, scene.js, fx.js
-│       ├── views/   topbar.js, sessions.js, party.js, quest.js, feed.js, legend.js
+│       ├── views/   topbar.js, sessions.js, party.js, quest.js, feed.js, empty.js (estado sem sessões), legend.js
 │       └── themes/  contract.js, helpers.js, escritorio.js, guilda.js
 ├── scripts/
 │   ├── run-tests.mjs                npm test: acha os *.test.js e chama node --test (ADR 0010)
