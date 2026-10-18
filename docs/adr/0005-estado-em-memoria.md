@@ -32,3 +32,14 @@ O replay ficou para depois da v1. Os eventos podem conter código, comandos e se
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão.
+
+## Complemento de 18/10/2026: `AGENT_QUEST_HOME` dos dois lados
+
+O servidor, o `npm run capture:deploy` e o encaminhador resolvem o diretório de dados cada um com o próprio ambiente. O encaminhador roda como hook, filho do processo do Claude Code. Se `AGENT_QUEST_HOME` estiver definida só no terminal do servidor, o encaminhador procura o `runtime.json` no diretório padrão, não encontra e sai em silêncio: a captura parece desligada, sem nenhum erro.
+
+Decisão:
+
+- **Uso normal:** não definir `AGENT_QUEST_HOME`. O diretório padrão (`%LOCALAPPDATA%\agent-quest\`) já fica fora do OneDrive. A variável existe para isolar testes e desenvolvimento, que usam um diretório temporário e porta efêmera, sem o Claude Code no meio.
+- **Se o usuário precisar de outro diretório:** a variável tem de valer igual para o servidor, para o `capture:deploy` e para o Claude Code, no terminal e no VS Code. O caminho é defini-la como variável de ambiente do usuário do Windows e reabrir terminais e o VS Code. Quem faz isso é o usuário (regra da captura no plano).
+- Ao iniciar com `AGENT_QUEST_HOME` definida, o servidor imprime um aviso de que a captura só encontra este servidor se o Claude Code tiver a mesma variável (critério no T2 do plano).
+- Na solução de problemas ("nenhum evento chegando"), conferir se a variável é a mesma dos dois lados.
