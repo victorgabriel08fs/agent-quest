@@ -93,8 +93,8 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (ou `null
 - **`agent_id` presente mas inválido** (não é texto, é vazio ou passa de 128 caracteres): o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido.
 - **Identificadores** (`agent_type`, `subagent_type`, `tool_name`, nome de skill, modelo, servidor e ferramenta MCP), decididos em 18/10/2026:
   - não passam por `redact`. São nomes de configuração local, e a redação gerava falsos positivos: `auth:tester` virava `auth:•••` e caía em `aux`;
-  - primeiro saem os caracteres invisíveis e de controle da etapa 1 da redação; o papel (`resolveRole`) e a categoria são decididos com esse valor cru;
-  - para exibir, o valor fica como está se casar com `^[A-Za-z0-9_.:@/-]{1,80}$`; senão, passa por `redactAndCut(valor, 80)`.
+  - **valor cru:** primeiro saem os caracteres invisíveis e de controle da etapa 1 da redação; acima de 128 caracteres, vira `null`. O cru decide a categoria (no normalizador), o papel (`resolveRole`, no reducer) e as comparações de tipo, como o elo delegação → instância. Ele vai no fato como `agentTypeKey` e `subagentTypeKey` (e `agentTypeKey` em cada item de `backgroundTasks`), só para uso interno: **nunca** entra em `SessionState`, em evento canônico nem em log;
+  - **valor exibido** (`agentType`, `subagentType`, `tool` e afins), revisto em 18/10/2026: fica igual ao cru só se casar com `^[A-Za-z0-9_.:@/-]{1,80}$` **e** for ponto fixo de `redact`; senão, vira `redactAndCut(valor, 80)`. Sem a segunda condição, valores como `https://u:p@h/`, `ghp_…` ou `AKIA…` (e `subagent_type` e `tool_name` são escritos pelo modelo) apareceriam crus no painel. Com ela, todo texto exibido é ponto fixo de `redact`, sem exceção. Efeito aceito: `auth:tester` aparece como `auth:•••`, mas o papel continua `tes`.
 - **Marcador de corte do encaminhador** (B3 do tester do T5). O corte de 1 KiB + 3 KiB (e o de 128 + 384 do teto do corpo, seção 1) pode partir um token antes da redação, de modo que o começo ou o fim de um segredo apareça ao lado do marcador. Antes de redigir, o normalizador troca cada ocorrência de `<palavra>…[cortado N caracteres]…<palavra>` por `…`. "Palavra" aqui é a sequência máxima sem espaço em branco encostada no marcador, de cada lado. Sem espaço nenhum, some tudo daquele lado, que é o resultado seguro. A mudança é do normalizador (dev-backend, ajuste do T5). O encaminhador continua cortando por posição, que é barato e não precisa conhecer tokens.
 - **Formas de caminho** reconhecidas antes de comparar com o projeto e a pasta pessoal (decididas em 18/10/2026, sem esperar o T0, porque são transformações puras de texto):
   - prefixos `\\?\` e `\\.\` são removidos, e `\\?\UNC\servidor\pasta` vira `\\servidor\pasta`;
@@ -210,7 +210,7 @@ O normalizador gera o fato; o reducer aplica as regras da seção 6 e emite os e
 Decisão em ADR 0007. Regras operacionais:
 
 - `agentKey = payload.agent_id ?? 'main'`.
-- Papel por `agent_type` (tabela do ADR 0007; tipos desconhecidos viram `aux`). Para `plugin:agente`, tenta o nome inteiro e depois a parte depois do último `:`. Sobrescrita opcional em `<dados>/config.json` (`"roles"`).
+- Papel por `agent_type` (tabela do ADR 0007; tipos desconhecidos viram `aux`), calculado sempre com o valor cru do fato (`agentTypeKey`), nunca com o exibido (`agentType`). O mesmo vale para o papel de quem recebe uma delegação (`subagentTypeKey`) e para comparar tipos ao ligar delegação e instância (seção 2, "Identificadores"). Para `plugin:agente`, tenta o nome inteiro e depois a parte depois do último `:`. Sobrescrita opcional em `<dados>/config.json` (`"roles"`).
 - Se a sessão principal vier com `agent_type` (sessão iniciada com `--agent`), ela continua `main`/`orq`, e o tipo aparece só como detalhe.
 - **Elo delegação → instância.** Cada sessão guarda os pedidos `Agent` pendentes por `toolUseId`: `{ from, toType, description, background, ts, agentKey }`.
   1. `tool.pre` de `Agent`: cria o pendente e emite `agent.delegated`.
@@ -562,7 +562,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 
 **Propriedades obrigatórias, com testes:**
 
-- **Idempotência:** `redact(redact(x)) === redact(x)`, e todo resultado de `redactAndCut` é ponto fixo de `redact`.
+- **Idempotência:** `redact(redact(x)) === redact(x)`, e todo resultado de `redactAndCut` é ponto fixo de `redact`. Sem exceção, todo texto que vai para o painel (inclusive identificadores, seção 2) é ponto fixo de `redact`.
 - **Redação antes do corte:** os limites contam caracteres depois da redação, então um segredo nunca aparece pela metade.
 - **Robustez:** nunca lança exceção, e o tempo cresce de forma linear. A forma do teste de tempo está no ADR 0010 (complemento "teste de tempo da redação").
 - **Vetores:**
