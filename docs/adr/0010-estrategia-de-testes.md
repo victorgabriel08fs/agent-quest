@@ -97,7 +97,27 @@ Os cenários de `test/fixtures/hooks/` são a base comum do T5, do T7, do T9 e d
 - **Troca ids reais por ids sintéticos.** Vale para os valores das chaves de id (`session_id`, `prompt_id`, `tool_use_id`, `agent_id`, `agentId`, `id`, `task_id`, `request_id`, `uuid` e afins) e para toda ocorrência desses mesmos valores dentro de outras strings: caminhos de transcript, `agent-<id>.jsonl`, `outputFile` e ids dentro das tags das notificações de tarefa. Regras:
   - o mesmo id real vira sempre o mesmo id sintético no cenário, então os elos (`tool_response.agentId` com `agent_id`, `background_tasks[].id`, `session_id` dos subagentes) continuam valendo;
   - o id sintético tem o mesmo comprimento, o mesmo prefixo (`toolu_`, o `a` inicial dos `agent_id`) e os mesmos separadores (hífens de UUID), para o normalizador ver a mesma forma.
-- **Conferência antes de gravar.** O cenário é recusado se tiver possível segredo, string acima de 200 caracteres fora dos marcadores, o nome do usuário ou qualquer id original. `--ignore-audit` só pode ser usado com revisão do orquestrador, e o tester confere o cenário de novo.
+- **Corte e contagem:** todo texto mantido é cortado com `redactAndCut` e medido com `charLength` (modelo de eventos, seção 10), sem corte próprio. Se o texto cortado mais o marcador `«tipo#n:tamanho»` não for ponto fixo de `redact`, fica só o marcador.
+- **Conferência antes de gravar.** O cenário é recusado se tiver possível segredo (qualquer string que mude ao passar por `redact`), string acima de 200 caracteres (`charLength`) fora dos marcadores, o nome do usuário ou qualquer id original. `--ignore-audit` só pode ser usado com revisão do orquestrador, e o tester confere o cenário de novo.
 - Os cenários não guardam `env.names` (a lista de variáveis de ambiente). Ela só aparece, resumida ao que interessa ao V11, em `docs/pesquisa/validacao-captura.md`.
 
 **O que a sonda grava no JSONL bruto** (local, em `%LOCALAPPDATA%\agent-quest\probe\`, apagado depois do T0): o payload completo; os nomes, sem valores, das variáveis `CLAUDE*` (inclusive `CLAUDECODE`), `TERM_PROGRAM*`, `VSCODE_*` e `WT_SESSION`; e os valores só de `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_ENTRYPOINT` e `TERM_PROGRAM`.
+
+## Complemento de 18/10/2026: teste de tempo da redação
+
+Um limite absoluto (por exemplo, 10 ms para 4 KiB) depende da máquina e não diferencia um código linear lento de um quadrático rápido. O teste de `redact` e de `redactAndCut` mede o **crescimento**:
+
+- **Entradas patológicas**, cada uma montada em 4 KiB e em 32 KiB repetindo um mesmo trecho:
+  - `a=` repetido;
+  - aspa sem fechamento seguida de `\"` repetido;
+  - `--x ` repetido;
+  - `-----BEGIN PRIVATE KEY-----` sem END;
+  - `://a:a:a:` repetido;
+  - um caractere invisível entre cada letra;
+  - `token=` repetido;
+  - `Authorization: ` repetido.
+- **Medição:** para cada entrada e tamanho, o melhor tempo de N = 7 execuções, depois de uma execução de aquecimento.
+- **Critérios**, por entrada:
+  - `t(32 KiB)` abaixo de 100 ms;
+  - `t(32 KiB) / max(t(4 KiB), 1 ms)` no máximo 32. Linear daria cerca de 8 e quadrático cerca de 64; o piso de 1 ms evita razão instável com tempos muito pequenos.
+- O teste roda no `npm test` normal. Se falhar por ruído da máquina, a regra é rodar de novo uma vez; falhar duas vezes seguidas é bug.

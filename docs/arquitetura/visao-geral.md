@@ -56,8 +56,10 @@ Assinaturas principais (contrato entre módulos):
 // server/domain/normalize.js
 export function normalize(envelope, { receivedAt }) {}   // → Fact | null
 
-// server/domain/redact.js (pura, sem node:*; também usada por tools/probe/sanitize.mjs)
-export function redact(text) {}   // → string, idempotente (modelo de eventos, seção 10)
+// server/domain/redact.js (pura, sem node:*; também usada por tools/probe/sanitize.mjs; modelo de eventos, seção 10)
+export function redact(text) {}              // → string, idempotente
+export function redactAndCut(text, max) {}   // → string com no máximo max caracteres, ponto fixo de redact; único corte de textos exibidos
+export function charLength(text) {}          // → número de pontos de código; única definição de "caractere" nos limites
 
 // server/domain/state/index.js
 export function createState({ roleOverrides, readAgentNames }) {}   // → State

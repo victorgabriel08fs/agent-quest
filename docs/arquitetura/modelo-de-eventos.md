@@ -424,41 +424,80 @@ Exemplo de `update` (abreviado):
 | `prompt` (UserPromptSubmit) | primeira linha, até 80, redigida; o resto nunca |
 | `last_assistant_message`, `compact_summary`, `custom_instructions`, `message` (Notification) | nunca |
 
-**Redação.** É uma função só, `redact(text) → string`, em `server/domain/redact.js`. O normalizador a usa em comandos, descrições, títulos, erros, buscas e consultas web, e a sanitização dos cenários do T0 (`tools/probe/sanitize.mjs`) importa o mesmo módulo, para as duas nunca divergirem. O módulo é puro: não importa `node:*` nem nada do servidor. Revista em 18/10/2026 com as lacunas apontadas pelo tester da sonda. Etapas, nesta ordem:
+**Redação.** O módulo `server/domain/redact.js` é puro (não importa `node:*` nem nada do servidor) e é o único lugar com regras de redação. O normalizador e a sanitização dos cenários do T0 (`tools/probe/sanitize.mjs`) o importam, para nunca divergirem. Revisto em 18/10/2026, duas vezes, com as lacunas apontadas pelo tester da sonda.
 
-1. **Caracteres invisíveis.** Remove os de largura zero (U+200B, U+200C, U+200D, U+2060, U+FEFF), o hífen suave (U+00AD) e os controles de direção (U+200E, U+200F, U+202A a U+202E, U+2066 a U+2069). Uma chave conhecida com um invisível no meio continua sendo reconhecida, e o painel nunca mostra texto invisível nem invertido.
-2. **Blocos de chave privada:** de `-----BEGIN … PRIVATE KEY-----` até o `-----END … PRIVATE KEY-----` correspondente, ou até o fim do texto se o fim faltar.
+Exportações:
+
+| Função | Contrato |
+|---|---|
+| `redact(text) → string` | Aplica as etapas abaixo. Entrada que não é texto vira `''`; falha interna devolve só `•••`. |
+| `redactAndCut(text, max) → string` | Redige e corta para no máximo `max` caracteres, contando o `…` final. É a única função de corte de textos exibidos: o normalizador e o `sanitize.mjs` usam esta, nenhum outro corte. |
+| `charLength(text) → number` | Quantidade de caracteres. É a única definição de "caractere" para todos os limites do projeto: os da tabela acima, os 200 do teste de campos proibidos e a conferência dos cenários. |
+| `isSensitiveName(name) → boolean` | Exportada só para os testes. Não faz parte do contrato com outros módulos. |
+
+**Caractere** é um ponto de código Unicode (`Array.from(text).length`). Um par de surrogates nunca é partido.
+
+**Regra de corte de `redactAndCut`:**
+
+1. `r = redact(text)`. Se `charLength(r) ≤ max`, devolve `r`.
+2. Senão, toma os primeiros `max − 1` caracteres de `r` e acrescenta `…`.
+3. O resultado precisa ser **ponto fixo** da redação: `redact(resultado) === resultado`. Enquanto não for, o corte recua para antes da última palavra (sequência sem espaço) e o passo é repetido. No limite, sobra só `…`.
+
+A regra 3 cobre os dois defeitos achados pelo tester:
+- `•••` partido no meio: a sobra `••` não é ponto fixo;
+- nome sensível sem valor, como `--password …`, que o `redact` transformaria de novo.
+
+O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcador `«tipo#n:tamanho»`: se a junção não for ponto fixo, fica só o marcador.
+
+**Etapas de `redact`, nesta ordem:**
+
+1. **Caracteres invisíveis.** Remove tudo da classe `[\p{Default_Ignorable_Code_Point}\p{Cf}]` (expressão com a flag `u`). Ela cobre largura zero, hífen suave, controles de direção, U+2061 a U+2064, U+180E, U+034F, seletores de variação (U+FE00 a U+FE0F), preenchedores Hangul (U+115F, U+1160, U+3164, U+FFA0) e tags (U+E0000 a U+E0FFF). Conferido no Node 24.20 em 18/10/2026: todos esses saem, e letras, acentos, emoji, `•`, `…` e `«` ficam. Efeito colateral aceito: emojis compostos com U+200D ou U+FE0F podem aparecer separados.
+2. **Blocos de chave privada:** de `-----BEGIN <rótulo>-----`, em que o rótulo contém `PRIVATE KEY`, até o `-----END <mesmo rótulo>-----`, ou até o fim do texto se o END faltar. Cobre `RSA`, `EC`, `OPENSSH`, `ENCRYPTED` e `PGP PRIVATE KEY BLOCK`.
 3. **Tokens com prefixo conhecido**, com tamanho mínimo depois do prefixo para evitar falso positivo:
    - `sk-ant-…`, `sk-…`, `sk_live_…`, `sk_test_…`, `rk_live_…`;
    - `ghp_…`, `gho_…`, `ghu_…`, `ghs_…`, `ghr_…`, `github_pat_…`, `glpat-…`;
    - `npm_` seguido de 36 letras ou dígitos (não confundir com nomes como `npm_config_cache`), `pypi-…`, `hf_…`;
    - `AKIA…`, `AIza…`, `xox[abprs]-…`, `xapp-…`;
    - JWT (`eyJ….….…`).
-4. **Credenciais embutidas:** usuário e senha em URL (`://usuario:senha@` vira `://•••@`) e em `curl -u usuario:senha` ou `--user usuario:senha` (vira `-u •••`).
+4. **Credenciais embutidas:**
+   - usuário e senha em URL (`://usuario:senha@` vira `://•••@`);
+   - `-u` e `--user` com valor que contém `:`, com espaço, com `=` ou colado (`curl -u a:b`, `--user=a:b` e `curl -uadmin:senha` viram `-u •••`, `--user=•••` e `-u•••`).
 5. **Cabeçalhos**, em qualquer caixa e também dentro de aspas, como em `-H "X-Api-Key: abc"`. O valor inteiro é trocado em:
    - `Authorization:` e `Proxy-Authorization:`, inclusive `Bearer` e `Basic`;
    - `Cookie:` e `Set-Cookie:`;
    - qualquer cabeçalho cujo nome termine em `-Key`, `-Token` ou `-Secret` (`X-Api-Key:`, `X-Auth-Token:`).
 
    `Bearer <valor>` solto também é trocado.
-6. **Pares nome-valor com nome sensível**, em qualquer caixa, nas formas:
-   - `nome=valor` e `nome: valor`;
-   - `"nome": "valor"`;
-   - `export NOME=valor` e `$env:NOME = "valor"`;
-   - `--nome valor` e `--nome=valor`. Opções curtas como `-p`, ambíguas demais, ficam de fora.
+6. **Pares nome-valor com nome sensível.**
+   - **Separadores** (o mais longo vale), com espaços opcionais em volta: `:=`, `?=`, `+=`, `=>`, `=` e `:`. Exemplos: `TOKEN := x` (Make e Go), `'password' => 'x'` (arrays do PHP), `nome: valor` (YAML).
+   - **Formas:**
+     - `nome=valor` e as variações de separador acima;
+     - `"nome": "valor"` e `'nome' => 'valor'`;
+     - `export NOME=valor`, `$env:NOME = "valor"`, `set NOME=valor`;
+     - `setx NOME valor`, em que o valor vem separado por espaço;
+     - `--nome valor` e `--nome=valor`. Opções curtas como `-p` ficam de fora.
+   - **Valor entre aspas:** vai até a aspa de fechamento não escapada (`\"` e `\'` não fecham); sem fechamento, vai até o fim da linha. O valor, com as aspas, vira `•••`, e o nome e o separador ficam.
+   - **Nome sensível.** O nome é dividido em partes por `_`, `-`, `.`, pela troca de minúscula ou dígito para maiúscula e pela fronteira de sigla (`DBPassword` vira `DB` e `Password`). As partes vão para minúsculas, e a junção delas sem separadores é a "forma colada". O nome é sensível quando:
+     - a forma colada **contém** `password`, `passwd`, `passphrase`, `secret`, `credential`, `apikey`, `accesskey` ou `privatekey`; ou
+     - a forma colada **termina** em `token`, ou alguma parte é `token`; ou
+     - alguma parte é `pwd`, `auth`, `sig` ou `signature`; ou
+     - a última parte é `key`.
+   - **Sensíveis** (conferido em 18/10/2026): `PGPASSWORD`, `DBPassword`, `APITOKEN`, `GITHUBTOKEN`, `SECRETKEY`, `NPM_TOKEN`, `authToken`, `access_token`, `refresh_token`, `client_secret`, `db_password`, `my_token`, `apiKey`, `api-key`, `AWS_SECRET_ACCESS_KEY`, `passphrase`, `sig` (assinatura de URL SAS do Azure), `X-Amz-Signature`, `X-Amz-Credential`, `pwd`.
+   - **Não sensíveis:** `tokenizer`, `tokens`, `max_tokens`, `oauth`, `author`, `key_file`, `keyboard`, `monkey`, `npm_config_cache`.
+   - Falsos positivos como `sort_key=x` ou `secretary=x` são aceitos: escondem um valor inofensivo.
 
-   O nome é sensível quando, dividido por `_`, `-`, `.` e pelas trocas de minúscula para maiúscula, alguma parte é `password`, `passwd`, `pwd`, `secret`, `token`, `apikey`, `credential`, `credentials` ou `auth`, ou a última parte é `key`. Exemplos: `access_token`, `refresh_token`, `client_secret`, `db_password`, `my_token`, `MY_TOKEN`, `apiKey`, `api_key`, `AWS_SECRET_ACCESS_KEY`, `--password`, `--token`, `--api-key`. Não são sensíveis `tokenizer`, `oauth` nem `--key-file`. Mantém o nome e o separador e troca o valor, com as aspas se houver, por `•••`. Falsos positivos como `sort_key=nome` são aceitos: escondem um valor inofensivo.
+**Propriedades obrigatórias, com testes:**
 
-Propriedades obrigatórias, com testes:
-
-- **Idempotência:** `redact(redact(x)) === redact(x)`.
-- **Redação antes do corte:** os limites da tabela acima contam caracteres depois da redação, então um segredo nunca aparece pela metade.
-- **Robustez:** nunca lança exceção; tempo linear, sem expressão regular com retrocesso catastrófico; uma string patológica de 4 KiB é processada em menos de 10 ms.
-- **Vetores:** pelo menos um positivo por regra acima, inclusive cada exemplo desta seção e uma chave com caractere de largura zero no meio, mais negativos (`npm_config_cache=x`, `tokenizer=y`, um SHA de commit, um `tool_use_id`).
+- **Idempotência:** `redact(redact(x)) === redact(x)`, e todo resultado de `redactAndCut` é ponto fixo de `redact`.
+- **Redação antes do corte:** os limites contam caracteres depois da redação, então um segredo nunca aparece pela metade.
+- **Robustez:** nunca lança exceção, e o tempo cresce de forma linear. A forma do teste de tempo está no ADR 0010 (complemento "teste de tempo da redação").
+- **Vetores:**
+  - pelo menos um positivo por regra acima, incluindo cada exemplo desta seção, um caractere invisível de cada faixa no meio de uma chave conhecida e um valor JSON com aspas escapadas;
+  - negativos: os "não sensíveis" acima, um SHA de commit e um `tool_use_id`.
 
 Alternativa descartada: detectar segredo por entropia. Esconderia SHAs de commit, ids e hashes, que são úteis no painel, e mesmo assim não garantiria cobertura. A redação continua heurística: formatos desconhecidos podem passar, e o modo discreto cobre a tela compartilhada (ADR 0006).
 
-Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres.
+Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres (contados com `charLength`).
 
 ## 11. A confirmar no T0
 
