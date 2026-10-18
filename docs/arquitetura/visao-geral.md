@@ -56,6 +56,9 @@ Assinaturas principais (contrato entre módulos):
 // server/domain/normalize.js
 export function normalize(envelope, { receivedAt }) {}   // → Fact | null
 
+// server/domain/redact.js (pura, sem node:*; também usada por tools/probe/sanitize.mjs)
+export function redact(text) {}   // → string, idempotente (modelo de eventos, seção 10)
+
 // server/domain/state/index.js
 export function createState({ roleOverrides, readAgentNames }) {}   // → State
 export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] sem seq, changed: string[] }

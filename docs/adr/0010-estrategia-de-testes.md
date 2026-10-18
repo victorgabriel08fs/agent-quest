@@ -88,7 +88,7 @@ Os cenários de `test/fixtures/hooks/` são a base comum do T5, do T7, do T9 e d
 - **Mantém:**
   - a estrutura do payload (chaves, números, booleanos e listas);
   - nomes de eventos e de ferramentas, tipos de agente, status e outros valores curtos de enumeração;
-  - a primeira linha de cada comando, até 160 caracteres, com a redação da seção 10 do modelo de eventos. É acima do limite de 120 do normalizador, para o T5 testar o corte;
+  - a primeira linha de cada comando, até 160 caracteres, com a redação da seção 10 do modelo de eventos. É acima do limite de 120 do normalizador, para o T5 testar o corte. A redação usada é a mesma função do normalizador, `server/domain/redact.js`, importada pelo `sanitize.mjs`;
   - descrições até 80 caracteres, padrões de busca até 60 e a primeira linha dos erros até 160, todos redigidos;
   - de saídas e erros, só as linhas de resumo dos testes;
   - do pedido do usuário, só o comando `/...` ou as tags `<...>` das notificações do sistema;

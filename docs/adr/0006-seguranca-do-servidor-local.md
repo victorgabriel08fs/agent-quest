@@ -51,3 +51,7 @@ Os eventos trazem caminhos, comandos, trechos de código, saídas e pedidos do u
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com a definição do padrão de exibição: por padrão, o painel mostra comandos, caminhos e títulos de pedidos já minimizados, truncados e redigidos pelo normalizador. O modo discreto é opcional, começa desligado e é ativado por quem observa (T14 do plano).
+
+## Complemento de 18/10/2026: redação
+
+A lista completa da redação está na seção 10 do modelo de eventos. Ela foi ampliada com nomes compostos em qualquer caixa, opções de linha de comando, `curl -u`, cabeçalhos `*-Key`/`*-Token`, mais prefixos de token e remoção de caracteres invisíveis. A implementação é uma só, `server/domain/redact.js`, usada pelo normalizador e pela sanitização dos cenários de teste.

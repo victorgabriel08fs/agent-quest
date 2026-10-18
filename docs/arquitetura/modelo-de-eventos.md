@@ -408,14 +408,39 @@ Exemplo de `update` (abreviado):
 | `prompt` (UserPromptSubmit) | primeira linha, até 80, redigida; o resto nunca |
 | `last_assistant_message`, `compact_summary`, `custom_instructions`, `message` (Notification) | nunca |
 
-**Redação** (mesma função para comandos, descrições, títulos e erros), substituindo por `•••`:
+**Redação.** É uma função só, `redact(text) → string`, em `server/domain/redact.js`. O normalizador a usa em comandos, descrições, títulos, erros, buscas e consultas web, e a sanitização dos cenários do T0 (`tools/probe/sanitize.mjs`) importa o mesmo módulo, para as duas nunca divergirem. O módulo é puro: não importa `node:*` nem nada do servidor. Revista em 18/10/2026 com as lacunas apontadas pelo tester da sonda. Etapas, nesta ordem:
 
-- chaves com prefixo conhecido: `sk-ant-…`, `sk-…`, `ghp_…`, `gho_…`, `ghs_…`, `github_pat_…`, `AKIA…`, `xox[abprs]-…`, `AIza…`;
-- JWT (`eyJ….….…`) e `Bearer <valor>`;
-- blocos `-----BEGIN … PRIVATE KEY----- … -----END … PRIVATE KEY-----`;
-- valores em `password=`, `passwd=`, `pwd=`, `secret=`, `token=`, `api_key=`, `apikey=`, `authorization:` (mantém o nome, troca o valor);
-- usuário e senha em URL (`://usuario:senha@` → `://•••@`);
-- atribuições de variáveis com `KEY`, `TOKEN`, `SECRET` ou `PASSWORD` no nome (`MY_TOKEN=abc` → `MY_TOKEN=•••`).
+1. **Caracteres invisíveis.** Remove os de largura zero (U+200B, U+200C, U+200D, U+2060, U+FEFF), o hífen suave (U+00AD) e os controles de direção (U+200E, U+200F, U+202A a U+202E, U+2066 a U+2069). Uma chave conhecida com um invisível no meio continua sendo reconhecida, e o painel nunca mostra texto invisível nem invertido.
+2. **Blocos de chave privada:** de `-----BEGIN … PRIVATE KEY-----` até o `-----END … PRIVATE KEY-----` correspondente, ou até o fim do texto se o fim faltar.
+3. **Tokens com prefixo conhecido**, com tamanho mínimo depois do prefixo para evitar falso positivo:
+   - `sk-ant-…`, `sk-…`, `sk_live_…`, `sk_test_…`, `rk_live_…`;
+   - `ghp_…`, `gho_…`, `ghu_…`, `ghs_…`, `ghr_…`, `github_pat_…`, `glpat-…`;
+   - `npm_` seguido de 36 letras ou dígitos (não confundir com nomes como `npm_config_cache`), `pypi-…`, `hf_…`;
+   - `AKIA…`, `AIza…`, `xox[abprs]-…`, `xapp-…`;
+   - JWT (`eyJ….….…`).
+4. **Credenciais embutidas:** usuário e senha em URL (`://usuario:senha@` vira `://•••@`) e em `curl -u usuario:senha` ou `--user usuario:senha` (vira `-u •••`).
+5. **Cabeçalhos**, em qualquer caixa e também dentro de aspas, como em `-H "X-Api-Key: abc"`. O valor inteiro é trocado em:
+   - `Authorization:` e `Proxy-Authorization:`, inclusive `Bearer` e `Basic`;
+   - `Cookie:` e `Set-Cookie:`;
+   - qualquer cabeçalho cujo nome termine em `-Key`, `-Token` ou `-Secret` (`X-Api-Key:`, `X-Auth-Token:`).
+
+   `Bearer <valor>` solto também é trocado.
+6. **Pares nome-valor com nome sensível**, em qualquer caixa, nas formas:
+   - `nome=valor` e `nome: valor`;
+   - `"nome": "valor"`;
+   - `export NOME=valor` e `$env:NOME = "valor"`;
+   - `--nome valor` e `--nome=valor`. Opções curtas como `-p`, ambíguas demais, ficam de fora.
+
+   O nome é sensível quando, dividido por `_`, `-`, `.` e pelas trocas de minúscula para maiúscula, alguma parte é `password`, `passwd`, `pwd`, `secret`, `token`, `apikey`, `credential`, `credentials` ou `auth`, ou a última parte é `key`. Exemplos: `access_token`, `refresh_token`, `client_secret`, `db_password`, `my_token`, `MY_TOKEN`, `apiKey`, `api_key`, `AWS_SECRET_ACCESS_KEY`, `--password`, `--token`, `--api-key`. Não são sensíveis `tokenizer`, `oauth` nem `--key-file`. Mantém o nome e o separador e troca o valor, com as aspas se houver, por `•••`. Falsos positivos como `sort_key=nome` são aceitos: escondem um valor inofensivo.
+
+Propriedades obrigatórias, com testes:
+
+- **Idempotência:** `redact(redact(x)) === redact(x)`.
+- **Redação antes do corte:** os limites da tabela acima contam caracteres depois da redação, então um segredo nunca aparece pela metade.
+- **Robustez:** nunca lança exceção; tempo linear, sem expressão regular com retrocesso catastrófico; uma string patológica de 4 KiB é processada em menos de 10 ms.
+- **Vetores:** pelo menos um positivo por regra acima, inclusive cada exemplo desta seção e uma chave com caractere de largura zero no meio, mais negativos (`npm_config_cache=x`, `tokenizer=y`, um SHA de commit, um `tool_use_id`).
+
+Alternativa descartada: detectar segredo por entropia. Esconderia SHAs de commit, ids e hashes, que são úteis no painel, e mesmo assim não garantiria cobertura. A redação continua heurística: formatos desconhecidos podem passar, e o modo discreto cobre a tela compartilhada (ADR 0006).
 
 Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres.
 
