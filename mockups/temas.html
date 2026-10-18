@@ -1,0 +1,1247 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Quest · Temas</title>
+<style>
+  :root {
+    --chrome-bg: #0f1115;
+    --chrome-bar: #0a0c0f;
+    --chrome-fg: #e9eaee;
+    --chrome-muted: #98a0aa;
+    --chrome-line: #232831;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--chrome-bg);
+    color: var(--chrome-fg);
+    font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  kbd {
+    padding: 2px 5px;
+    font: 12px/1 Consolas, monospace;
+    color: var(--chrome-fg);
+    background: #191d24;
+    border: 1px solid #3a414c;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+  }
+
+  /* ---------- barra superior ---------- */
+  .chrome {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px;
+    padding: 10px 20px;
+    background: var(--chrome-bar);
+    border-bottom: 1px solid var(--chrome-line);
+  }
+  .brand { margin-right: auto; font-size: 15px; font-weight: 700; white-space: nowrap; }
+  .brand small { margin-left: 6px; font-weight: 400; color: var(--chrome-muted); }
+  .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .group-label { margin-right: 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--chrome-muted); }
+  .chrome button {
+    padding: 5px 11px;
+    font: inherit; color: var(--chrome-fg);
+    background: #181c23; border: 1px solid #2a303a; border-radius: 8px;
+    cursor: pointer;
+  }
+  .chrome button:hover { background: #212732; }
+  .chrome button[aria-pressed="true"] { color: #101216; background: var(--chrome-fg); border-color: var(--chrome-fg); }
+  .chrome button:focus-visible { outline: 2px solid #7aa2ff; outline-offset: 2px; }
+  .star { color: #f5c542; }
+  .chrome button[aria-pressed="true"] .star { color: #a87400; }
+
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 20px; }
+  .intro { margin: 14px 0 0; color: var(--chrome-muted); }
+  .intro b { font-weight: 600; color: var(--chrome-fg); }
+  .foot { margin: 0 0 28px; font-size: 12.5px; color: var(--chrome-muted); }
+
+  /* ---------- palco (estrutura comum a todos os temas) ---------- */
+  #stage {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    margin: 12px 0 14px;
+    padding: 18px;
+    border-radius: 14px;
+    background: var(--stage-bg);
+    color: var(--fg);
+    font-family: var(--font);
+  }
+  .banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; margin-bottom: 14px; }
+  .banner h1 { margin: 0; font: 700 30px/1.1 var(--font-title); color: var(--banner-fg); }
+  .banner p { margin: 4px 0 0; color: var(--banner-muted); }
+  .hud { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+  .stat { min-width: 118px; padding: 6px 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .stat b { display: block; font-size: 17px; white-space: nowrap; }
+  .stat span { display: block; font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
+  .quest { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding: 9px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .qt { margin-right: 6px; font-weight: 700; }
+  .phase { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 11px; font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; transition: background .3s, color .3s, border-color .3s; }
+  .phase small { font-size: 10.5px; opacity: .75; }
+  .phase.active { color: var(--fg); background: var(--panel-2); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); animation: breathe 1.6s ease-in-out infinite; }
+  .phase.done { color: var(--on-good); background: var(--good); border-color: var(--good); }
+  .sep { color: var(--muted); }
+
+  .places { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .place {
+    position: relative;
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 10px 11px 11px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    transition: box-shadow .3s, border-color .3s, opacity .3s;
+  }
+  .place > * { transition: opacity .3s; }
+  .place.idle > * { opacity: .7; }
+  .place.working { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 22px -6px var(--accent); }
+  .place.waiting { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn), 0 0 22px -6px var(--warn); }
+  .place-head { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .who { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    position: relative; flex: none;
+    display: grid; place-items: center;
+    width: 52px; height: 52px;
+    font-size: 30px;
+    background: var(--avatar-bg); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  .place.working .avatar { animation: bob 1.1s ease-in-out infinite; }
+  .alert {
+    position: absolute; top: -9px; right: -9px;
+    display: none; place-items: center;
+    width: 22px; height: 22px;
+    font: 800 14px/1 "Segoe UI", sans-serif; color: var(--on-warn);
+    background: var(--warn); border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+  }
+  .place.waiting .alert { display: grid; animation: ping 1s ease-in-out infinite; }
+  .name { font-weight: 700; line-height: 1.2; }
+  .sub { font-size: 12px; color: var(--muted); }
+  .lvl { font-weight: 700; color: var(--lvl); }
+  .meter { display: grid; grid-template-columns: 72px minmax(0, 1fr) 32px; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .meter .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; overflow: hidden; background: var(--bar-bg); border-radius: 99px; }
+  .bar i { display: block; width: 0; height: 100%; background: var(--c); border-radius: inherit; transition: width .5s ease; }
+  .bar.hp { --c: var(--hp); }
+  .bar.mana { --c: var(--mana); }
+  .bar.xp { --c: var(--xp); height: 5px; }
+  .action {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    min-height: 2.7em;
+    font-size: 13px; line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .place.waiting .action { font-weight: 600; color: var(--warn-text); }
+  .bugzone { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 34px; padding: 4px 6px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .bugzone .empty { font-size: 11.5px; color: var(--muted); }
+  .bug { font-size: 22px; line-height: 1; cursor: help; animation: spawn .45s cubic-bezier(.3, 1.6, .5, 1); }
+  .bug.static { animation: none; }
+  .bug.defeat { animation: defeat .55s ease-in forwards; }
+
+  .lower { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 12px; }
+  .panel-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font: 700 12px/1.2 var(--font-title); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .logbox { display: flex; flex-direction: column; height: 430px; padding: 10px 12px; color: var(--log-fg); background: var(--log-bg); border: 1px solid var(--line); border-radius: var(--radius); }
+  .logbox .panel-title { color: var(--log-muted); }
+  .entries { flex: 1; min-height: 0; overflow-y: auto; }
+  .entry { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 5px 2px 5px 8px; font-size: 13.5px; line-height: 1.4; border-bottom: 1px solid var(--log-line); animation: slidein .35s ease-out; }
+  .entry.static { animation: none; }
+  .entry time { font: 12px/1.6 var(--font-mono); color: var(--log-muted); }
+  .entry code { padding: 0 4px; font: 12.5px var(--font-mono); background: var(--log-code-bg, var(--code-bg)); border-radius: 3px; overflow-wrap: anywhere; }
+  .entry.bad { box-shadow: inset 3px 0 0 var(--bad); }
+  .entry.good { box-shadow: inset 3px 0 0 var(--good); }
+  .entry.warn { box-shadow: inset 3px 0 0 var(--warn); }
+  .entry.gold { box-shadow: inset 3px 0 0 var(--lvl); }
+  .rar { padding: 0 6px; font-size: 11.5px; font-weight: 700; white-space: nowrap; border: 1px solid currentColor; border-radius: 99px; }
+  .rar.r1 { color: var(--rar1); }
+  .rar.r2 { color: var(--rar2); }
+  .rar.r3 { color: var(--rar3); }
+  .rar.r4 { color: var(--rar4); }
+
+  .notes { padding: 12px 14px; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .notes h3 { margin: 10px 0 4px; font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  .notes ul { margin: 0; padding-left: 18px; }
+  .notes li { margin: 3px 0; }
+  .badge { display: inline-block; margin-bottom: 2px; padding: 3px 10px; font-size: 12px; font-weight: 700; color: var(--on-lvl); background: var(--lvl); border-radius: 99px; }
+  .ratings { display: grid; gap: 4px; margin-top: 12px; }
+  .ratings div { display: flex; justify-content: space-between; gap: 10px; }
+  .dots { letter-spacing: 2px; white-space: nowrap; color: var(--accent); }
+  .dots .off { color: var(--line); }
+  details { margin-top: 12px; }
+  summary { font-weight: 600; cursor: pointer; }
+  .map { width: 100%; margin-top: 8px; font-size: 12.5px; border-collapse: collapse; }
+  .map th, .map td { padding: 5px 6px; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
+  .map th { width: 36%; font-weight: 600; color: var(--muted); }
+  .map code { padding: 0 3px; font: 12px var(--font-mono); background: var(--code-bg); border-radius: 3px; overflow-wrap: anywhere; }
+
+  /* ---------- efeitos ---------- */
+  .flyer { position: fixed; z-index: 40; font-size: 28px; pointer-events: none; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .4)); }
+  .lvl-pop { position: absolute; top: 8px; right: 10px; font-weight: 800; color: var(--lvl); animation: pop 1.3s ease forwards; }
+  .toast {
+    position: absolute; top: 16px; right: 16px; z-index: 10;
+    display: flex; align-items: center; gap: 12px;
+    max-width: 330px; padding: 10px 14px;
+    color: var(--fg); background: var(--panel);
+    border: 2px solid var(--lvl); border-radius: var(--radius);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    animation: toastin .4s cubic-bezier(.3, 1.4, .5, 1);
+  }
+  .toast.out { animation: toastout .35s ease-in forwards; }
+  .toast .ti { font-size: 30px; }
+  .toast small { display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .toast b { display: block; font-size: 15px; }
+  .toast span { font-size: 12.5px; color: var(--muted); }
+  .finale { position: absolute; inset: 0; z-index: 9; display: grid; place-items: center; background: rgba(0, 0, 0, .42); animation: fadein .3s ease; }
+  .finale.out { animation: fadeout .4s ease forwards; }
+  .finale-card {
+    max-width: min(90%, 470px); padding: 22px 34px; text-align: center;
+    color: var(--fg); background: var(--panel);
+    border: 2px solid var(--lvl); border-radius: var(--radius);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, .5);
+    animation: popin .5s cubic-bezier(.3, 1.5, .5, 1);
+  }
+  .finale-card .big { font-size: 56px; line-height: 1; }
+  .finale-card h3 { margin: 8px 0 4px; font: 700 26px/1.2 var(--font-title); }
+  .finale-card p { margin: 0; color: var(--muted); }
+  .place.hit { animation: hit .5s ease; }
+  .place.lvlup { animation: lvlup 1.3s ease; }
+
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  @keyframes ping { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
+  @keyframes spawn { from { opacity: 0; transform: scale(0) rotate(-30deg); } to { opacity: 1; transform: none; } }
+  @keyframes defeat { to { opacity: 0; transform: translateY(-12px) scale(.2) rotate(40deg); } }
+  @keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  @keyframes hit { 0%, 100% { transform: none; } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
+  @keyframes lvlup { 0% { box-shadow: 0 0 0 0 var(--lvl); } 35% { box-shadow: 0 0 0 4px var(--lvl), 0 0 30px var(--lvl); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @keyframes pop { 0% { opacity: 0; transform: translateY(6px); } 20%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-10px); } }
+  @keyframes toastin { from { opacity: 0; transform: translateY(-14px) scale(.96); } to { opacity: 1; transform: none; } }
+  @keyframes toastout { to { opacity: 0; transform: translateY(-10px); } }
+  @keyframes fadein { from { opacity: 0; } }
+  @keyframes fadeout { to { opacity: 0; } }
+  @keyframes popin { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
+
+  /* ---------- tema: Guilda ---------- */
+  #stage[data-theme="guilda"] {
+    --stage-bg:
+      radial-gradient(ellipse at 50% -25%, rgba(255, 190, 100, .25), transparent 60%),
+      repeating-linear-gradient(90deg, rgba(0, 0, 0, .16) 0 2px, transparent 2px 48px),
+      linear-gradient(180deg, #3d2817, #22160c);
+    --banner-fg: #f7e8c4; --banner-muted: #d4bc8c;
+    --panel: #f4e7c9; --panel-2: #eadab3;
+    --avatar-bg: radial-gradient(circle at 50% 35%, #fffaf0, #e0c995);
+    --fg: #3b2816; --muted: #7d5e3e; --line: #c8a96b;
+    --accent: #b5800f; --good: #557d2b; --on-good: #fff8e6; --bad: #b3362a;
+    --warn: #c2412d; --on-warn: #fff; --warn-text: #a8321f;
+    --hp: #b8352a; --mana: #2f62c0; --xp: #c79a1e; --lvl: #8f6200; --on-lvl: #fff8e6; --bar-bg: #dcc796;
+    --log-bg: #f4e7c9; --log-fg: #3b2816; --log-muted: #86663f; --log-line: #e2cfa2; --code-bg: #e8d6aa;
+    --rar1: #6b6b6b; --rar2: #2f62c0; --rar3: #7b3fb0; --rar4: #c25a00;
+    --font: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+    --font-title: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+    --font-mono: Consolas, "Cascadia Mono", monospace;
+    --radius: 6px;
+  }
+  #stage[data-theme="guilda"] .banner h1 { font-variant: small-caps; letter-spacing: .03em; text-shadow: 0 2px 0 #120b05; }
+  #stage[data-theme="guilda"] :is(.place, .quest, .stat, .logbox, .notes) {
+    border: 2px solid #8a6838;
+    box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px #d8bd88, inset 0 0 34px rgba(140, 95, 35, .2), 0 3px 0 #5b3c1a, 0 10px 22px rgba(0, 0, 0, .35);
+  }
+  #stage[data-theme="guilda"] .place.working {
+    border-color: #c28d14;
+    box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px #d8bd88, 0 0 0 2px #e3b53f, 0 0 28px rgba(255, 196, 80, .6);
+  }
+  #stage[data-theme="guilda"] .place.waiting {
+    border-color: #c2412d;
+    box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px #d8bd88, 0 0 0 2px #c2412d, 0 0 28px rgba(194, 65, 45, .6);
+  }
+  #stage[data-theme="guilda"] :is(.place-head, .panel-title) { font-size: 14px; font-variant: small-caps; letter-spacing: .03em; text-transform: none; }
+
+  /* ---------- tema: Nave Estelar ---------- */
+  #stage[data-theme="nave"] {
+    --stage-bg:
+      radial-gradient(1.3px 1.3px at 20px 30px, rgba(255, 255, 255, .9), transparent 70%) 0 0 / 140px 140px,
+      radial-gradient(1px 1px at 90px 85px, rgba(255, 255, 255, .6), transparent 70%) 0 0 / 140px 140px,
+      radial-gradient(1px 1px at 60px 120px, rgba(160, 220, 255, .75), transparent 70%) 0 0 / 190px 190px,
+      radial-gradient(1.5px 1.5px at 150px 40px, rgba(255, 255, 255, .8), transparent 70%) 0 0 / 230px 230px,
+      radial-gradient(ellipse at 85% -10%, rgba(57, 208, 255, .22), transparent 55%),
+      radial-gradient(ellipse at 0% 110%, rgba(140, 90, 255, .2), transparent 50%),
+      linear-gradient(180deg, #050913, #0a1430);
+    --banner-fg: #e8f6ff; --banner-muted: #86a9c9;
+    --panel: rgba(10, 24, 48, .84); --panel-2: rgba(57, 208, 255, .08);
+    --avatar-bg: radial-gradient(circle at 50% 40%, rgba(57, 208, 255, .28), rgba(57, 208, 255, .04));
+    --fg: #d8ecff; --muted: #7f9fc0; --line: rgba(57, 208, 255, .32);
+    --accent: #39d0ff; --good: #1fbf8f; --on-good: #03140e; --bad: #ff5d5d;
+    --warn: #ffb547; --on-warn: #1d1300; --warn-text: #ffc670;
+    --hp: #39d0ff; --mana: #ffd166; --xp: #a78bfa; --lvl: #ffd166; --on-lvl: #1d1300; --bar-bg: rgba(255, 255, 255, .07);
+    --log-bg: rgba(6, 16, 34, .9); --log-fg: #cfe6ff; --log-muted: #6f90b2; --log-line: rgba(57, 208, 255, .12); --code-bg: rgba(57, 208, 255, .13);
+    --font: Bahnschrift, "Segoe UI", system-ui, sans-serif;
+    --font-title: Bahnschrift, "Segoe UI", sans-serif;
+    --font-mono: "Cascadia Mono", Consolas, monospace;
+    --radius: 3px;
+  }
+  #stage[data-theme="nave"] .banner h1 { font-weight: 600; letter-spacing: .14em; text-transform: uppercase; text-shadow: 0 0 18px rgba(57, 208, 255, .6); }
+  #stage[data-theme="nave"] :is(.place, .quest, .stat, .logbox, .notes) {
+    --k: rgba(57, 208, 255, .9);
+    background:
+      linear-gradient(var(--k), var(--k)) left top / 12px 2px no-repeat,
+      linear-gradient(var(--k), var(--k)) left top / 2px 12px no-repeat,
+      linear-gradient(var(--k), var(--k)) right top / 12px 2px no-repeat,
+      linear-gradient(var(--k), var(--k)) right top / 2px 12px no-repeat,
+      linear-gradient(var(--k), var(--k)) left bottom / 12px 2px no-repeat,
+      linear-gradient(var(--k), var(--k)) left bottom / 2px 12px no-repeat,
+      linear-gradient(var(--k), var(--k)) right bottom / 12px 2px no-repeat,
+      linear-gradient(var(--k), var(--k)) right bottom / 2px 12px no-repeat,
+      var(--panel);
+  }
+  #stage[data-theme="nave"] :is(.bar, .bar i) { border-radius: 0; }
+  #stage[data-theme="nave"] .bar i { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 9px); }
+  #stage[data-theme="nave"] .phase { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; border-radius: 2px; }
+
+  /* ---------- tema: Cyberpunk ---------- */
+  #stage[data-theme="cyber"] {
+    --stage-bg:
+      radial-gradient(ellipse at 0% 0%, rgba(255, 43, 214, .22), transparent 45%),
+      radial-gradient(ellipse at 100% 100%, rgba(0, 240, 255, .16), transparent 50%),
+      linear-gradient(rgba(255, 255, 255, .03) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, rgba(255, 255, 255, .03) 1px, transparent 1px) 0 0 / 28px 100%,
+      #08060e;
+    --banner-fg: #f2fdff; --banner-muted: #a99cc4;
+    --panel: rgba(17, 11, 30, .92); --panel-2: rgba(0, 240, 255, .07);
+    --avatar-bg: linear-gradient(135deg, rgba(255, 43, 214, .28), rgba(0, 240, 255, .2));
+    --fg: #e6fbff; --muted: #9a8fb5; --line: rgba(255, 43, 214, .42);
+    --accent: #00f0ff; --good: #2bff88; --on-good: #04140a; --bad: #ff3b6b;
+    --warn: #f3e600; --on-warn: #121000; --warn-text: #f3e600;
+    --hp: #ff2bd6; --mana: #00f0ff; --xp: #f3e600; --lvl: #f3e600; --on-lvl: #121000; --bar-bg: rgba(255, 255, 255, .06);
+    --log-bg: rgba(8, 6, 16, .94); --log-fg: #d9f7ff; --log-muted: #8a80ab; --log-line: rgba(255, 43, 214, .16); --code-bg: rgba(0, 240, 255, .1);
+    --rar1: #8d8aa3; --rar2: #00f0ff; --rar3: #ff2bd6; --rar4: #f3e600;
+    --font: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    --font-title: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+    --font-mono: "Cascadia Mono", Consolas, monospace;
+    --radius: 0px;
+  }
+  #stage[data-theme="cyber"]::after {
+    content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .2) 0 1px, transparent 1px 3px);
+  }
+  #stage[data-theme="cyber"] .banner h1 { letter-spacing: .06em; text-transform: uppercase; text-shadow: 2px 0 #ff2bd6, -2px 0 #00f0ff; animation: glitch 4s steps(1) infinite; }
+  #stage[data-theme="cyber"] :is(.place, .quest, .stat, .logbox, .notes) {
+    box-shadow: 0 0 0 1px rgba(255, 43, 214, .08), 0 0 22px -12px #ff2bd6, inset 0 1px 0 rgba(0, 240, 255, .28);
+  }
+  #stage[data-theme="cyber"] .place.working { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 24px -6px var(--accent); }
+  #stage[data-theme="cyber"] .place.waiting { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn), 0 0 24px -6px var(--warn); }
+  #stage[data-theme="cyber"] :is(.bar, .bar i) { border-radius: 0; }
+  #stage[data-theme="cyber"] .bar i { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 7px); box-shadow: 0 0 8px var(--c); }
+  #stage[data-theme="cyber"] .phase { font-size: 12px; text-transform: uppercase; border-radius: 0; }
+  #stage[data-theme="cyber"] .place-head::before { content: "//"; color: var(--hp); }
+  @keyframes glitch {
+    0%, 91%, 100% { transform: none; text-shadow: 2px 0 #ff2bd6, -2px 0 #00f0ff; }
+    92% { transform: translateX(3px) skewX(-8deg); text-shadow: -3px 0 #ff2bd6, 3px 0 #00f0ff; }
+    94% { transform: translateX(-2px); }
+    96% { transform: none; text-shadow: 4px 0 #ff2bd6, -4px 0 #00f0ff; }
+  }
+
+  /* ---------- tema: Futebol ---------- */
+  #stage[data-theme="futebol"] {
+    --stage-bg:
+      linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .22)),
+      repeating-linear-gradient(90deg, #2d8f4a 0 90px, #278543 90px 180px);
+    --banner-fg: #ffffff; --banner-muted: #d9f2df;
+    --panel: #ffffff; --panel-2: #eef5f0;
+    --avatar-bg: linear-gradient(150deg, #fbe7a1, #d9b44a 60%, #b98f2c);
+    --fg: #11281a; --muted: #5a7364; --line: #d3e1d7;
+    --accent: #1f56d6; --good: #17a34a; --on-good: #fff; --bad: #e23b3b;
+    --warn: #f2c200; --on-warn: #2b2200; --warn-text: #8a6d00;
+    --hp: #f2c200; --mana: #1f56d6; --xp: #17a34a; --lvl: #9a6f00; --on-lvl: #fff; --bar-bg: #e4ece6;
+    --log-bg: #0d1d14; --log-fg: #eef7f1; --log-muted: #8db39a; --log-line: rgba(255, 255, 255, .08);
+    --code-bg: #eaf1ec; --log-code-bg: rgba(255, 255, 255, .1);
+    --font: "Segoe UI", system-ui, sans-serif;
+    --font-title: Bahnschrift, "Arial Narrow", "Segoe UI", sans-serif;
+    --font-mono: Consolas, monospace;
+    --radius: 12px;
+  }
+  #stage[data-theme="futebol"]::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 50%; z-index: -1;
+    width: 3px; margin-left: -1px; background: rgba(255, 255, 255, .35);
+  }
+  #stage[data-theme="futebol"]::after {
+    content: ""; position: absolute; top: 50%; left: 50%; z-index: -1;
+    width: 230px; height: 230px; margin: -115px 0 0 -115px;
+    border: 3px solid rgba(255, 255, 255, .35); border-radius: 50%;
+  }
+  #stage[data-theme="futebol"] .banner h1 { font-style: italic; letter-spacing: .02em; text-transform: uppercase; text-shadow: 0 2px 0 rgba(0, 0, 0, .25); }
+  #stage[data-theme="futebol"] :is(.place, .quest, .stat, .notes) { border: 0; box-shadow: 0 6px 16px rgba(0, 40, 15, .28); }
+  #stage[data-theme="futebol"] .logbox { border: 0; box-shadow: 0 6px 16px rgba(0, 0, 0, .35); }
+  #stage[data-theme="futebol"] .place.working { box-shadow: 0 0 0 3px var(--accent), 0 8px 20px rgba(0, 40, 15, .35); }
+  #stage[data-theme="futebol"] .place.waiting { box-shadow: 0 0 0 3px var(--warn), 0 8px 20px rgba(0, 40, 15, .35); }
+  #stage[data-theme="futebol"] .avatar { border: 0; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .55); }
+  .score {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 6px 14px;
+    font: 700 15px/1 var(--font-title); color: #fff;
+    background: #0b0f0d; border-radius: 10px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
+  }
+  .score b { min-width: 18px; font-size: 26px; text-align: center; }
+  .score .x { opacity: .6; }
+  .score .clock { margin-left: 6px; padding: 4px 8px; font-size: 13px; color: #111; background: #f2c200; border-radius: 6px; }
+  .live { padding: 2px 7px; font-size: 10.5px; letter-spacing: .06em; color: #fff; background: #e23b3b; border-radius: 4px; animation: breathe 1.4s infinite; }
+
+  /* ---------- responsivo ---------- */
+  @media (max-width: 1100px) { .places { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 860px) { .lower { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    .chrome { padding: 10px 16px; }
+    #stage { padding: 12px; }
+    .banner h1 { font-size: 24px; }
+    .places { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .score { gap: 6px 8px; padding: 6px 10px; font-size: 13px; }
+    .score b { font-size: 22px; }
+    .score .clock { margin-left: 0; }
+  }
+  @media (max-width: 440px) { .places { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header class="chrome">
+  <div class="brand">⚔️ Agent Quest <small>galeria de temas · mockup</small></div>
+  <div class="group" role="group" aria-label="Tema">
+    <span class="group-label">Tema</span>
+    <span class="group" id="theme-buttons"></span>
+  </div>
+  <div class="group" role="group" aria-label="Simulação">
+    <span class="group-label">Simulação</span>
+    <button type="button" id="btn-pause" aria-pressed="false">⏸ Pausar</button>
+    <button type="button" data-speed="1" aria-pressed="true">1×</button>
+    <button type="button" data-speed="2" aria-pressed="false">2×</button>
+    <button type="button" data-speed="4" aria-pressed="false">4×</button>
+    <button type="button" id="btn-reset">↺ Reiniciar</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <p class="intro">
+    A mesma simulação roda nos quatro temas: <b>troque o tema a qualquer momento</b> e veja os mesmos acontecimentos contados de outro jeito.
+    Na simulação, os agentes estão construindo o próprio Agent Quest.
+    Atalhos: <kbd>1</kbd>–<kbd>4</kbd> trocam o tema, <kbd>espaço</kbd> pausa.
+  </p>
+  <main id="stage"></main>
+  <p class="foot">
+    Mockup com dados simulados. Os ícones são emoji provisórios; no tema escolhido, a arte seria própria.
+    Abre direto do disco, sem servidor e sem internet.
+  </p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- utilidades ---------- */
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const F = f => `<code>${esc(f)}</code>`;
+  const C = c => `<code>${esc(c)}</code>`;
+  const I = t => `<i>${esc(t)}</i>`;
+  const B = t => `<b>${esc(t)}</b>`;
+  const joinPt = list => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} e ${list[list.length - 1]}`);
+  const pl = (n, one, many) => (n === 1 ? one : many);
+  const usd = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
+  const clamp = v => Math.max(0, Math.min(100, Math.round(v)));
+  const hhmmss = s => [Math.floor(s / 3600) % 24, Math.floor(s / 60) % 60, s % 60].map(n => String(n).padStart(2, '0')).join(':');
+  const stat = (icon, value, label, title) =>
+    `<div class="stat"${title ? ` title="${esc(title)}"` : ''}><b>${icon} ${esc(value)}</b><span>${esc(label)}</span></div>`;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const COST_HINT = 'Custo estimado de API da sessão';
+
+  /* ---------- modelo canônico: igual para todos os temas ---------- */
+  const ORDER = ['orq', 'arq', 'dev', 'tes', 'doc'];
+  const REAL_ROLE = { orq: 'Orquestrador', arq: 'System Design', dev: 'Dev', tes: 'Tester', doc: 'Documentação' };
+  const PHASE_OWNER = ['arq', 'dev', 'tes', 'doc'];
+  const PHASE_REAL = ['design', 'código', 'testes', 'docs'];
+  const levelBase = l => 50 * l * (l - 1);
+  const levelOf = xp => { let l = 1; while (levelBase(l + 1) <= xp) l++; return l; };
+  const levelPct = xp => {
+    const l = levelOf(xp);
+    return Math.floor(((xp - levelBase(l)) / (levelBase(l + 1) - levelBase(l))) * 100);
+  };
+
+  /* ---------- temas: cada um só traduz os eventos canônicos ---------- */
+  const THEMES = {
+    guilda: {
+      name: 'Guilda', icon: '🏰', recommended: true,
+      tagline: 'Uma party de aventureiros cumpre quests numa vila de fantasia.',
+      roles: { orq: ['Mestre da Guilda', '👑'], arq: ['Arquimago', '🔮'], dev: ['Ferreiro', '⚒️'], tes: ['Caçador de Bugs', '🏹'], doc: ['Escriba', '📜'] },
+      places: [['Salão da Guilda', '🏰'], ['Torre de Planos', '🗼'], ['Forja', '🔥'], ['Arena', '🏟️'], ['Biblioteca', '📚']],
+      phases: ['Torre de Planos', 'Forja', 'Arena', 'Biblioteca'],
+      bars: ['Vida', 'Mana'],
+      lvl: l => `Nv. ${l}`,
+      questWord: 'Quest',
+      logTitle: '📖 Crônica da Guilda',
+      bugIcon: '👹',
+      bugName: b => ({ NullPointer: 'Slime do NullPointer', 'Off-by-one': 'Goblin do Off-by-one', 'Race Condition': 'Espectro da Race Condition' })[b] || `Monstro ${b}`,
+      bugEmpty: 'Arena vazia',
+      msgIcon: '📜',
+      rarity: ['', 'item comum', 'item raro', 'item épico', 'item lendário'],
+      idle: 'Descansando na taverna',
+      waiting: '❗ Aguardando sua permissão',
+      verbs: {
+        write: { arq: ['🔮', 'desenha a planta', 'Desenhando a planta'], dev: ['✨', 'forja', 'Forjando'], tes: ['🪤', 'prepara armadilhas em', 'Armando armadilhas em'], doc: ['🪶', 'escreve o pergaminho', 'Escrevendo'] },
+        edit: { arq: ['🔮', 'revisa a planta', 'Revisando a planta'], dev: ['🔨', 'reforja', 'Reforjando'], tes: ['🪤', 'reforça as armadilhas em', 'Reforçando armadilhas em'], doc: ['🪶', 'corrige o pergaminho', 'Corrigindo'] },
+      },
+      act: {
+        quest_start: () => 'Lendo o quadro de quests',
+        start: () => 'Recebeu a missão',
+        delegate: (e, h) => `Missão com o ${h.r(e.to)}`,
+        read: e => `Explorando ${e.f}`,
+        bash: e => `Conjurando ${e.d}`,
+        approve: () => 'Permissão concedida, seguindo',
+        error: () => 'Ferido! Se recompondo',
+        test_run: () => 'Batalhando na Arena',
+        test_fail: e => `Enfrentou ${e.bugs.length} ${pl(e.bugs.length, 'monstro', 'monstros')}`,
+        test_pass: () => 'Vitória na Arena!',
+        compact: () => 'Meditando…',
+      },
+      log: {
+        quest_start: e => `📯 Nova quest no quadro: ${B(e.title)}`,
+        delegate: (e, h) => `📜 ${h.R('orq')} entrega a missão ao ${h.R(e.to)}: ${I(e.d)}`,
+        read: (e, h) => `🔍 ${h.R(e.a)} explora ${F(e.f)}`,
+        bash: (e, h) => `🧪 ${h.R(e.a)} conjura ${C(e.d)}`,
+        permission: (e, h) => `❗ ${h.R(e.a)} pede sua permissão: ${I(e.d)}`,
+        approve: (e, h) => `✅ Permissão concedida. ${h.R(e.a)} segue em frente`,
+        error: (e, h) => `💥 ${h.R(e.a)} sofre dano: ${C(e.d)}`,
+        test_run: (e, h) => `⚔️ ${h.R(e.a)} abre os portões da Arena: ${C(e.d)}`,
+        test_fail: (e, h) => (e.bugs.length === 1
+          ? `👹 Um monstro ainda resiste: ${h.bugs(e.bugs)}`
+          : `👹 ${e.bugs.length} monstros surgem na Arena: ${h.bugs(e.bugs)}`),
+        test_pass: e => `🏆 Todos os monstros derrotados! ${e.n} testes verdes`,
+        regression: (e, h) => `☠️ Maldição! Um monstro já derrotado volta à vida: ${h.bugs(e.bugs)}`,
+        done: (e, h) => `🍺 ${h.R(e.a)} volta para a taverna`,
+        phase_done: (e, h) => `🚩 Etapa concluída: ${B(h.phase(e.p))}`,
+        quest_done: () => '🎁 Quest concluída! Baú aberto: +100 XP para cada membro da party',
+        achievement: (e, h) => `🏅 Conquista desbloqueada: ${B(h.ach(e.id))}`,
+        levelup: (e, h) => `⬆️ ${h.R(e.a)} sobe para o ${esc(h.lvl(e.lvl))}!`,
+        compact: (e, h) => `🧘 ${h.R(e.a)} medita e recupera a mana (contexto compactado)`,
+      },
+      ach: { first_catch: ['Primeiro Sangue', 'Encontrar o primeiro bug'], full_party: ['Party Completa', 'Fechar uma quest com os quatro papéis'] },
+      finale: () => ({ icon: '🎁', title: 'Quest concluída!', sub: 'Baú aberto: +100 XP para cada membro da party' }),
+      hud: s => stat('💰', usd(s.cost), 'Ouro gasto', COST_HINT) + stat('⚔️', s.defeated, 'Monstros derrotados') + stat('📜', s.quests, 'Quests concluídas'),
+      notes: {
+        pros: [
+          'O nome já é Agent Quest: quest, party, XP e loot são vocabulário nativo de RPG.',
+          'Cada papel vira uma classe clássica que qualquer pessoa reconhece.',
+          'É o tema com mais metáforas para os eventos: explorar, forjar, batalhar, escrever.',
+        ],
+        cons: [
+          'Pixel-art pede sprites e animação, então é o mais trabalhoso de desenhar. Dá para começar com pacotes de arte livres (ex.: Kenney, licença CC0).',
+          'Fantasia medieval é o caminho mais conhecido entre os quatro.',
+        ],
+        ratings: [5, 2, 3],
+      },
+    },
+
+    nave: {
+      name: 'Nave Estelar', icon: '🚀',
+      tagline: 'A tripulação de uma nave cumpre missões entre os módulos da estação.',
+      roles: { orq: ['Comandante', '🎖️'], arq: ['Navegador', '🧭'], dev: ['Engenheiro', '🔧'], tes: ['Oficial de Contenção', '🛡️'], doc: ['Oficial de Registros', '📡'] },
+      places: [['Ponte de Comando', '🛸'], ['Cartografia', '🗺️'], ['Engenharia', '⚙️'], ['Contenção', '🧪'], ['Diário de Bordo', '📓']],
+      phases: ['Cartografia', 'Engenharia', 'Contenção', 'Diário de Bordo'],
+      bars: ['Escudos', 'Energia'],
+      lvl: l => `Nv. ${l}`,
+      questWord: 'Missão',
+      logTitle: '🛰️ Registro da Ponte',
+      bugIcon: '👽',
+      bugName: b => `Anomalia ${b}`,
+      bugEmpty: 'Nenhuma anomalia a bordo',
+      msgIcon: '🛰️',
+      rarity: null,
+      idle: 'Na câmara de descanso',
+      waiting: '🔔 Aguardando autorização da ponte',
+      verbs: {
+        write: { arq: ['🗺️', 'traça a rota em', 'Traçando a rota em'], dev: ['🔩', 'instala o módulo', 'Instalando'], tes: ['🧪', 'calibra sensores em', 'Calibrando sensores em'], doc: ['📓', 'registra no diário', 'Registrando'] },
+        edit: { arq: ['🗺️', 'corrige a rota em', 'Corrigindo a rota em'], dev: ['🔧', 'recalibra', 'Recalibrando'], tes: ['🧪', 'ajusta sensores em', 'Ajustando sensores em'], doc: ['📓', 'atualiza o diário', 'Atualizando'] },
+      },
+      act: {
+        quest_start: () => 'Traçando a missão',
+        start: () => 'Ordens recebidas',
+        delegate: (e, h) => `Ordens para o ${h.r(e.to)}`,
+        read: e => `Escaneando ${e.f}`,
+        bash: e => `Console: ${e.d}`,
+        approve: () => 'Autorizado, prosseguindo',
+        error: () => 'Escudos danificados',
+        test_run: () => 'Varredura em andamento',
+        test_fail: e => `${e.bugs.length} ${pl(e.bugs.length, 'anomalia detectada', 'anomalias detectadas')}`,
+        test_pass: () => 'Sistemas nominais',
+        compact: () => 'Recarregando energia…',
+      },
+      log: {
+        quest_start: e => `🛰️ Nova missão recebida: ${B(e.title)}`,
+        delegate: (e, h) => `📡 ${h.R('orq')} transmite ordens ao ${h.R(e.to)}: ${I(e.d)}`,
+        read: (e, h) => `🔭 ${h.R(e.a)} escaneia ${F(e.f)}`,
+        bash: (e, h) => `⌨️ ${h.R(e.a)} executa no console: ${C(e.d)}`,
+        permission: (e, h) => `🔔 ${h.R(e.a)} solicita autorização da ponte: ${I(e.d)}`,
+        approve: (e, h) => `✅ Autorização concedida. ${h.R(e.a)} prossegue`,
+        error: (e, h) => `⚡ Escudos do ${h.R(e.a)} atingidos: ${C(e.d)}`,
+        test_run: (e, h) => `🧪 ${h.R(e.a)} inicia a varredura de contenção: ${C(e.d)}`,
+        test_fail: (e, h) => `🚨 Alerta vermelho! ${e.bugs.length} ${pl(e.bugs.length, 'anomalia', 'anomalias')} a bordo: ${h.bugs(e.bugs)}`,
+        test_pass: e => `🟢 Contenção completa: ${e.n} testes verdes, sistemas nominais`,
+        regression: (e, h) => `🚨 Falha em cascata! Uma anomalia já contida escapou: ${h.bugs(e.bugs)}`,
+        done: (e, h) => `🛏️ ${h.R(e.a)} encerra o turno`,
+        phase_done: (e, h) => `✔️ Etapa concluída: ${B(h.phase(e.p))}`,
+        quest_done: () => '🚀 Missão cumprida! +100 XP para cada tripulante',
+        achievement: (e, h) => `🎖️ Medalha concedida: ${B(h.ach(e.id))}`,
+        levelup: (e, h) => `⬆️ ${h.R(e.a)} sobe para o ${esc(h.lvl(e.lvl))}`,
+        compact: (e, h) => `🔋 ${h.R(e.a)} recarrega a energia (contexto compactado)`,
+      },
+      ach: { first_catch: ['Primeiro Contato', 'Detectar a primeira anomalia'], full_party: ['Tripulação Afinada', 'Cumprir uma missão passando pelos quatro módulos'] },
+      finale: () => ({ icon: '🚀', title: 'Missão cumprida!', sub: '+100 XP para cada tripulante' }),
+      hud: s => stat('⛽', usd(s.cost), 'Combustível gasto', COST_HINT) + stat('👽', s.defeated, 'Anomalias contidas') + stat('🚀', s.quests, 'Missões cumpridas'),
+      notes: {
+        pros: [
+          'Visual de HUD é naturalmente legível: parece um painel de monitoramento.',
+          'Barato de construir: CSS, gradientes e poucas imagens.',
+        ],
+        cons: [
+          'Menos carisma que os outros.',
+          '"Missão" e "tripulação" são genéricos e cansam mais rápido.',
+        ],
+        ratings: [4, 4, 2],
+      },
+    },
+
+    cyber: {
+      name: 'Cyberpunk', icon: '🌃',
+      tagline: 'Uma crew de runners faz jobs numa megacidade de neon.',
+      roles: { orq: ['Fixer', '🕶️'], arq: ['Netarquiteto', '🧠'], dev: ['Netrunner', '⌨️'], tes: ['Caçador de Glitch', '🗡️'], doc: ['Repórter', '📼'] },
+      places: [['Bar do Fixer', '🍸'], ['Sala de Planos', '📐'], ['Rig', '💻'], ['Zona de Glitch', '⚠️'], ['Datavault', '💾']],
+      phases: ['Planos', 'Rig', 'Zona de Glitch', 'Datavault'],
+      bars: ['Integridade', 'RAM'],
+      lvl: l => `Rep ${l}`,
+      questWord: 'Job',
+      logTitle: '&gt;_ Feed da rede',
+      bugIcon: '👾',
+      bugName: b => `glitch ${b}`,
+      bugEmpty: 'Matriz limpa',
+      msgIcon: '💬',
+      rarity: ['', 'sucata', 'chrome', 'militar', 'protótipo'],
+      idle: 'Offline',
+      waiting: '🔒 Aguardando acesso root',
+      verbs: {
+        write: { arq: ['📐', 'desenha o blueprint', 'Blueprint:'], dev: ['💾', 'compila', 'Compilando'], tes: ['🗡️', 'arma ICE em', 'Armando ICE em'], doc: ['📼', 'grava a reportagem', 'Gravando'] },
+        edit: { arq: ['📐', 'revisa o blueprint', 'Revisando'], dev: ['⌨️', 'injeta código em', 'Injetando código em'], tes: ['🗡️', 'afia o ICE em', 'Afiando ICE em'], doc: ['📼', 'edita a reportagem', 'Editando'] },
+      },
+      act: {
+        quest_start: () => 'Negociando o job',
+        start: () => 'Job aceito',
+        delegate: (e, h) => `Job com o ${h.r(e.to)}`,
+        read: e => `Scan em ${e.f}`,
+        bash: e => `>_ ${e.d}`,
+        approve: () => 'Root liberado',
+        error: () => 'Feedback neural!',
+        test_run: () => 'Caçando glitches',
+        test_fail: e => `${e.bugs.length} ${pl(e.bugs.length, 'glitch na mira', 'glitches na mira')}`,
+        test_pass: () => 'Matriz limpa',
+        compact: () => 'Limpando a RAM…',
+      },
+      log: {
+        quest_start: e => `💼 Novo job na rede: ${B(e.title)}`,
+        delegate: (e, h) => `💬 ${h.R('orq')} passa o job para o ${h.R(e.to)}: ${I(e.d)}`,
+        read: (e, h) => `📡 ${h.R(e.a)} faz scan em ${F(e.f)}`,
+        bash: (e, h) => `&gt;_ ${h.R(e.a)} roda ${C(e.d)}`,
+        permission: (e, h) => `🔒 ${h.R(e.a)} precisa de acesso root: ${I(e.d)}`,
+        approve: (e, h) => `🔓 Acesso liberado. ${h.R(e.a)} volta pra rede`,
+        error: (e, h) => `💥 Feedback neural no ${h.R(e.a)}: ${C(e.d)}`,
+        test_run: (e, h) => `🗡️ ${h.R(e.a)} entra na Zona de Glitch: ${C(e.d)}`,
+        test_fail: (e, h) => `⚠️ ${e.bugs.length} ${pl(e.bugs.length, 'glitch', 'glitches')} na matriz: ${h.bugs(e.bugs)}`,
+        test_pass: e => `✔️ Matriz limpa: ${e.n} testes verdes`,
+        regression: (e, h) => `🕳️ Backdoor reaberto! Um glitch já abatido voltou: ${h.bugs(e.bugs)}`,
+        done: (e, h) => `🌃 ${h.R(e.a)} desconecta`,
+        phase_done: (e, h) => `▸ Etapa limpa: ${B(h.phase(e.p))}`,
+        quest_done: () => '💸 Job concluído! Pagamento na conta: +100 XP para cada runner',
+        achievement: (e, h) => `🏅 Conquista: ${B(h.ach(e.id))}`,
+        levelup: (e, h) => `⬆️ ${h.R(e.a)} ganha reputação: ${esc(h.lvl(e.lvl))}`,
+        compact: (e, h) => `🧹 ${h.R(e.a)} limpa a RAM (contexto compactado)`,
+      },
+      ach: { first_catch: ['Primeiro Glitch', 'Abater o primeiro bug'], full_party: ['Crew Completa', 'Fechar um job com a crew inteira'] },
+      finale: () => ({ icon: '💸', title: 'Job concluído!', sub: 'Pagamento na conta: +100 XP para cada runner' }),
+      hud: s => stat('💸', usd(s.cost), 'Créditos queimados', COST_HINT) + stat('👾', s.defeated, 'Glitches abatidos') + stat('💼', s.quests, 'Jobs concluídos'),
+      notes: {
+        pros: [
+          'O mais barato de construir: texto, neon e efeitos em CSS, sem sprites.',
+          'Combina com terminal e com o dia a dia de dev. RAM = contexto é a metáfora mais exata de todas.',
+        ],
+        cons: [
+          'Neon e scanlines cansam a vista em sessões longas (pediria um modo calmo).',
+          'Mais frio e menos acessível para quem não curte o gênero.',
+        ],
+        ratings: [4, 5, 3],
+      },
+    },
+
+    futebol: {
+      name: 'Futebol', icon: '⚽',
+      tagline: 'O Agentes FC enfrenta o Bugs FC, com narração ao vivo.',
+      roles: { orq: ['Técnico', '🗣️'], arq: ['Camisa 10', '🔟'], dev: ['Atacante', '⚽'], tes: ['Goleiro', '🧤'], doc: ['Narrador', '🎙️'] },
+      places: [['Área Técnica', '📋'], ['Meio-Campo', '🎯'], ['Ataque', '⚡'], ['Gol', '🥅'], ['Cabine', '📺']],
+      phases: ['Armação', 'Ataque', 'Defesa', 'Súmula'],
+      bars: ['Moral', 'Fôlego'],
+      lvl: l => `OVR ${60 + l * 3}`,
+      questWord: 'Jogo',
+      logTitle: '<span class="live">● AO VIVO</span> Narração',
+      bugIcon: '🐛',
+      bugName: b => b,
+      bugEmpty: 'Área limpa',
+      msgIcon: '⚽',
+      rarity: null,
+      idle: 'No banco',
+      waiting: '📺 Aguardando o árbitro (você)',
+      verbs: {
+        write: { arq: ['🎯', 'arma a jogada em', 'Armando a jogada em'], dev: ['⚽', 'puxa o contra-ataque em', 'Contra-atacando em'], tes: ['🧤', 'treina defesas em', 'Treinando defesas em'], doc: ['📝', 'registra o lance em', 'Registrando o lance em'] },
+        edit: { arq: ['🎯', 'ajusta a tática em', 'Ajustando a tática em'], dev: ['⚽', 'conduz a bola por', 'Conduzindo por'], tes: ['🧤', 'reposiciona a barreira em', 'Reposicionando em'], doc: ['📝', 'corrige a súmula em', 'Corrigindo'] },
+      },
+      act: {
+        quest_start: () => 'Montando a escalação',
+        start: () => 'Entrando em campo',
+        delegate: (e, h) => `Orientando o ${h.r(e.to)}`,
+        read: e => `Estudando ${e.f}`,
+        bash: e => `Cobrança rápida: ${e.d}`,
+        approve: () => 'Segue o jogo',
+        error: () => 'Levou cartão amarelo',
+        test_run: () => 'Debaixo das traves',
+        test_fail: e => `Segurou ${e.bugs.length} ${pl(e.bugs.length, 'chute', 'chutes')}`,
+        test_pass: () => 'Nenhum bug passou',
+        compact: () => 'Hidratando…',
+      },
+      log: {
+        quest_start: e => `📣 Rola a bola! Em jogo: ${B(e.title)}`,
+        delegate: (e, h) => `🗣️ ${h.R('orq')} chama o ${h.R(e.to)} na beira do campo: ${I(e.d)}`,
+        read: (e, h) => `👀 ${h.R(e.a)} estuda o adversário em ${F(e.f)}`,
+        bash: (e, h) => `👟 ${h.R(e.a)} cobra rápido: ${C(e.d)}`,
+        permission: (e, h) => `📺 Lance em revisão! ${h.R(e.a)} aguarda o árbitro, que é você: ${I(e.d)}`,
+        approve: () => '✅ O árbitro confirma: segue o jogo!',
+        error: (e, h) => `🟨 Cartão amarelo para o ${h.R(e.a)}: ${C(e.d)}`,
+        test_run: (e, h) => `🧤 ${h.R(e.a)} se posiciona debaixo das traves: ${C(e.d)}`,
+        test_fail: (e, h) => (e.bugs.length === 1
+          ? `🧤 DEFENDEU! O ${h.R(e.a)} segura mais um chute do Bugs FC: ${h.bugs(e.bugs)}`
+          : `🧤 QUE DEFESA! O ${h.R(e.a)} segura ${e.bugs.length} chutes do Bugs FC: ${h.bugs(e.bugs)}`),
+        test_pass: e => `🙌 Nenhum bug passa! ${e.n} testes verdes`,
+        regression: (e, h) => `😱 GOL CONTRA! Um teste que passava voltou a falhar: ${h.bugs(e.bugs)}`,
+        done: (e, h) => `👏 ${h.R(e.a)} sai de campo aplaudido`,
+        phase_done: (e, h) => `⚽ GOOOOOOL! Fim da etapa ${B(h.phase(e.p))}. Agentes FC ${e.score} × 0 Bugs FC`,
+        quest_done: e => `🏆 FIM DE JOGO! Agentes FC vence por ${e.score} × 0. +100 XP para cada jogador`,
+        achievement: (e, h) => `🏅 Conquista: ${B(h.ach(e.id))}`,
+        levelup: (e, h) => `📈 ${h.R(e.a)} sobe para ${esc(h.lvl(e.lvl))}!`,
+        compact: (e, h) => `🥤 ${h.R(e.a)} pede parada técnica para hidratação (contexto compactado)`,
+      },
+      ach: { first_catch: ['Paredão', 'Primeira defesa do Goleiro'], full_party: ['Goleada', 'Vencer um jogo por 4 × 0'] },
+      finale: e => ({ icon: '🏆', title: 'Fim de jogo!', sub: `Agentes FC ${e.score} × 0 Bugs FC · +100 XP para cada jogador` }),
+      hud: s =>
+        `<div class="score" title="Etapas concluídas neste jogo"><span>AGENTES FC</span><b>${s.score}</b><span class="x">×</span><b>0</b><span>BUGS FC</span><span class="clock">⏱ ${hhmmss(s.clock - s.questStart).slice(3)}</span></div>` +
+        stat('💵', usd(s.cost), 'Folha salarial', COST_HINT) + stat('🧤', s.saves, 'Defesas') + stat('🏆', s.quests, 'Vitórias'),
+      notes: {
+        pros: [
+          'O mais original e divertido: o log vira narração ao vivo.',
+          'Algumas metáforas são perfeitas: pedido de permissão = VAR, regressão = gol contra.',
+        ],
+        cons: [
+          'Outras forçam a barra: o Camisa 10 fazendo system design?',
+          'Depende de gostar de futebol, e a narração cansa se repetir as mesmas frases.',
+        ],
+        ratings: [3, 3, 5],
+      },
+    },
+  };
+
+  const helperCache = new Map();
+  function helpers(t) {
+    if (!helperCache.has(t)) {
+      helperCache.set(t, {
+        R: id => `<b>${esc(t.roles[id][0])}</b>`,
+        r: id => t.roles[id][0],
+        bugs: list => esc(joinPt(list.map(t.bugName))),
+        phase: p => t.phases[p],
+        ach: id => t.ach[id][0],
+        lvl: l => t.lvl(l),
+        rar: r => (t.rarity && r ? `<span class="rar r${r}">${esc(t.rarity[r])}</span>` : ''),
+      });
+    }
+    return helperCache.get(t);
+  }
+  function logLine(t, e) {
+    const h = helpers(t);
+    if (e.k === 'write' || e.k === 'edit') {
+      const [icon, verb] = t.verbs[e.k][e.a];
+      return `${icon} ${h.R(e.a)} ${verb} ${F(e.f)}${e.k === 'write' ? ` ${h.rar(e.r)}` : ''}`;
+    }
+    const fn = t.log[e.k];
+    return fn ? fn(e, h) : '';
+  }
+  function actionText(t, id) {
+    const a = state.agents[id];
+    if (a.status === 'idle') return t.idle;
+    if (a.status === 'waiting') return t.waiting;
+    const e = a.last;
+    if (!e) return t.act.start();
+    if (e.k === 'write' || e.k === 'edit') return `${t.verbs[e.k][e.a][2]} ${e.f}`;
+    const fn = t.act[e.k];
+    return fn ? fn(e, helpers(t)) : '';
+  }
+
+  /* ---------- roteiro simulado: a party construindo o próprio Agent Quest ---------- */
+  const QUESTS = [
+    { title: 'Painel da Party', slug: 'painel-party' },
+    { title: 'Log de Batalha', slug: 'log-batalha' },
+    { title: 'Sistema de Conquistas', slug: 'conquistas' },
+  ];
+  const SCRIPT = [
+    { k: 'quest_start' },
+    { k: 'delegate', a: 'orq', to: 'arq', d: 'desenhar a arquitetura do {title}' },
+    { k: 'read', a: 'arq', f: 'README.md' },
+    { k: 'read', a: 'arq', f: '.claude/settings.json' },
+    { k: 'write', a: 'arq', f: 'docs/adr/{n}-{slug}.md', r: 3 },
+    { k: 'write', a: 'arq', f: 'docs/arquitetura/{slug}.md', r: 2 },
+    { k: 'permission', a: 'arq', d: 'aprovar o design do {title}' },
+    { k: 'approve', a: 'arq' },
+    { k: 'done', a: 'arq' },
+    { k: 'phase_done', p: 0 },
+    { k: 'delegate', a: 'orq', to: 'dev', d: 'implementar o {title}' },
+    { k: 'read', a: 'dev', f: 'docs/adr/{n}-{slug}.md' },
+    { k: 'write', a: 'dev', f: 'server/{slug}.ts', r: 2 },
+    { k: 'write', a: 'dev', f: 'web/{slug}.tsx', r: 2 },
+    { k: 'permission', a: 'dev', d: 'rodar npm install ws' },
+    { k: 'approve', a: 'dev' },
+    { k: 'bash', a: 'dev', d: 'npm install ws' },
+    { k: 'error', a: 'dev', d: "tsc: Property 'agentId' does not exist" },
+    { k: 'edit', a: 'dev', f: 'server/{slug}.ts' },
+    { k: 'done', a: 'dev' },
+    { k: 'phase_done', p: 1 },
+    { k: 'delegate', a: 'orq', to: 'tes', d: 'testar o {title}' },
+    { k: 'read', a: 'tes', f: 'server/{slug}.ts' },
+    { k: 'write', a: 'tes', f: 'tests/{slug}.test.ts', r: 2 },
+    { k: 'test_run', a: 'tes', d: 'npm test' },
+    { k: 'test_fail', a: 'tes', bugs: ['NullPointer', 'Off-by-one', 'Race Condition'] },
+    { k: 'achievement', id: 'first_catch' },
+    { k: 'done', a: 'tes' },
+    { k: 'delegate', a: 'orq', to: 'dev', d: 'corrigir os 3 bugs' },
+    { k: 'edit', a: 'dev', f: 'server/{slug}.ts' },
+    { k: 'edit', a: 'dev', f: 'web/{slug}.tsx' },
+    { k: 'done', a: 'dev' },
+    { k: 'delegate', a: 'orq', to: 'tes', d: 'rodar os testes de novo' },
+    { k: 'test_run', a: 'tes', d: 'npm test' },
+    { k: 'test_fail', a: 'tes', bugs: ['Off-by-one'] },
+    { k: 'done', a: 'tes' },
+    { k: 'delegate', a: 'orq', to: 'dev', d: 'corrigir o Off-by-one' },
+    { k: 'edit', a: 'dev', f: 'server/{slug}.ts' },
+    { k: 'done', a: 'dev' },
+    { k: 'delegate', a: 'orq', to: 'tes', d: 'validar a correção' },
+    { k: 'test_run', a: 'tes', d: 'npm test' },
+    { k: 'test_pass', a: 'tes', n: 14 },
+    { k: 'done', a: 'tes' },
+    { k: 'phase_done', p: 2 },
+    { k: 'delegate', a: 'orq', to: 'doc', d: 'documentar o {title}' },
+    { k: 'read', a: 'doc', f: 'docs/adr/{n}-{slug}.md' },
+    { k: 'read', a: 'doc', f: 'server/{slug}.ts' },
+    { k: 'write', a: 'doc', f: 'docs/{slug}.md', r: 1 },
+    { k: 'edit', a: 'doc', f: 'README.md' },
+    { k: 'done', a: 'doc' },
+    { k: 'phase_done', p: 3 },
+    { k: 'quest_done' },
+    { k: 'achievement', id: 'full_party' },
+  ];
+  const MAP_ROWS = [
+    ['Orquestrador delega a um subagente', { k: 'delegate', a: 'orq', to: 'dev', d: 'implementar o Painel da Party' }],
+    ['Read / Grep / Glob', { k: 'read', a: 'arq', f: 'README.md' }],
+    ['Write (arquivo novo)', { k: 'write', a: 'dev', f: 'server/painel-party.ts', r: 2 }],
+    ['Edit', { k: 'edit', a: 'dev', f: 'web/painel-party.tsx' }],
+    ['Bash', { k: 'bash', a: 'dev', d: 'npm install ws' }],
+    ['Testes rodando', { k: 'test_run', a: 'tes', d: 'npm test' }],
+    ['Testes falhando', { k: 'test_fail', a: 'tes', bugs: ['NullPointer', 'Off-by-one'] }],
+    ['Testes passando', { k: 'test_pass', a: 'tes', n: 14 }],
+    ['Regressão: teste que passava volta a falhar', { k: 'regression', a: 'tes', bugs: ['NullPointer'] }],
+    ['Erro de ferramenta', { k: 'error', a: 'dev', d: 'exit code 1' }],
+    ['Pedido de permissão', { k: 'permission', a: 'dev', d: 'rodar npm install ws' }],
+    ['Subagente terminou', { k: 'done', a: 'doc' }],
+    ['Contexto compactado', { k: 'compact', a: 'orq' }],
+  ];
+
+  // ritmo da simulação (ms em 1×), relógio simulado (s) e custo simulado (US$) por tipo de evento
+  const DELAY = { quest_start: 1300, delegate: 1300, read: 900, write: 1400, edit: 1200, bash: 1300, permission: 2600, approve: 900, error: 1500, test_run: 1700, test_fail: 1600, test_pass: 1600, done: 900, phase_done: 1200, quest_done: 4200, achievement: 1500, compact: 1500 };
+  const SECS = { quest_start: 1, delegate: 3, read: 4, write: 11, edit: 7, bash: 9, permission: 16, approve: 1, error: 2, test_run: 14, test_fail: 1, test_pass: 1, done: 2, phase_done: 1, quest_done: 1, compact: 6 };
+  const COST = { quest_start: .002, delegate: .006, read: .004, write: .012, edit: .008, bash: .003, error: .002, test_run: .004, done: .002, compact: .01 };
+  const START = { orq: [1100, 70], arq: [700, 100], dev: [1650, 100], tes: [420, 100], doc: [150, 100] };
+  const LOG_CLASS = { error: 'bad', test_fail: 'bad', test_pass: 'good', phase_done: 'good', quest_done: 'good', permission: 'warn', achievement: 'gold', levelup: 'gold' };
+  const MAX_LOG = 80;
+
+  /* ---------- estado ---------- */
+  const stage = document.getElementById('stage');
+  const themeButtons = document.getElementById('theme-buttons');
+  const pauseBtn = document.getElementById('btn-pause');
+  const speedBtns = [...document.querySelectorAll('[data-speed]')];
+  let themeId = 'guilda';
+  let state, refs = {}, cursor = 0, queue = [], logItems = [];
+  let timer = null, speed = 1, paused = false;
+  const theme = () => THEMES[themeId];
+
+  function newState() {
+    const agents = {};
+    for (const id of ORDER) agents[id] = { status: 'idle', last: null, hp: 100, mana: START[id][1], xp: START[id][0] };
+    const clock = 14 * 3600 + 2 * 60 + 10;
+    return {
+      agents, clock, questStart: clock, quest: 0,
+      phases: ['pending', 'pending', 'pending', 'pending'],
+      bugs: [], defeated: 0, saves: 0, quests: 0, score: 0, cost: 0,
+      unlocked: new Set(), compactQueued: false,
+    };
+  }
+
+  function resolve(step) {
+    const q = QUESTS[state.quest % QUESTS.length];
+    const n = String(state.quest + 1).padStart(4, '0');
+    const sub = s => (s == null ? s : s.replace(/\{slug\}/g, q.slug).replace(/\{title\}/g, q.title).replace(/\{n\}/g, n));
+    return { ...step, f: sub(step.f), d: sub(step.d), title: q.title, bugs: step.bugs && [...step.bugs] };
+  }
+  function nextEvent() {
+    if (queue.length) return queue.shift();
+    if (cursor >= SCRIPT.length) { cursor = 0; state.quest += 1; }
+    return resolve(SCRIPT[cursor++]);
+  }
+
+  function gain(id, n, out) {
+    const a = state.agents[id];
+    const before = levelOf(a.xp);
+    a.xp += n;
+    const after = levelOf(a.xp);
+    if (after > before) out.push({ k: 'levelup', a: id, lvl: after, time: state.clock });
+  }
+
+  // aplica um evento canônico ao estado; devolve eventos derivados (level up)
+  function apply(e) {
+    const S = state, A = S.agents, out = [];
+    const ag = e.a ? A[e.a] : null;
+    S.clock += SECS[e.k] || 0;
+    S.cost += COST[e.k] || 0;
+    e.time = S.clock;
+    switch (e.k) {
+      case 'quest_start':
+        S.phases = ['pending', 'pending', 'pending', 'pending'];
+        S.score = 0; S.bugs = []; S.questStart = S.clock;
+        A.orq.status = 'working'; A.orq.last = e;
+        break;
+      case 'delegate': {
+        const target = A[e.to];
+        A.orq.status = 'working'; A.orq.last = e; A.orq.mana -= 6;
+        target.status = 'working'; target.mana = 100; target.last = { k: 'start', d: e.d };
+        const p = PHASE_OWNER.indexOf(e.to);
+        if (p >= 0 && S.phases[p] === 'pending') S.phases[p] = 'active';
+        gain('orq', 5, out);
+        break;
+      }
+      case 'read': ag.mana -= 5; ag.last = e; gain(e.a, 5, out); break;
+      case 'write': ag.mana -= 8; ag.last = e; gain(e.a, 20, out); break;
+      case 'edit': ag.mana -= 6; ag.last = e; gain(e.a, 12, out); break;
+      case 'bash': ag.mana -= 4; ag.last = e; gain(e.a, 6, out); break;
+      case 'permission': ag.status = 'waiting'; ag.last = e; break;
+      case 'approve': ag.status = 'working'; ag.last = e; break;
+      case 'error': ag.hp -= 30; ag.last = e; break;
+      case 'test_run': ag.mana -= 5; ag.last = e; gain(e.a, 5, out); break;
+      case 'test_fail': {
+        const fresh = e.bugs.filter(b => !S.bugs.includes(b));
+        const gone = S.bugs.filter(b => !e.bugs.includes(b));
+        S.saves += fresh.length; S.defeated += gone.length; S.bugs = [...e.bugs];
+        A.dev.hp -= 8 * fresh.length; ag.mana -= 3; ag.last = e;
+        gain(e.a, 5 + 15 * fresh.length, out);
+        break;
+      }
+      case 'test_pass':
+        S.defeated += S.bugs.length; S.bugs = [];
+        A.dev.hp += 40; ag.hp += 10; ag.last = e;
+        gain(e.a, 40, out); gain('dev', 30, out);
+        break;
+      case 'done': ag.status = 'idle'; ag.last = null; gain(e.a, 10, out); break;
+      case 'phase_done':
+        S.phases[e.p] = 'done'; S.score += 1; e.score = S.score; A.orq.mana -= 2;
+        gain(PHASE_OWNER[e.p], 15, out);
+        break;
+      case 'quest_done':
+        S.quests += 1; e.score = S.score;
+        A.orq.status = 'idle'; A.orq.last = null;
+        for (const id of ORDER) { A[id].hp = 100; gain(id, 100, out); }
+        break;
+      case 'achievement': S.unlocked.add(e.id); break;
+      case 'compact': A.orq.mana = 72; A.orq.status = 'working'; A.orq.last = e; S.compactQueued = false; break;
+    }
+    for (const id of ORDER) { A[id].hp = clamp(A[id].hp); A[id].mana = clamp(A[id].mana); }
+    if (A.orq.mana < 30 && !S.compactQueued) { S.compactQueued = true; queue.push({ k: 'compact', a: 'orq' }); }
+    return out;
+  }
+
+  /* ---------- desenho ---------- */
+  function notesHTML(t) {
+    const n = t.notes;
+    const labels = ['Encaixe das metáforas', 'Facilidade de construir', 'Originalidade'];
+    const dots = v => `<span class="dots" title="${v} de 5">${'●'.repeat(v)}<span class="off">${'●'.repeat(5 - v)}</span></span>`;
+    const rows = MAP_ROWS.map(([label, e]) => `<tr><th>${esc(label)}</th><td>${logLine(t, e)}</td></tr>`).join('');
+    return `
+      <h2 class="panel-title">Avaliação do tema</h2>
+      ${t.recommended ? '<div class="badge">⭐ Minha indicação</div>' : ''}
+      <h3>Prós</h3><ul>${n.pros.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+      <h3>Contras</h3><ul>${n.cons.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+      <div class="ratings">${labels.map((l, i) => `<div><span>${l}</span>${dots(n.ratings[i])}</div>`).join('')}</div>
+      <details><summary>Como cada evento real aparece neste tema</summary><table class="map">${rows}</table></details>`;
+  }
+
+  function buildStage() {
+    const t = theme();
+    const detailsOpen = !!stage.querySelector('details[open]');
+    stage.dataset.theme = themeId;
+    stage.setAttribute('aria-label', `Simulação no tema ${t.name}`);
+    const places = ORDER.map((id, i) => {
+      const [placeName, placeIcon] = t.places[i];
+      const [roleName, roleIcon] = t.roles[id];
+      return `
+        <section class="place idle" data-agent="${id}">
+          <div class="place-head"><span aria-hidden="true">${placeIcon}</span>${esc(placeName)}</div>
+          <div class="who">
+            <div class="avatar" aria-hidden="true">${roleIcon}<span class="alert">!</span></div>
+            <div>
+              <div class="name">${esc(roleName)}</div>
+              <div class="sub">${REAL_ROLE[id]} · <span class="lvl"></span></div>
+            </div>
+          </div>
+          <div class="meter" title="Saúde da tarefa: cai com erros e bugs, sobe quando os testes passam"><span>${esc(t.bars[0])}</span><div class="bar hp"><i></i></div><span class="num n-hp"></span></div>
+          <div class="meter" title="Contexto que ainda cabe na janela do agente"><span>${esc(t.bars[1])}</span><div class="bar mana"><i></i></div><span class="num n-mana"></span></div>
+          <div class="meter" title="Progresso até o próximo nível"><span>XP</span><div class="bar xp"><i></i></div><span class="num n-xp"></span></div>
+          <div class="action"></div>
+          ${id === 'tes' ? '<div class="bugzone"></div>' : ''}
+        </section>`;
+    }).join('');
+    const phases = t.phases.map((p, i) =>
+      `${i ? '<span class="sep" aria-hidden="true">▸</span>' : ''}<span class="phase">${esc(p)} <small>${PHASE_REAL[i]}</small></span>`).join('');
+    stage.innerHTML = `
+      <div class="banner">
+        <div><h1>${t.icon} ${esc(t.name)}</h1><p>${esc(t.tagline)}</p></div>
+        <div class="hud"></div>
+      </div>
+      <div class="quest"><span class="qt"></span>${phases}</div>
+      <div class="places">${places}</div>
+      <div class="lower">
+        <section class="logbox"><h2 class="panel-title">${t.logTitle}</h2><div class="entries"></div></section>
+        <aside class="notes">${notesHTML(t)}</aside>
+      </div>`;
+    if (detailsOpen) stage.querySelector('details').open = true;
+    refs = {
+      hud: stage.querySelector('.hud'),
+      qt: stage.querySelector('.qt'),
+      phases: [...stage.querySelectorAll('.phase')],
+      places: Object.fromEntries(ORDER.map(id => [id, stage.querySelector(`[data-agent="${id}"]`)])),
+      entries: stage.querySelector('.entries'),
+      bugzone: stage.querySelector('.bugzone'),
+    };
+    render(true);
+    rebuildLog();
+  }
+
+  function setBar(el, key, pct, label) {
+    el.querySelector(`.bar.${key} i`).style.width = `${pct}%`;
+    el.querySelector(`.n-${key}`).textContent = label;
+  }
+
+  function render(still) {
+    const t = theme(), S = state;
+    refs.hud.innerHTML = t.hud(S);
+    refs.qt.textContent = `${t.questWord} #${S.quest + 1} · ${QUESTS[S.quest % QUESTS.length].title}`;
+    refs.phases.forEach((el, i) => {
+      el.classList.toggle('active', S.phases[i] === 'active');
+      el.classList.toggle('done', S.phases[i] === 'done');
+    });
+    for (const id of ORDER) {
+      const a = S.agents[id], el = refs.places[id];
+      el.classList.remove('idle', 'working', 'waiting');
+      el.classList.add(a.status);
+      setBar(el, 'hp', a.hp, a.hp);
+      setBar(el, 'mana', a.mana, a.mana);
+      const pct = levelPct(a.xp);
+      setBar(el, 'xp', pct, `${pct}%`);
+      el.querySelector('.lvl').textContent = t.lvl(levelOf(a.xp));
+      el.querySelector('.action').textContent = actionText(t, id);
+    }
+    renderBugs(still);
+  }
+
+  function renderBugs(still) {
+    const t = theme(), zone = refs.bugzone;
+    const shown = new Map([...zone.querySelectorAll('.bug:not(.defeat)')].map(n => [n.dataset.bug, n]));
+    for (const [name, node] of shown) {
+      if (state.bugs.includes(name)) continue;
+      if (still) node.remove();
+      else { node.classList.add('defeat'); setTimeout(() => node.remove(), 600); }
+    }
+    for (const name of state.bugs) {
+      if (shown.has(name)) continue;
+      const node = document.createElement('span');
+      node.className = still ? 'bug static' : 'bug';
+      node.dataset.bug = name;
+      node.textContent = t.bugIcon;
+      node.title = t.bugName(name);
+      node.setAttribute('aria-label', t.bugName(name));
+      zone.appendChild(node);
+    }
+    let empty = zone.querySelector('.empty');
+    if (state.bugs.length) { if (empty) empty.remove(); return; }
+    if (!empty) { empty = document.createElement('span'); empty.className = 'empty'; zone.appendChild(empty); }
+    empty.textContent = t.bugEmpty;
+  }
+
+  function entryNode(e, still) {
+    const div = document.createElement('div');
+    div.className = `entry ${LOG_CLASS[e.k] || ''}${still ? ' static' : ''}`;
+    div.innerHTML = `<time>${hhmmss(e.time)}</time><div>${logLine(theme(), e)}</div>`;
+    return div;
+  }
+  function addLog(e) {
+    logItems.push(e);
+    if (logItems.length > MAX_LOG) logItems.shift();
+    refs.entries.prepend(entryNode(e, false));
+    while (refs.entries.children.length > MAX_LOG) refs.entries.lastChild.remove();
+  }
+  function rebuildLog() {
+    refs.entries.textContent = '';
+    for (let i = logItems.length - 1; i >= 0; i--) refs.entries.appendChild(entryNode(logItems[i], true));
+  }
+
+  /* ---------- efeitos ---------- */
+  function retrigger(el, cls, ms) {
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), ms);
+  }
+  function fly(to) {
+    if (reduceMotion) return;
+    const a = refs.places.orq.querySelector('.avatar').getBoundingClientRect();
+    const b = refs.places[to].querySelector('.avatar').getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'flyer';
+    el.textContent = theme().msgIcon;
+    el.setAttribute('aria-hidden', 'true');
+    el.style.left = `${a.left + a.width / 2 - 16}px`;
+    el.style.top = `${a.top + a.height / 2 - 18}px`;
+    document.body.appendChild(el);
+    const dx = b.left - a.left, dy = b.top - a.top;
+    const anim = el.animate([
+      { transform: 'translate(0, 0) scale(.6)', opacity: 0 },
+      { transform: `translate(${dx / 2}px, ${dy / 2 - 70}px) scale(1.25) rotate(-12deg)`, opacity: 1, offset: .5 },
+      { transform: `translate(${dx}px, ${dy}px) scale(.8)`, opacity: .2 },
+    ], { duration: Math.max(450, 900 / speed), easing: 'ease-in-out' });
+    anim.onfinish = () => el.remove();
+  }
+  function popLevel(el, label) {
+    const tag = document.createElement('div');
+    tag.className = 'lvl-pop';
+    tag.textContent = `⬆ ${label}`;
+    el.appendChild(tag);
+    setTimeout(() => tag.remove(), 1400);
+  }
+  function toast([title, desc]) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    el.innerHTML = `<div class="ti" aria-hidden="true">🏅</div><div><small>Conquista desbloqueada</small><b>${esc(title)}</b><span>${esc(desc)}</span></div>`;
+    stage.appendChild(el);
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, Math.max(1600, 3200 / speed));
+  }
+  function finale(f) {
+    const el = document.createElement('div');
+    el.className = 'finale';
+    el.innerHTML = `<div class="finale-card"><div class="big" aria-hidden="true">${f.icon}</div><h3>${esc(f.title)}</h3><p>${esc(f.sub)}</p></div>`;
+    stage.appendChild(el);
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 450); }, Math.max(1400, 3300 / speed));
+  }
+  function effects(e, derived) {
+    const t = theme();
+    if (e.k === 'delegate') fly(e.to);
+    if (e.k === 'error') retrigger(refs.places[e.a], 'hit', 550);
+    if (e.k === 'test_fail') retrigger(refs.places.tes, 'hit', 550);
+    for (const d of derived) {
+      if (d.k !== 'levelup') continue;
+      retrigger(refs.places[d.a], 'lvlup', 1350);
+      popLevel(refs.places[d.a], t.lvl(d.lvl));
+    }
+    if (e.k === 'achievement') toast(t.ach[e.id]);
+    if (e.k === 'quest_done') finale(t.finale(e));
+  }
+
+  /* ---------- laço da simulação ---------- */
+  function schedule(ms) {
+    clearTimeout(timer);
+    timer = paused ? null : setTimeout(tick, ms / speed);
+  }
+  function tick() {
+    timer = null;
+    let e = nextEvent();
+    while (e.k === 'achievement' && state.unlocked.has(e.id)) e = nextEvent();
+    const derived = apply(e);
+    [e, ...derived].forEach(addLog);
+    render(false);
+    effects(e, derived);
+    schedule(DELAY[e.k] || 1200);
+  }
+  function reset() {
+    clearTimeout(timer);
+    timer = null;
+    state = newState();
+    cursor = 0; queue = []; logItems = [];
+    buildStage();
+    schedule(700);
+  }
+  function setTheme(id) {
+    if (!THEMES[id]) return;
+    themeId = id;
+    for (const b of themeButtons.children) b.setAttribute('aria-pressed', String(b.dataset.theme === id));
+    try { history.replaceState(null, '', `#${id}`); } catch (_) { /* file:// em alguns navegadores */ }
+    buildStage();
+  }
+
+  /* ---------- controles ---------- */
+  for (const [id, t] of Object.entries(THEMES)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.theme = id;
+    b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = `${t.icon} ${esc(t.name)}${t.recommended ? ' <span class="star" title="Minha indicação">★</span>' : ''}`;
+    b.addEventListener('click', () => setTheme(id));
+    themeButtons.appendChild(b);
+  }
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.setAttribute('aria-pressed', String(paused));
+    pauseBtn.textContent = paused ? '▶ Continuar' : '⏸ Pausar';
+    if (paused) { clearTimeout(timer); timer = null; } else schedule(300);
+  });
+  for (const b of speedBtns) {
+    b.addEventListener('click', () => {
+      speed = Number(b.dataset.speed);
+      for (const o of speedBtns) o.setAttribute('aria-pressed', String(o === b));
+      if (!paused) schedule(300);
+    });
+  }
+  document.getElementById('btn-reset').addEventListener('click', reset);
+  document.addEventListener('keydown', ev => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    const ids = Object.keys(THEMES);
+    if (/^[1-4]$/.test(ev.key)) setTheme(ids[Number(ev.key) - 1]);
+    else if (ev.key === ' ' && ev.target === document.body) { ev.preventDefault(); pauseBtn.click(); }
+  });
+
+  /* ---------- início ---------- */
+  state = newState();
+  const fromHash = location.hash.slice(1);
+  setTheme(THEMES[fromHash] ? fromHash : 'guilda');
+  schedule(700);
+})();
+</script>
+</body>
+</html>

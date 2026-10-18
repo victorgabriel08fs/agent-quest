@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="escritorio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Quest</title>
+<link rel="stylesheet" href="painel.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">⚔️</span><span>Agent Quest</span><span class="tag">mockup</span></div>
+  <div class="session" id="session" aria-label="Resumo da sessão"></div>
+  <div class="top-actions">
+    <button type="button" class="icon-btn" id="btn-legend" title="Legenda (?)" aria-label="Abrir legenda">?</button>
+    <div class="seg" id="theme-toggle" role="group" aria-label="Tema"></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="card party" aria-labelledby="party-title">
+    <div class="card-head"><h2 id="party-title">Equipe</h2><span class="muted" id="party-count"></span></div>
+    <ul class="roster" id="roster"></ul>
+    <div class="mini-legend" id="mini-legend"></div>
+  </aside>
+
+  <section class="center">
+    <div class="card quest">
+      <div class="q-info">
+        <div class="q-kicker" id="q-kicker"></div>
+        <h1 class="q-title" id="q-title"></h1>
+        <div class="q-meta" id="q-meta"></div>
+      </div>
+      <ol class="stepper" id="stepper"></ol>
+    </div>
+    <div class="card scene-card">
+      <div class="scene" id="scene">
+        <div class="loop" aria-hidden="true"></div>
+        <div class="rooms" id="rooms"></div>
+        <div class="layer bugs" id="bugs"></div>
+        <div class="layer tokens" id="tokens"></div>
+        <div class="layer fx" id="fx"></div>
+      </div>
+    </div>
+    <div class="card achievements">
+      <div class="card-head"><h2>Conquistas</h2><span class="muted" id="ach-count"></span></div>
+      <div class="badges" id="badges"></div>
+    </div>
+  </section>
+
+  <aside class="card feed" aria-labelledby="feed-title">
+    <div class="card-head"><h2 id="feed-title">Atividade</h2><span class="live"><i></i>ao vivo</span></div>
+    <div class="filters" id="filters" role="group" aria-label="Filtrar por agente"></div>
+    <ol class="entries" id="entries"></ol>
+  </aside>
+</main>
+
+<p class="foot">Mockup com dados simulados · ícones provisórios (emoji) · roda 100% local, sem internet · atalhos: <kbd>1</kbd> <kbd>2</kbd> tema, <kbd>T</kbd> alterna, <kbd>espaço</kbd> pausa, <kbd>?</kbd> legenda</p>
+
+<div class="sim" role="group" aria-label="Simulação">
+  <span class="sim-lbl"><i></i>Simulação</span>
+  <button type="button" id="btn-pause" aria-pressed="false" title="Pausar (espaço)">⏸</button>
+  <button type="button" data-speed="1" aria-pressed="true">1×</button>
+  <button type="button" data-speed="2" aria-pressed="false">2×</button>
+  <button type="button" data-speed="4" aria-pressed="false">4×</button>
+  <button type="button" id="btn-reset" title="Reiniciar">↺</button>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<dialog class="legend" id="legend" aria-labelledby="legend-title">
+  <div class="lg-head"><h2 id="legend-title">Como ler o painel</h2><button type="button" class="icon-btn" id="legend-close" aria-label="Fechar">✕</button></div>
+  <div class="lg-body" id="legend-body"></div>
+</dialog>
+
+<script src="painel-temas.js"></script>
+<script src="painel-motor.js"></script>
+<script src="painel.js"></script>
+</body>
+</html>
