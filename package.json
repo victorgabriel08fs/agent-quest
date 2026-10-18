@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server/main.js",
+    "dev": "node --watch server/main.js",
     "test": "node scripts/run-tests.mjs"
   }
 }

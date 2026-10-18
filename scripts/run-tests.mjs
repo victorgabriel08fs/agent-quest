@@ -12,6 +12,7 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 
 const DEFAULT_ROOTS = ['test/unit', 'test/integration'];
 const TEST_SUFFIX = '.test.js';
