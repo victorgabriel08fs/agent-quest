@@ -2,7 +2,7 @@
 
 O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a captura envia do Claude Code e serve o painel no navegador, sempre em `http://127.0.0.1`. Este guia mostra como iniciar, configurar e parar o servidor, e o que fazer com as mensagens mais comuns.
 
-> Este guia descreve o servidor como ele está agora, na fundação da v1. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar a captura no Claude Code, veja [Ligar, pausar e remover a captura](captura.md). Ler o painel vai ter um guia próprio.
+> Este guia descreve o servidor como ele está agora, na fundação da v1. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar a captura no Claude Code, veja [Ligar, pausar e remover a captura](captura.md); para ler o painel, veja [O painel](painel.md).
 
 ## Resumo rápido
 
@@ -17,7 +17,7 @@ O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a capt
 ## Antes de começar
 
 - **Node 24 ou mais novo.** Confira com `node --version`.
-- **Nada para instalar.** O servidor não tem dependências, então não é preciso rodar `npm install` para usá-lo. Basta ter o repositório na máquina.
+- **Nada para instalar.** O servidor não tem dependências de execução, então não é preciso rodar `npm install` para usá-lo. Basta ter o repositório na máquina. (O `npm install` só serve para os testes de ponta a ponta do painel; veja [O painel](painel.md#testes-de-ponta-a-ponta-para-quem-desenvolve).)
 - Os comandos deste guia rodam na raiz do repositório, a pasta onde está o `package.json`. Os exemplos são para o PowerShell; quando o Git Bash é diferente, o comando dele aparece junto.
 
 ## Iniciar
@@ -36,7 +36,7 @@ Diretório de dados: C:\Users\<usuario>\AppData\Local\agent-quest
 Ctrl+C para parar.
 ```
 
-Abra o endereço no navegador. O servidor fica no ar enquanto esse terminal estiver aberto: deixe-o aberto (pode minimizar) e use outro terminal para o resto.
+Abra o endereço no navegador para ver o [painel](painel.md). O servidor fica no ar enquanto esse terminal estiver aberto: deixe-o aberto (pode minimizar) e use outro terminal para o resto.
 
 Nesta fase, o painel ainda não mostra sessões ao vivo. A ligação entre captura, servidor e painel chega nas próximas tarefas do [plano da v1](../plano/v1.md).
 
