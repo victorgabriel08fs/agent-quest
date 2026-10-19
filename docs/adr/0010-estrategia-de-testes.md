@@ -90,7 +90,7 @@ Os cenários de `test/fixtures/hooks/` são a base comum do T5, do T7, do T9 e d
   - nomes de eventos e de ferramentas, tipos de agente, status e outros valores curtos de enumeração;
   - a primeira linha de cada comando, até 160 caracteres, com a redação da seção 10 do modelo de eventos. É acima do limite de 120 do normalizador, para o T5 testar o corte. A redação usada é a mesma função do normalizador, `server/domain/redact.js`, importada pelo `sanitize.mjs`;
   - descrições até 80 caracteres, padrões de busca até 60 e a primeira linha dos erros até 160, todos redigidos;
-  - de saídas e erros, só as linhas de resumo dos testes;
+  - de saídas e erros, só as linhas de resumo dos testes. Os padrões de resumo e o limite `MAX_KEPT` são testados no texto limpo pelas etapas 1 e 7 da redação (sem invisíveis, controles e ANSI, sem redigir), e a linha mantida passa por `keep(...)`. Antes, resumos coloridos viravam "linha omitida" (achado do documentador, 19/10/2026). Os padrões incluem o do Playwright da seção 6 do modelo de eventos;
   - do pedido do usuário, só o comando `/...` ou as tags `<...>` das notificações do sistema;
   - os caminhos, com o nome do usuário da pasta pessoal trocado por `usuario`, inclusive na forma `c--Users-<nome>-...` das pastas de `~/.claude/projects/`.
 - **Troca por marcadores `«tipo#n:tamanho»`:** conteúdo de arquivo, saídas, pedidos, textos do assistente e o resto. O mesmo texto vira sempre o mesmo marcador dentro do cenário, então igualdades como o `tool_input` do PermissionRequest e o do PreToolUse, base do `inputHash`, continuam valendo.

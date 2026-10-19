@@ -282,7 +282,12 @@ Decisão em ADR 0007. Regras operacionais:
 
 - **Comando de teste:** Bash ou PowerShell cujo `command`, depois de tirar prefixos como `cd <pasta> &&` e atribuições de variáveis, começa com um destes padrões: `npm|pnpm|yarn|bun [run ]test…`, `node --test`, `[npx ](vitest|jest|mocha|ava)`, `[npx ]playwright test`, `pytest`, `python -m (pytest|unittest)`, `php artisan test`, `[vendor/bin/](phpunit|pest)`, `go test`, `cargo test`, `dotnet test`, `mvn test`, `gradle[w] test`. A lista fica num único módulo com testes por tabela. Comando com `run_in_background` não conta, porque o resultado não vem no PostToolUse.
 - **Resultado:** PostToolUse → `ok: true`. PostToolUseFailure → `ok: false`; segundo a documentação, Bash que termina com código diferente de zero gera `error` começando com `Exit code N` **[T0]**.
-- **Contagem**, lida do texto do resultado (fim do stdout ou do `error`): node:test (`ℹ fail N`, `# fail N`), Jest (`Tests: N failed, M passed, T total`), Vitest (`Tests  N failed | M passed`), pytest (`N failed, M passed`), PHPUnit (`Failures: N`), Pest (`Tests: N failed, M passed`), go test (quantidade de `--- FAIL:`). Sem resumo reconhecido: `failed: null`.
+- **Contagem**, lida do texto do resultado (fim do stdout ou do `error`): node:test (`ℹ fail N`, `# fail N`), Jest (`Tests: N failed, M passed, T total`), Vitest (`Tests  N failed | M passed`), pytest (`N failed, M passed`), PHPUnit (`Failures: N`), Pest (`Tests: N failed, M passed`), go test (quantidade de `--- FAIL:`), Playwright (`N failed`, `N passed (duração)`, cada um numa linha). Sem resumo reconhecido: `failed: null`. Os padrões são testados no texto limpo pelas etapas 1 e 7 da redação (seção 10), sem redigir, porque resumos coloridos são comuns.
+- **Formato do Playwright**, conferido no código-fonte em 19/10/2026 (`packages/playwright/src/reporters/base.ts` e `packages/isomorphic/formatUtils.ts`):
+  - uma linha por contagem: `N failed`, `N interrupted`, `N flaky`, `N skipped`, `N did not run` e `N passed`;
+  - a duração aparece só na linha `passed`, entre parênteses, no formato do `msToString`: `0ms`, `Nms`, `N.Ns`, `N.Nm`, `N.Nh`, `N.Nd`, ou `-` para valor inválido.
+
+  Padrão: `^\s*\d+ (passed|failed|flaky|skipped|did not run|interrupted)( \((\d+(\.\d)?(ms|s|m|h|d)|-)\))?\s*$`. Ele não tem texto livre: só números, unidades e um vocabulário fechado.
 - **Estado da sessão:** run que falhou → `bugs.open = failed ?? 1`; run que passou → `bugsCrushed += bugs.open` e `bugs.open = 0`. Os bugs pertencem à sessão e não zeram no ticket seguinte, porque refletem o último resultado real.
 - A cena mostra até 4 bugs na sala de testes e "+N" para o resto.
 
@@ -552,7 +557,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 
    Revisto em 18/10/2026 (ponto 1 do segundo relatório do tester do T5). Remover as sequências ANSI aqui comia letras de tokens: em `ESC[ghp_…`, a gramática padrão de CSI (ECMA-48) toma o `g` como byte final, e sobra `hp_…`; `ESC[AKIA…` vira `KIA…`. Conferido no Node 24.20.
 
-   O `parseTestSummary` do T6 lê a saída crua, não redigida, então também precisa ignorar ANSI.
+   O `parseTestSummary` do T6 lê a saída crua, não redigida. Ele testa os padrões de resumo no texto limpo pelas etapas 1 e 7 (sem invisíveis, controles e ANSI, sem redigir), como faz o `sanitize.mjs` desde 19/10/2026. Sem isso, um resumo colorido não casa.
 2. **Blocos de chave privada:** de `-----BEGIN <rótulo>-----`, em que o rótulo contém `PRIVATE KEY`, até o `-----END <mesmo rótulo>-----`, ou até o fim do texto se o END faltar. Cobre `RSA`, `EC`, `OPENSSH`, `ENCRYPTED` e `PGP PRIVATE KEY BLOCK`.
 3. **Tokens com prefixo conhecido**, com tamanho mínimo depois do prefixo para evitar falso positivo:
    - `sk-ant-…`, `sk-…`, `sk_live_…`, `sk_test_…`, `rk_live_…`;
