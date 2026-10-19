@@ -291,14 +291,23 @@ Decisão em ADR 0007. Regras operacionais:
 ### Bug na cena
 
 - **Comando de teste:** Bash ou PowerShell cujo `command`, depois de tirar prefixos como `cd <pasta> &&` e atribuições de variáveis, começa com um destes padrões: `npm|pnpm|yarn|bun [run ]test…`, `node --test`, `[npx ](vitest|jest|mocha|ava)`, `[npx ]playwright test`, `pytest`, `python -m (pytest|unittest)`, `php artisan test`, `[vendor/bin/](phpunit|pest)`, `go test`, `cargo test`, `dotnet test`, `mvn test`, `gradle[w] test`. A lista fica num único módulo com testes por tabela. Comando com `run_in_background` não conta, porque o resultado não vem no PostToolUse.
-- **Resultado:** PostToolUse → `ok: true`. PostToolUseFailure → `ok: false`; segundo a documentação, Bash que termina com código diferente de zero gera `error` começando com `Exit code N` **[T0]**.
+  - **Extensões confirmadas no T6** (19/10/2026): `python3 -m` e `py -m`; `php vendor/bin/phpunit`; prefixos `./` e `.\`; opções de `npx` e de `node` antes do `--test`; prefixos `pushd`, `Set-Location`, `set`, `$env:` e `export`.
+  - **Cadeia com `&&`** (decidido em 19/10/2026): também conta como teste quando o **último** trecho de uma cadeia `&&` é um comando de teste, como em `npm run build && npm test` ou `composer install && php artisan test`. Como não dá para saber se a falha veio do teste ou de um trecho anterior, o fato marca `testResult.chained: true`, um campo interno do fato que não vai ao evento canônico. O T8 só abre bug numa cadeia que falhou se houver contagem reconhecida (`failed` não nulo). Cadeias com `;` ou `||`, ou com o teste no meio, não contam.
+  - **Sem leitura de resumo:** mocha, ava, cargo, dotnet, mvn e gradle viram categoria `test` com os números `null`.
+- **Resultado:** PostToolUse → `ok: true`. PostToolUseFailure → `ok: false`; segundo a documentação, Bash que termina com código diferente de zero gera `error` começando com `Exit code N` **[T0]**. A decisão fica isolada em `testOk` (`server/domain/tests-detect.js`).
+- **Texto lido para o resumo** (T6, isolado em `testOutputs`, **[T0]**): no Post, o `stdout` e depois o `stderr` (o Jest escreve no `stderr`), ou o `tool_response` quando ele é texto; no Failure, o `error`. Lê só os últimos 8192 caracteres do `plainText` desse texto. Vale o framework cujo resumo aparece por último.
+- **Contagens** (confirmadas no T6):
+  - no pytest e no PHPUnit, erros contam como falha;
+  - no Playwright, só `failed` é falha, e o total soma as seis linhas;
+  - no go test, as falhas são as linhas `--- FAIL:` sem recuo (os subtestes recuados ficam de fora), e `passed` fica `null` sem `-v`. Pacote em `FAIL` sem nenhum `--- FAIL:` (falha de compilação) dá `failed: null`.
+- **Teste interrompido pelo usuário** (decidido em 19/10/2026): PostToolUseFailure com `interrupted: true` (o `is_interrupt` do hook, **[T0]** V12) não emite `test.finished` e não muda `bugs`: um Esc não é bug. O feed mostra o `tool.failed` com `interrupted`.
 - **Contagem**, lida do texto do resultado (fim do stdout ou do `error`): node:test (`ℹ fail N`, `# fail N`), Jest (`Tests: N failed, M passed, T total`), Vitest (`Tests  N failed | M passed`), pytest (`N failed, M passed`), PHPUnit (`Failures: N`), Pest (`Tests: N failed, M passed`), go test (quantidade de `--- FAIL:`), Playwright (`N failed`, `N passed (duração)`, cada um numa linha). Sem resumo reconhecido: `failed: null`. Os padrões são testados no texto limpo pelas etapas 1 e 7 da redação (seção 10), sem redigir, porque resumos coloridos são comuns.
 - **Formato do Playwright**, conferido no código-fonte em 19/10/2026 (`packages/playwright/src/reporters/base.ts` e `packages/isomorphic/formatUtils.ts`):
   - uma linha por contagem: `N failed`, `N interrupted`, `N flaky`, `N skipped`, `N did not run` e `N passed`;
   - a duração aparece só na linha `passed`, entre parênteses, no formato do `msToString`: `0ms`, `Nms`, `N.Ns`, `N.Nm`, `N.Nh`, `N.Nd`, ou `-` para valor inválido.
 
   Padrão: `^\s*\d+ (passed|failed|flaky|skipped|did not run|interrupted)( \((\d+(\.\d)?(ms|s|m|h|d)|-)\))?\s*$`. Ele não tem texto livre: só números, unidades e um vocabulário fechado.
-- **Estado da sessão:** run que falhou → `bugs.open = failed ?? 1`; run que passou → `bugsCrushed += bugs.open` e `bugs.open = 0`. Os bugs pertencem à sessão e não zeram no ticket seguinte, porque refletem o último resultado real.
+- **Estado da sessão:** run que falhou → `bugs.open = failed ?? 1`, exceto numa cadeia `&&` sem contagem reconhecida, que não muda `bugs`, e num teste interrompido, que não gera run; run que passou → `bugsCrushed += bugs.open` e `bugs.open = 0`. Os bugs pertencem à sessão e não zeram no ticket seguinte, porque refletem o último resultado real.
 - A cena mostra até 4 bugs na sala de testes e "+N" para o resto.
 
 ### Voltou para a copa
@@ -318,7 +327,7 @@ Decisão em ADR 0007. Regras operacionais:
 
 ### Saúde
 
-Janela das últimas 10 ações do agente: `tool.finished` conta como sucesso e `tool.failed` como falha. Para comando de teste conta só o `test.finished`, para não contar duas vezes. Sem ações, 100%. O estado expõe `{ ok, total }` e o painel mostra a fração.
+Janela das últimas 10 ações do agente: `tool.finished` conta como sucesso e `tool.failed` como falha, exceto o `tool.failed` com `interrupted: true`, que não conta: interrupção do usuário não é erro do agente (19/10/2026). Para comando de teste conta só o `test.finished`, para não contar duas vezes. Sem ações, 100%. O estado expõe `{ ok, total }` e o painel mostra a fração.
 
 ### Contexto (opcional, T15)
 
@@ -624,7 +633,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
    - `Cookie:` e `Set-Cookie:`;
    - qualquer cabeçalho cujo nome termine em `-Key`, `-Token` ou `-Secret` (`X-Api-Key:`, `X-Auth-Token:`).
 
-   `Bearer <valor>` solto também é trocado.
+   `Bearer <valor>` solto também é trocado. O valor do `Bearer` vai até o próximo espaço em branco ou aspas, com qualquer caractere, inclusive não ASCII: `(?:SEQ|[^\s"'\x1B])+`. Revisto em 19/10/2026: com a classe só ASCII, `Bearer abc` + `ç` + `defsegredo` mostrava o resto depois do `ç`. A redação a mais é aceita. O laço não tem exigência depois, então continua linear.
 6. **Pares nome-valor com nome sensível.**
    - **Separadores** (o mais longo vale), com espaços opcionais em volta: `:=`, `?=`, `+=`, `=>`, `=` e `:`. Exemplos: `TOKEN := x` (Make e Go), `'password' => 'x'` (arrays do PHP), `nome: valor` (YAML).
    - **Formas:**
