@@ -70,6 +70,10 @@ export function getSessionState(state, sessionId) {}   // → SessionState com f
 export function getSessionStates(state) {}             // → SessionState[] com feed
 export function sessionCount(state) {}                 // → número de sessões em memória (/api/health)
 
+// server/agent-names.js (fora de server/domain/; ligado ao createState no T9a)
+export function createAgentNamesReader({ homeDir, list }) {}   // → readAgentNames(projectDir) → string[]; lê <projeto>/.claude/agents/ e ~/.claude/agents/
+                                                                //   uma vez por pasta (cache), ignora UNC e caminho relativo, [] em erro; list injetável nos testes
+
 // web/js/store.js
 export function createStore() {}
 export function applyHello(store, hello) {}               // → true se o runId mudou (servidor reiniciado)
@@ -164,6 +168,8 @@ agents-quest/
 │       └── scripts/forward.mjs
 ├── server/
 │   ├── main.js, config.js, runtime-file.js
+│   ├── agent-names.js               nomes em .claude/agents/ (projeto e usuário), com cache por pasta; fora do domínio
+│   ├── node-types.js                só typedefs de tipos do Node (ADR 0003)
 │   ├── http/        app.js, security.js, static.js, sse.js
 │   ├── ingest/      envelope.js, dedupe.js, queue.js, debug-dump.js (só com --debug-dump)
 │   ├── domain/      normalize.js, tools.js, redact.js, tests-detect.js, roles.js
