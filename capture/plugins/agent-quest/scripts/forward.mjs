@@ -9,7 +9,8 @@
 // - nunca escreve em stdout nem em stderr (em hook assíncrono, o stdout chega ao
 //   modelo no turno seguinte);
 // - sempre sai com código 0, em qualquer caso;
-// - se encerra sozinho em no máximo 2 s; o POST desiste em 1 s;
+// - se encerra sozinho em no máximo 2 s; o POST espera o que falta até esse
+//   prazo, no máximo 1 s;
 // - só envia para 127.0.0.1, na porta do runtime.json, de 1024 a 65535;
 // - sem dependências, só com APIs do Node 18 ou mais novo (o PATH do Claude Code
 //   pode apontar para outra versão do Node). Por isso não usa `fetch`, que no
