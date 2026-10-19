@@ -137,3 +137,11 @@ Testes que medem tempo seguem estas regras:
 - **Relógio real só com referência do mesmo teste.** Para o custo de uma operação longa (`JSON.parse` de 1 MB no normalizador, 16 MiB no encaminhador), o teste mede no mesmo processo, logo antes, uma calibração da mesma operação sobre uma entrada de referência. Ele compara pela razão, com o melhor de N medições, e não por um número absoluto. Uma mediana medida em outro momento não capta a disputa de CPU durante um `JSON.parse` longo.
 - **Crescimento** segue o complemento "teste de tempo da redação": melhor de N, razão com piso de 1 ms e limite absoluto só como teto largo.
 - **Uma nova tentativa** é permitida em caso de ruído da máquina. Falhar duas vezes seguidas é bug.
+
+**Especialização para o encaminhador** (confirmada em 19/10/2026, a partir da aplicação feita pelo tester da captura). O encaminhador roda como processo próprio e tem um prazo absoluto de cerca de 2 s por contrato (ADR 0001 e seção 1 do modelo de eventos). Por isso a regra geral é adaptada assim:
+- **a calibração roda num processo irmão**, logo antes do teste, e repete o que o encaminhador faz antes da redução: partida do processo, leitura do mesmo stdin, `JSON.parse` e listagem das chaves. "No mesmo processo" não se aplica a algo que só existe como processo separado;
+- **a calibração decide se uma perda tem desculpa**, em vez de comparar por razão: se ela passar de 1 500 ms, a perda cai na exceção da seção 1 (etapas que não podem ser interrompidas);
+- uma tentativa perdida sem desculpa ganha uma nova tentativa; duas seguidas reprovam;
+- se todas as tentativas foram desculpadas, o caso é pulado, e o teste registra as medidas no relatório. Um caso pulado nunca conta como aprovado. O tester confere que, com a máquina em repouso, nenhum caso é pulado.
+
+O tester mostrou que cópias regressivas do encaminhador (sem orçamento de tempo, sem atalho de 8 MiB) reprovam em repouso, então a desculpa não esconde regressão.

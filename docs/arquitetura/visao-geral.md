@@ -149,6 +149,7 @@ export function removeSession(store, sessionId) {}        // → true se a sess�
 | Diretório de dados | `%LOCALAPPDATA%\agent-quest\` (`AGENT_QUEST_HOME` sobrescreve). No uso normal, não definir `AGENT_QUEST_HOME`: o encaminhador roda no ambiente do Claude Code e só acha o servidor se a variável for igual nos dois lados (ADR 0005, complemento) |
 | Encaminhador | prazo de cerca de 2 s (salvo `JSON.parse` patológico); redução do corpo com orçamento de 1 s e envelope de emergência; POST com timeout de até 1 s, limitado ao que resta do prazo; stdin até 16 MiB; strings acima de 4096 unidades UTF-16 viram 1024 do início + 3072 do fim; corpo de no máximo 1 000 000 bytes, com cortes progressivos (modelo de eventos, seção 1) |
 | Corpo de `POST /hooks` | até 1 MiB. Com token válido, o excesso é lido e descartado até 16 MiB antes do 413; acima disso, 413 imediato com `Connection: close` (se declarado) ou conexão encerrada (modelo de eventos, seção 1) |
+| Remoção do `runtime.json` no encerramento | Até cerca de 0,8 s de novas tentativas: duas chamadas de até 500 ms, com esperas de 10 a 100 ms, para o caso de o arquivo estar em uso por um instante no Windows. Se ainda assim falhar, o arquivo fica como sobra, e o `pid` morto a trata (encaminhador e próximo início) |
 | Fila de ingestão | 10 000 itens; cheia, descarta o mais antigo e conta `dropped`, sem recusar a requisição |
 | Deduplicação | 5 s |
 | Feed por sessão | 200 eventos |

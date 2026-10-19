@@ -335,6 +335,11 @@ A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a
   - a ligação (T9a) chama `read(projectDir)` do leitor de `server/agent-names.js` (`createAgentNamesReader({ homeDir, list, timeoutMs })`), que é assíncrono e lê `<projeto>/.claude/agents/` e `~/.claude/agents/`;
   - o leitor tem um prazo por pasta (padrão 500 ms), que cobre unidade de rede sem precisar detectá-la; ignora UNC e caminho relativo; devolve `[]` em erro ou prazo vencido; guarda o resultado em cache por pasta; filtra os `.md` **antes** de limitar a 200 nomes;
   - o prazo para de esperar, mas não cancela o `readdir`, que segura uma thread do pool do libuv (4 por padrão, usadas também para servir arquivos). Por isso, **no máximo uma listagem fica em andamento**, e as outras pastas esperam numa fila (ajuste de 19/10/2026). O `read` de cada pasta continua resolvendo dentro do prazo, com `[]` se não deu tempo. Uma listagem que termina depois do prazo atualiza o cache e chama `onLate(projectDir, names)`, e a ligação aplica o resultado com `setAgentNames`;
+  - **pasta que nunca responde** (decidido em 19/10/2026). Com uma listagem por vez, uma pasta presa travava a fila até o servidor reiniciar, inclusive a `~/.claude/agents`. Regras:
+    - **a pasta pessoal tem prioridade:** `~/.claude/agents` é listada logo que o leitor é criado, antes de qualquer pasta de projeto, e nunca fica atrás de uma delas na fila;
+    - **listagem perdida:** a que passa de 10 s (`LOST_AFTER_MS`) é dada como perdida. A pasta fica marcada como morta no cache (`[]` até reiniciar, sem nova tentativa), e a fila anda;
+    - **teto de listagens não terminadas:** somando a que está em andamento e as perdidas, ficam no máximo 2. Assim sobram pelo menos 2 das 4 threads do libuv para servir arquivos e gravar o `runtime.json`. No teto, nenhuma listagem nova começa, e as pastas na fila recebem `[]` no prazo normal, até uma perdida terminar e liberar a vaga;
+    - se uma listagem perdida terminar depois, ela tira a marca de morta, atualiza o cache e chama `onLate`, como as atrasadas.
   - com o resultado, a ligação chama `setAgentNames(state, projectDir, names) → { changed }`, e o `roster` das sessões desse projeto é atualizado com `update` sem evento;
   - até a leitura terminar, o `roster` tem só `orq` e os papéis vistos;
   - o `createState` deixa de receber `readAgentNames`.
