@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ESCAPE_SEQUENCES, charLength, redact, redactAndCut, stripInvisible } from './redact.js';
+import { ESCAPE_SEQUENCES, charLength, plainText, redact, redactAndCut, stripInvisible } from './redact.js';
 
 /** @typedef {import('../../shared/contract.js').ToolCategory} ToolCategory */
 
@@ -167,24 +167,14 @@ export function rawIdentifier(value) {
   if (value.length > RAW_SCAN_CHARS) {
     // Valor enorme: se o começo limpo já passa de 256, nenhum identificador
     // conhecido é tão longo e o *Key vira null; basta o começo.
-    const head = withoutEscapes(stripInvisible(value.slice(0, RAW_SCAN_CHARS)));
+    const head = plainText(value.slice(0, RAW_SCAN_CHARS));
     if (head.length > 256) return head;
   }
-  return withoutEscapes(stripInvisible(value));
+  return plainText(value);
 }
 
 /** A partir de quantos caracteres `rawIdentifier` olha primeiro só o começo. */
 const RAW_SCAN_CHARS = 4096;
-
-/**
- * Tira as sequências ANSI e o ESC que sobrar (como a etapa 7), sem redigir.
- * Só para valores de uso interno.
- * @param {string} text
- * @returns {string}
- */
-function withoutEscapes(text) {
-  return text.includes('\x1B') ? text.replace(new RegExp(ESCAPE_SEQUENCES.source, 'g'), '').replace(/\x1B/g, '') : text;
-}
 
 /**
  * Texto de um identificador para exibir, antes da regra de `identifier`: só a
@@ -425,22 +415,34 @@ export function boundaryChecker(text, openEnded = false) {
  */
 export function firstRedactedLine(value) {
   if (typeof value !== 'string') return null;
+  return firstLine(redactWindow(value));
+}
+
+/**
+ * Redação com a leitura limitada (seção 2, "Leitura limitada"): só o começo do
+ * texto (até SCAN_CHARS, terminando numa fronteira de palavra) passa pela
+ * redação. É o "cinto de segurança" de todo chamador que redige texto externo
+ * (seção 10, etapa 6): o normalizador e o sanitize.mjs usam esta função.
+ * @param {unknown} value
+ * @returns {string}                     texto redigido (pode ter várias linhas)
+ */
+export function redactWindow(value) {
+  if (typeof value !== 'string') return '';
   // A etapa 1 vem antes de procurar fronteiras: U+FEFF, \v e \f são espaço em
   // branco para /\s/, mas a redação os remove, e uma fronteira calculada neles
   // juntaria de novo um token partido (B4).
   const { text: head, more } = cleanedHead(value);
   const text = dropCutWords(head);
-  if (!more && text.length <= SCAN_CHARS) return firstLine(redact(text));
+  if (!more && text.length <= SCAN_CHARS) return redact(text);
   const boundary = boundaryChecker(text, more);
   const window = text.length > SCAN_CHARS ? scanWindow(text, boundary) : text;
-  let redacted = redact(window);
+  const redacted = redact(window);
   // Trecho que termina no meio de uma palavra (não havia espaço em branco para
   // recuar): a redação pode ter encolhido o que vinha antes (invisíveis
   // removidos, token longo virando •••), e a última palavra pode ser um token
   // partido. Ela sai depois da redação, como no redactAndCut.
   const cutInsideWord = window.length < text.length ? !boundary(window.length) : more;
-  if (cutInsideWord) redacted = dropLastWord(redacted);
-  return firstLine(redacted);
+  return cutInsideWord ? dropLastWord(redacted) : redacted;
 }
 
 /** Quantos caracteres do original a etapa 1 limpa de uma vez em textos longos. */

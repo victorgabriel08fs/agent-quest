@@ -310,47 +310,149 @@ describe('tempo linear (formato do ADR 0010)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// B8 (commit 3cde65c): segredo com sequências ANSI completas (CSI, OSC com BEL
-// ou ST) e ESC solto inseridos em posições aleatórias, nas formas de valor das
-// etapas 3 a 6. Nenhum pedaço de 4 caracteres do segredo pode sobrar visível.
-// Sequências incompletas (`ESC[` ou `ESC]` sem fim) ficam fora: o `[` e o `]`
-// encerram um valor sem aspas, como no texto sem ESC (ver relatório do tester).
+// B8 (commit 3cde65c), ajustado às decisões de 19/10/2026 (B10 e lacuna do
+// introdutor incompleto): segredo com sequências ANSI completas (CSI, OSC com
+// BEL ou ST) e ESC solto inseridos em posições aleatórias.
+// - Dentro de pares, cabeçalhos, Bearer, `-u` e credencial em URL, nenhum pedaço
+//   de 4 caracteres do segredo pode sobrar visível.
+// - Num token solto (etapa 3, sem SEQ no corpo desde o B10), vale o resíduo
+//   aceito: se o trecho antes da primeira sequência já tem o tamanho mínimo, ele
+//   é redigido e o resto pode aparecer; se não tem, o token inteiro é pego na
+//   segunda passada, depois que a etapa 7 tira as sequências.
 
 describe('B8: segredo com cores ANSI no meio não aparece (fuzz determinístico)', () => {
   it('nas formas de valor das etapas 3 a 6, com sequências completas e ESC solto', () => {
+    // mulberry32: o gerador linear anterior perdia precisão em double e repetia casos.
     let seed = 4242;
     const random = () => {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      return seed / 2147483648;
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
     const pick = (list) => list[Math.floor(random() * list.length)];
     const BEL = '\u0007';
     const ST = `${E}\\`;
     const SEQS = [`${E}[0m`, `${E}[1;31m`, `${E}[ q`, `${E}]0;t${BEL}`, `${E}]8;;h x${ST}`, E];
     const SECRET = 'Zq7Wx3Rt9Lm2Pv8K';
-    const PIECES = Array.from({ length: SECRET.length - 3 }, (_, i) => SECRET.slice(i, i + 4));
-    const sprinkle = () => {
+    const SECRET2 = 'Hd4Nc6Yb1Fj5Gs0T';
+    const piecesOf = (text) => Array.from({ length: Math.max(0, text.length - 3) }, (_, i) => text.slice(i, i + 4));
+    /** Espalha sequências antes de caracteres do corpo; `cut` é o índice do primeiro caractere precedido por uma. */
+    const sprinkle = (body) => {
       let out = '';
-      for (const ch of SECRET) {
-        if (random() < 0.25) out += pick(SEQS);
-        out += ch;
+      let cut = body.length;
+      for (let i = 0; i < body.length; i++) {
+        if (random() < 0.25) {
+          out += pick(SEQS);
+          if (cut === body.length) cut = i;
+        }
+        out += body[i];
       }
-      return random() < 0.3 ? out + pick(SEQS) : out;
+      return { text: random() < 0.3 ? out + pick(SEQS) : out, cut };
     };
-    const FORMS = [
+    const VALUE_FORMS = [
       (s) => `API_KEY=${s}`, (s) => `password: ${s}`, (s) => `export DB_PASSWORD=${s}`, (s) => `$env:API_TOKEN = ${s}`,
       (s) => `setx API_KEY ${s}`, (s) => `--password ${s}`, (s) => `--token=${s}`, (s) => `-u admin:${s}`, (s) => `--user=admin:${s}`,
       (s) => `Bearer ${s}`, (s) => `Authorization: ${s}`, (s) => `X-Api-Key: ${s}`, (s) => `https://admin:${s}@h/x`,
-      (s) => `"client_secret": ${s}`, (s) => `ghp_${s}${s}`, (s) => `sk-ant-${s}`, (s) => `glpat-${s}${s}`,
+      (s) => `"client_secret": ${s}`, (s) => `token=ghp_${s}`, (s) => `GITHUB_TOKEN=glpat-${s}${SECRET2}`,
     ];
+    /** [prefixo, tamanho mínimo do corpo, corpo] dos tokens soltos. */
+    const TOKEN_FORMS = [['ghp_', 16, SECRET + SECRET2], ['sk-ant-', 8, SECRET], ['glpat-', 20, SECRET + SECRET2]];
+    const before = ['', 'echo ', 'x ', `${E}[1m`, '"', 'cmd && '];
+    const after = ['', ' fim', `${E}[0m`, '"', ';'];
     const leaks = [];
     for (let i = 0; i < 6000; i++) {
-      const text = `${pick(['', 'echo ', 'x ', `${E}[1m`, '"', 'cmd && '])}${random() < 0.2 ? pick(SEQS) : ''}${pick(FORMS)(sprinkle())}${pick(['', ' fim', `${E}[0m`, '"', ';'])}`;
+      const lead = `${pick(before)}${random() < 0.2 ? pick(SEQS) : ''}`;
+      const tail = pick(after);
+      let text;
+      let hidden;
+      if (random() < 0.6) {
+        const { text: body } = sprinkle(SECRET);
+        text = `${lead}${pick(VALUE_FORMS)(body)}${tail}`;
+        hidden = SECRET;
+      } else {
+        const [prefix, min, body] = pick(TOKEN_FORMS);
+        const sprinkled = sprinkle(body);
+        text = `${lead}${prefix}${sprinkled.text}${tail}`;
+        // Trecho antes da primeira sequência com o mínimo: só ele precisa sumir.
+        hidden = sprinkled.cut >= min ? body.slice(0, sprinkled.cut) : body;
+      }
       const out = redact(text);
       assert.equal(redact(out), out, JSON.stringify(text));
       const visible = out.replace(/[^A-Za-z0-9]/g, '');
-      if (PIECES.some((piece) => visible.includes(piece))) leaks.push(`${JSON.stringify(text)} → ${JSON.stringify(out)}`);
+      if (piecesOf(hidden).some((piece) => visible.includes(piece))) leaks.push(`${JSON.stringify(text)} → ${JSON.stringify(out)}`);
     }
     assert.deepEqual(leaks.slice(0, 5), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ajuste pós-aprovação do T5 (introdutor ANSI incompleto, commit dc768ec).
+
+describe('introdutor ANSI incompleto no meio de um valor (ajuste pós-aprovação do T5)', () => {
+  const BEL = '\u0007';
+  const ST = `${E}\\`;
+
+  it('vetores do critério: o valor fica inteiro em •••', () => {
+    const cases = [
+      [`API_KEY=abc${E}]defsegredo`, 'API_KEY=•••'],
+      [`token=ghp_${'A'.repeat(10)}${E}]${'A'.repeat(26)}`, 'token=•••'],
+      [`API_KEY=abc${E}[1;${E}[0mdefsegredo`, 'API_KEY=•••'],
+      [`API_KEY=abc${E}[12${E}[0mdefsegredo`, 'API_KEY=•••'],
+      [`API_KEY=abc${E}[1çdefsegredo`, 'API_KEY=•••'],
+      [`API_KEY=abc${E}]8;;x${ST}defsegredo`, 'API_KEY=•••'],
+      [`https://u:${E}]passsegredo@h`, 'https://•••@h'],
+      [`-u admin:${E}[1senhasegredo`, '-u •••'],
+    ];
+    for (const [text, expected] of cases) {
+      assert.equal(redact(text), expected, JSON.stringify(text));
+      assert.equal(redact(expected), expected);
+    }
+  });
+
+  it('OSC sem terminador com o corpo típico (ESC]8;; e ESC]0;) também não termina o valor', () => {
+    const cases = [
+      `API_KEY=abc${E}]8;;xdefsegredo`,
+      `API_KEY=${E}]0;defsegredo`,
+      `export DB_PASSWORD=${E}]8;;https://xsegredo`,
+      `setx API_KEY ${E}]8;;xsegredo`,
+      `API_KEY=abc${E}]a,defsegredo`,
+    ];
+    for (const text of cases) assert.doesNotMatch(redact(text), /segredo/, `${JSON.stringify(text)} → ${JSON.stringify(redact(text))}`);
+  });
+
+  it('começos sobrepostos não deixam o tempo quadrático (-u sem :, JWT sem ponto)', () => {
+    // Cada começo é permitido pela borda à esquerda e o laço do anterior passa por ele;
+    // como a expressão falha depois do laço, cada começo relê até o fim: O(n²).
+    // Poucas medidas, para o todo não pesar nos testes de tempo de outros arquivos.
+    const quick = (fn, rounds = 3) => {
+      fn();
+      let best = Infinity;
+      for (let i = 0; i < rounds && (i === 0 || best <= 50); i++) {
+        const t = performance.now();
+        fn();
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
+    const inputs = {
+      '.-u repetido (desde o T0)': (n) => fill('.-u', n),
+      'ESC]-u repetido': (n) => fill(`${E}]-u`, n),
+      'ESC]eyJ repetido (novo neste ajuste)': (n) => fill(`${E}]eyJ`, n),
+      'ESC[0~eyJ repetido (desde o B8)': (n) => fill(`${E}[0~eyJ`, n),
+      'OSC completa + eyJ repetido': (n) => fill(`${E}]0;t${BEL}eyJ`, n),
+    };
+    const slow = [];
+    for (const [name, make] of Object.entries(inputs)) {
+      const small = quick(() => redact(make(2048)));
+      // Uma medida só, sem aquecimento (o código já aqueceu na medida pequena).
+      const largeText = make(16 * 1024);
+      const begin = performance.now();
+      redact(largeText);
+      const large = performance.now() - begin;
+      if (large / Math.max(small, 1) > 32 || large > 100) slow.push(`${name}: 2 KiB ${small.toFixed(1)} ms, 16 KiB ${large.toFixed(1)} ms`);
+    }
+    assert.deepEqual(slow, []);
   });
 });

@@ -51,7 +51,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
 
-import { charLength, redact, redactAndCut } from '../../server/domain/redact.js';
+import { charLength, plainText, redact, redactAndCut } from '../../server/domain/redact.js';
+import { redactWindow } from '../../server/domain/tools.js';
 import { REPO_ROOT, displayPath, isMainModule, isObject, parseJsonl, probeDir } from './records.mjs';
 
 const ID_KEYS = new Set([
@@ -107,6 +108,8 @@ const SUMMARY_LINES = [
   /^test result: (ok|FAILED)\. \d+ passed; \d+ failed(; \d+ (ignored|measured|filtered out))*(; finished in [\d.]+s)?\s*$/, // cargo test
   /^\s*\d+ (passing|failing|pending)( \(\d+(\.\d+)?m?s\))?\s*$/, // mocha
   /^\s*(Passed|Failed)!\s+-\s+Failed:\s+\d+, Passed:\s+\d+, Skipped:\s+\d+, Total:\s+\d+(, Duration:\s+[\d.]+\s*\w+)?( - [\w.-]+\.dll \([\w.]+\))?\s*$/, // dotnet test
+  // Playwright (reporters/base.ts; duração do msToString: 0ms, Nms, N.Ns, N.Nm, N.Nh, N.Nd ou "-").
+  /^\s*\d+ (passed|failed|flaky|skipped|did not run|interrupted)( \((\d+(\.\d)?(ms|s|m|h|d)|-)\))?\s*$/,
 ];
 
 /** Diz se a chave guarda um id (lista conhecida ou chave afim). */
@@ -246,8 +249,10 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
     return replaceIds(mapPaths(text));
   }
 
+  // Cinto de segurança (modelo de eventos, seção 10, etapa 6): como no
+  // normalizador, só o começo do texto (janela de 8192 caracteres) é redigido.
   function keep(text) {
-    return redact(prepare(text));
+    return redactWindow(prepare(text));
   }
 
   // Texto cortado mais marcador só fica se for ponto fixo de redact; senão, só o marcador (seção 10).
@@ -272,7 +277,7 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
     const kept = keep(value);
     if (charLength(kept) <= MAX_KEPT) return kept;
     const mark = marker('caminho', value);
-    return fixedOr(`${redactAndCut(prepare(value), 180)}${mark}`, mark);
+    return fixedOr(`${redactAndCut(keep(value), 180)}${mark}`, mark);
   }
 
   function command(value) {
@@ -282,7 +287,7 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
     if (charLength(kept) <= 160 && !more) return kept;
     const mark = marker('comando', value);
     if (charLength(kept) <= 160) return fixedOr(`${kept}\n${mark}`, mark);
-    return fixedOr(`${redactAndCut(prepare(first), 160)} ${mark}`, mark);
+    return fixedOr(`${redactAndCut(keep(first), 160)} ${mark}`, mark);
   }
 
   function shortText(value, max, kind) {
@@ -290,7 +295,7 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
     const kept = keep(first);
     if (charLength(kept) <= max && !rest.some((line) => line.trim())) return kept;
     const mark = marker(kind, value);
-    return fixedOr(`${redactAndCut(prepare(first), max)} ${mark}`, mark);
+    return fixedOr(`${redactAndCut(keep(first), max)} ${mark}`, mark);
   }
 
   function url(value) {
@@ -369,7 +374,7 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
     let head = kept;
     if (charLength(kept) > 160) {
       const mark = marker('erro', first);
-      head = fixedOr(`${redactAndCut(prepare(first), 160)} ${mark}`, mark);
+      head = fixedOr(`${redactAndCut(keep(first), 160)} ${mark}`, mark);
     }
     const out = [head];
     appendSummary(out, rest);
@@ -389,10 +394,14 @@ export function createSanitizer({ home = os.homedir(), placeholderUser = 'usuari
       omitted = 0;
     };
     for (const line of lines) {
-      if (charLength(line) <= MAX_KEPT && SUMMARY_LINES.some((p) => p.test(line))) {
+      // Padrões e limite valem para o texto sem cores nem controles: um resumo
+      // colorido (node --test, Playwright, Jest, Vitest) também é reconhecido. A
+      // linha mantida continua passando por keep, que redige e tira as cores.
+      const plain = plainText(line);
+      if (charLength(plain) <= MAX_KEPT && SUMMARY_LINES.some((p) => p.test(plain))) {
         flush();
         out.push(keep(line.trimEnd()));
-      } else if (line.trim()) {
+      } else if (plain.trim()) {
         omitted++;
       }
     }
@@ -598,7 +607,7 @@ function previewPrompt(prompt) {
   const text = typeof prompt === 'string' ? prompt.trimStart() : '';
   const tag = /^<([A-Za-z][\w-]*)/.exec(text);
   if (tag) return `<${tag[1]}>`;
-  return `"${redactAndCut(text.split(/\r?\n/)[0], 60)}"`;
+  return `"${redactAndCut(redactWindow(text.split(/\r?\n/)[0]), 60)}"`;
 }
 
 /**

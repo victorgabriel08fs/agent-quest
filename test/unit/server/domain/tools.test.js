@@ -21,6 +21,7 @@ import {
   identifier,
   identifierKey,
   rawIdentifier,
+  redactWindow,
   inputHash,
   mcpTarget,
   normalizeSlashes,
@@ -461,6 +462,16 @@ describe('firstLine e textLine', () => {
     assert.equal(textLine(`${zw.repeat(40_000)}ghp_${'A'.repeat(36)} depois`, 80), '••• depois');
     // Texto enorme comum: o começo aparece, e o resto não custa uma limpeza inteira.
     assert.equal(textLine(`npm test ${'x '.repeat(500_000)}`, 20), 'npm test x x x x x …');
+  });
+
+  it('redactWindow: redige só a janela de leitura, mantém as linhas e tira a palavra partida', () => {
+    assert.equal(redactWindow('linha 1 token=abc\nlinha 2'), 'linha 1 token=•••\nlinha 2');
+    assert.equal(redactWindow(`ab ${'x'.repeat(SCAN_CHARS * 2)}`), 'ab');
+    assert.equal(redactWindow(42), '');
+    const huge = `echo ${'a '.repeat(500_000)}`;
+    const started = performance.now();
+    assert.ok(redactWindow(huge).length <= SCAN_CHARS);
+    assert.ok(performance.now() - started < 500);
   });
 
   it('scanWindow: texto curto inteiro; espaço logo depois da borda mantém o trecho todo; sem espaço, o trecho todo', () => {

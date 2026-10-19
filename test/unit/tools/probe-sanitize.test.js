@@ -97,6 +97,63 @@ describe('correções do relatório do tester (B1, B2, B4, B5, B6)', () => {
     assert.equal(s.sanitizePayload({ tool_response: { stdout: real } }).tool_response.stdout, real.replace(/\t/g, ' '));
   });
 
+  it('resumos de teste coloridos (ANSI) são reconhecidos e saem sem as cores', () => {
+    const s = sanitizer();
+    const stdout = (text) => s.sanitizePayload({ tool_response: { stdout: text } }).tool_response.stdout;
+    // node --test (spec), com uma linha de detalhe que não é resumo.
+    const nodeTest = '\x1B[32m✔ soma \x1B[90m(0.9ms)\x1B[39m\x1B[39m\n\x1B[34mℹ tests 3\x1B[39m\n\x1B[34mℹ pass 3\x1B[39m\n\x1B[34mℹ fail 0\x1B[39m';
+    assert.equal(stdout(nodeTest), '«1 linha omitida»\nℹ tests 3\nℹ pass 3\nℹ fail 0');
+    // Playwright (o título do teste que falhou é omitido).
+    const playwright = '\x1B[31m  1 failed\x1B[39m\n    [msedge] › e2e/painel.spec.js:3:1 › CONTEUDO-DO-TITULO\n\x1B[32m  3 passed\x1B[39m\x1B[2m (2.1s)\x1B[22m';
+    assert.equal(stdout(playwright), '  1 failed\n«1 linha omitida»\n  3 passed (2.1s)');
+    // Jest e Vitest.
+    const jest = '\x1B[1mTests:\x1B[22m       \x1B[1m\x1B[31m1 failed\x1B[39m\x1B[22m, \x1B[1m\x1B[32m2 passed\x1B[39m\x1B[22m, 3 total';
+    assert.equal(stdout(jest), 'Tests:       1 failed, 2 passed, 3 total');
+    const vitest = '\x1B[2m      Tests \x1B[22m \x1B[1m\x1B[31m1 failed\x1B[39m\x1B[22m\x1B[2m | \x1B[22m\x1B[1m\x1B[32m3 passed\x1B[39m\x1B[22m\x1B[90m (4)\x1B[39m';
+    assert.equal(stdout(vitest), '      Tests  1 failed | 3 passed (4)');
+    for (const out of [stdout(nodeTest), stdout(playwright), stdout(jest), stdout(vitest)]) {
+      assert.equal(redact(out), out, 'ponto fixo da redação');
+      assert.doesNotMatch(out, /\x1B|CONTEUDO/);
+    }
+  });
+
+  it('resumo do Playwright: todas as unidades do msToString e os estados do reporter', () => {
+    const s = sanitizer();
+    const stdout = (text) => s.sanitizePayload({ tool_response: { stdout: text } }).tool_response.stdout;
+    const kept = [
+      '  3 passed (0ms)', '  3 passed (850ms)', '  3 passed (2.1s)', '  3 passed (1.5m)', '  3 passed (1.2h)',
+      '  3 passed (2.0d)', '  3 passed (-)', '  3 passed', '  1 failed', '  2 flaky', '  4 skipped',
+      '  1 did not run', '  1 interrupted',
+    ];
+    for (const line of kept) assert.equal(stdout(line), line, line);
+    // Texto livre depois da duração, duração com duas casas ou estado desconhecido: omitidos.
+    const omitted = [
+      '  3 passed (2.1s) CONTEUDO', '  3 passed (2.15s)', '  3 passed (2.1x)', '  3 passed (abc)', '  3 passed CONTEUDO',
+      '  3 succeeded (2.1s)',
+    ];
+    for (const line of omitted) assert.equal(stdout(line), '«1 linha omitida»', line);
+  });
+
+  it('cinto de segurança: texto enorme só tem a janela de 8192 caracteres redigida, em pouco tempo', () => {
+    const s = sanitizer();
+    const command = `echo ${'.-u '.repeat(250_000)}fim`;
+    const started = Date.now();
+    const out = s.sanitizePayload({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }).tool_input.command;
+    assert.ok(Date.now() - started < 2000, `${Date.now() - started} ms`);
+    assert.equal(redact(out), out);
+    assert.ok(charLength(out.replace(/«[^«»]*»/g, '')) <= 200, out);
+  });
+
+  it('linha colorida com segredo: não vira resumo e o segredo não aparece', () => {
+    const s = sanitizer();
+    const text = '\x1B[31mError: API_KEY=\x1B[32mabc123segredo\x1B[0m\n\x1B[34mℹ fail 1\x1B[39m';
+    const out = s.sanitizePayload({ tool_response: { stdout: text } }).tool_response.stdout;
+    assert.equal(out, '«1 linha omitida»\nℹ fail 1');
+    const error = s.sanitizePayload({ hook_event_name: 'PostToolUseFailure', error: `Exit code 1\n${text}` }).error;
+    assert.doesNotMatch(error, /abc123segredo|\x1B/);
+    assert.equal(redact(error), error);
+  });
+
   it('B5: nome do usuário em caminho codificado para URL é trocado e a conferência o acha', () => {
     const s = sanitizer();
     const out = s.sanitizePayload({ tool_input: { command: 'curl "http://127.0.0.1:47821/x?p=C%3A%5CUsers%5Cfulano%5Ca.txt&q=C%3A%2FUsers%2Ffulano%2Fb"' } });

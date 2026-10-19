@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
-import { charLength, isSensitiveName, redact, redactAndCut, REDACTED } from '../../../../server/domain/redact.js';
+import { charLength, isSensitiveName, plainText, redact, redactAndCut, REDACTED } from '../../../../server/domain/redact.js';
 
 const R = REDACTED;
 
@@ -18,6 +18,27 @@ const INVISIBLES = [
   '\u202A', '\u202E', '\u2060', '\u2061', '\u2064', '\u2066', '\u2069', '\u3164', '\uFE00', '\uFE0F',
   '\uFEFF', '\uFFA0', '\u{E0001}', '\u{E0041}', '\u{E0FFF}',
 ];
+
+/** Entradas do B10 (ADR 0010, "teste de tempo da redação"): `size` caracteres repetindo o trecho. */
+const repeatTo = (piece) => (size) => piece.repeat(Math.ceil(size / piece.length)).slice(0, size);
+const B10_INPUTS = {
+  '.-u': repeatTo('.-u'),
+  ']-u': repeatTo(']-u'),
+  '.--user=': repeatTo('.--user='),
+  'ESC]-u': repeatTo('\x1B]-u'),
+  'ESC]eyJ': repeatTo('\x1B]eyJ'),
+  'ESC[0~eyJ': repeatTo('\x1B[0~eyJ'),
+  'OSC completa + eyJ': repeatTo('\x1B]0;t\x07eyJ'),
+  'a= (nome não sensível)': repeatTo('a='),
+  'ESC]8;;x;': repeatTo('\x1B]8;;x;'),
+  'eyJa.': repeatTo('eyJa.'),
+  '://a:a': repeatTo('://a:a'),
+  'a-a- (nome de cabeçalho sem :)': repeatTo('a-a-'),
+  // OSC aberta com corpo, que a etapa 7 tira (19/10/2026).
+  'ESC] e corpo': repeatTo('\x1B]abc'),
+  'ESC] e corpo com espaço': repeatTo('\x1B]8;;x '),
+  'token partido por ESC]': repeatTo('ghp_AAAA\x1B]BB'),
+};
 
 // Metades de surrogate soltas (montadas por código, para o arquivo continuar UTF-8 válido).
 const HIGH = String.fromCharCode(0xdb40);
@@ -41,8 +62,9 @@ const POSITIVES = {
     // OSC terminada por BEL fica inteira na etapa 1 (o BEL faz parte da sequência) e sai na etapa 7.
     ['\x1B]0;título da janela\x07texto', 'texto'],
     // B6: controles do corpo da OSC saem na etapa 1; se a redação engolir o BEL, nada fica para trás.
-    ['\x1B]0;\x00 password=abc\x07 resto', `]0; password=${R} resto`],
-    ['\x1B]2;\x9B token=abc\x07', `]2; token=${R}`],
+    // A redação engole o BEL; a OSC que sobra aberta sai com o corpo na etapa 7.
+    ['\x1B]0;\x00 password=abc\x07 resto', ` password=${R} resto`],
+    ['\x1B]2;\x9B token=abc\x07', ` token=${R}`],
     ['Authorization: "x\x1B]0;y"\x07 resto', `Authorization: ${R} resto`],
     ['\x1B]0;título\x1B\\texto', 'texto'],
     ['BEL solto\x07 sai', 'BEL solto sai'],
@@ -57,7 +79,8 @@ const POSITIVES = {
     ['\x1B[ \x1B[1 q texto', '[  texto'],
     ['fim incompleto \x1B[12', 'fim incompleto [12'],
     ['\x1B]8;;https://exemplo.com\x1B\\link\x1B]8;;\x1B\\', 'link'],
-    ['\x1B]sem terminador', ']sem terminador'],
+    // OSC aberta: sai com o corpo até o espaço (etapa 7, 19/10/2026).
+    ['\x1B]sem terminador', ' terminador'],
     ['a\x00b\x01c\x08d\x0Be\x0Cf\x1Fg\x7Fh\x80i\x9Bj\x9Fk', 'abcdefghijk'],
     ['coluna\tcoluna\t\tfim', 'coluna coluna  fim'],
     ['linhas\nficam\r\ncom\rquebra', 'linhas\nficam\r\ncom\rquebra'],
@@ -85,10 +108,43 @@ const POSITIVES = {
     ['API_KEY=\x1B[1m\x1B[32mabc\x1B[0mdef\x1B[0m', `API_KEY=${R}`],
     ['Bearer \x1B[32mabcdef123\x1B[0m', `Bearer ${R}`],
     [`ghp_AAAAAAAAAA\x1B[1m${'A'.repeat(26)}`, R],
+    // Revisto no B10: o corpo do token não aceita SEQ. Com o trecho antes da cor
+    // já no tamanho mínimo, o trecho depois da cor fica visível (resíduo aceito).
+    [`ghp_${'A'.repeat(36)}\x1B[1mBBBB`, `${R}BBBB`],
     // Resíduo: o que vem depois do espaço não é o valor, mas a cor sai.
     ['token=abc \x1B[31m def', `token=${R}  def`],
     ['https://\x1B[32muser\x1B[0m:\x1B[32msenha\x1B[0m@h/', `https://${R}@h/`],
     ['X-Api-Key: \x1B[32mabc\x1B[0m', `X-Api-Key: ${R}`],
+  ],
+  // Ajuste pós-aprovação do T5: introdutor ANSI incompleto no meio do valor não o termina.
+  'introdutor incompleto no meio do valor': [
+    ['API_KEY=abc\x1B]defsegredo', `API_KEY=${R}`],
+    [`token=ghp_AAAAAAAAAA\x1B]${'A'.repeat(30)}`, `token=${R}`],
+    ['API_KEY=abc\x1B[1;\x1B[0mdef', `API_KEY=${R}`],
+    ['API_KEY=abc\x1B[12\x1B[0mdef', `API_KEY=${R}`],
+    ['API_KEY=abc\x1B[1çdef', `API_KEY=${R}`],
+    ['API_KEY=abc\x1B]8;;x\x1B\\def', `API_KEY=${R}`],
+    // O espaço depois do introdutor termina o valor normalmente.
+    ['API_KEY=abc\x1B] def', `API_KEY=${R} def`],
+    ['https://u:\x1B]p@h/', `https://${R}@h/`],
+    ['-u admin:\x1B[1senha', `-u ${R}`],
+    // B11: OSC aberta com o corpo típico (`;`, `,`) não termina o valor.
+    ['API_KEY=abc\x1B]8;;xdefsegredo', `API_KEY=${R}`],
+    ['API_KEY=\x1B]0;defsegredo', `API_KEY=${R}`],
+    ['export DB_PASSWORD=\x1B]8;;https://xsegredo', `export DB_PASSWORD=${R}`],
+    ['setx API_KEY \x1B]8;;xsegredo', `setx API_KEY ${R}`],
+    ['API_KEY=abc\x1B]a,defsegredo', `API_KEY=${R}`],
+    ['--password \x1B]8;;xsegredo', `--password ${R}`],
+    // Um espaço depois do corpo da OSC aberta continua terminando o valor.
+    ['API_KEY=abc\x1B]8;;x defsegredo', `API_KEY=${R} defsegredo`],
+  ],
+  // Etapa 7 tira a OSC aberta com o corpo (19/10/2026): num token solto partido,
+  // o painel nunca mostra mais do token do que um terminal mostraria.
+  'OSC aberta na etapa 7': [
+    [`ghp_${'A'.repeat(10)}\x1B]${'B'.repeat(26)}`, `ghp_${'A'.repeat(10)}`],
+    ['echo oi \x1B]0;título fim', 'echo oi  fim'],
+    // A CSI come o `A`; as partes se juntam num token completo, que a segunda passada redige.
+    [`ghp_${'A'.repeat(10)}\x1B[A${'B'.repeat(25)}`, R],
   ],
   'chave privada': [
     ['antes -----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY----- depois', `antes ${R} depois`],
@@ -361,6 +417,15 @@ describe('redact: propriedades', () => {
       '-u sem : com cores': (size) => `-u ${fill('a\x1B[0m', size - 3)}`,
       'token com cores': (size) => `ghp_${fill('\x1B[0mA', size - 4)}`,
       'Bearer com cores': (size) => `Bearer ${fill('\x1B[1ma', size - 7)}`,
+      // Introdutores incompletos repetidos, inclusive nos casos que falham depois do laço.
+      'URL sem @ com CSI incompleta': (size) => `://${fill('\x1B[1;', size - 3)}`,
+      'URL sem @ com ESC] sem fim': (size) => `://${fill('\x1B]', size - 3)}`,
+      '-u sem : com CSI incompleta': (size) => `-u ${fill('a\x1B[12', size - 3)}`,
+      'valor com ESC] sem fim e letras': (size) => `API_KEY=${fill('a\x1B]b', size - 8)}`,
+      'linha longa com muitos ESC] e espaços': (size) => fill('API_KEY=a\x1B]b ', size),
+      'ESC] seguido de trecho sem ESC': (size) => `API_KEY=a\x1B]${fill('b c ', size - 11)}`,
+      // B10: começos sobrepostos (ADR 0010). Em todas, a expressão começa e falha várias vezes.
+      ...B10_INPUTS,
     };
     const best = (fn, text) => {
       fn(text);
@@ -381,6 +446,60 @@ describe('redact: propriedades', () => {
       }
     }
     assert.deepEqual(slow, []);
+  });
+
+  it('plainText: etapas 1 e 7 sem redigir', () => {
+    const zw = String.fromCharCode(0x200b);
+    assert.equal(plainText(`\x1B[32mℹ pass 3\x1B[0m ${zw}token=abc\x00 \x1B]0;t\x07fim\x1B`), 'ℹ pass 3 token=abc fim');
+    assert.equal(plainText('a\tb'), 'a b');
+    // A OSC aberta sai com o corpo até o espaço (etapa 7).
+    assert.equal(plainText('ℹ pass 3 \x1B]0;corpo fim'), 'ℹ pass 3  fim');
+    assert.equal(plainText(42), '');
+  });
+
+  it('B10: as entradas de começos sobrepostos em 256 KiB ficam abaixo de 1 s (antes, 30 a 60 s)', () => {
+    const slow = [];
+    for (const [name, build] of Object.entries(B10_INPUTS)) {
+      const text = build(256 * 1024);
+      const started = performance.now();
+      redact(text);
+      const took = performance.now() - started;
+      if (took >= 1000) slow.push(`${name}: ${took.toFixed(0)} ms`);
+    }
+    assert.deepEqual(slow, []);
+  });
+
+  it('fuzz de vazamento: introdutores incompletos e sequências no meio de valores não deixam pedaço do segredo (semente fixa)', () => {
+    let seed = 19102026;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const pick = (list) => list[Math.floor(random() * list.length)];
+    const SECRET = 'Zq7Wx3Rt9Lm2Pv8K';
+    const PIECES = Array.from({ length: SECRET.length - 3 }, (_, i) => SECRET.slice(i, i + 4));
+    const SEQS = ['\x1B[1;', '\x1B[12', '\x1B[', '\x1B]', '\x1B]8;;x', '\x1B]0;', '\x1B]a,b', '\x1B', '\x1B[0m', '\x1B]0;t\x07', '\x1B[ q'];
+    // Formas de valor que aceitam SEQ (seção 10, etapa 6, regra 3), inclusive token dentro de par.
+    const FORMS = [
+      (s) => `API_KEY=${s}`, (s) => `password: ${s}`, (s) => `export DB_PASSWORD=${s}`, (s) => `$env:API_TOKEN = ${s}`,
+      (s) => `setx API_KEY ${s}`, (s) => `--password ${s}`, (s) => `--token=${s}`, (s) => `-u admin:${s}`, (s) => `--user=admin:${s}`,
+      (s) => `Bearer ${s}`, (s) => `Authorization: ${s}`, (s) => `X-Api-Key: ${s}`, (s) => `"client_secret": ${s}`,
+      (s) => `token=ghp_${s}${s}`,
+    ];
+    const leaks = [];
+    for (let i = 0; i < 20_000; i++) {
+      let secret = '';
+      for (const ch of SECRET) {
+        if (random() < 0.25) secret += pick(SEQS);
+        secret += ch;
+      }
+      if (random() < 0.3) secret += pick(SEQS);
+      const text = `echo ${pick(FORMS)(secret)} fim`;
+      const out = redact(text);
+      if (PIECES.some((piece) => out.includes(piece))) leaks.push(`${JSON.stringify(text)} → ${JSON.stringify(out)}`);
+      assert.equal(redact(out), out, `ponto fixo: ${JSON.stringify(text)}`);
+    }
+    assert.deepEqual(leaks.slice(0, 5), []);
   });
 
   it('o recuo de redactAndCut é linear numa palavra longa (C1)', () => {

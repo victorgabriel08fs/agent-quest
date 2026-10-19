@@ -20,8 +20,8 @@
 //   6. pares nome-valor com nome sensível (separadores :=, ?=, +=, =>, =, :;
 //      `"nome": "valor"`, `'nome' => 'valor'`, `setx NOME valor`,
 //      `--nome valor`, `--nome=valor`);
-//   7. sequências ANSI (CSI do ECMA-48 e OSC) e qualquer ESC que sobrar, depois
-//      da redação, para não comer letras de tokens (`ESC[ghp_…` vira `[•••`);
+//   7. sequências ANSI (CSI do ECMA-48 e OSC) e qualquer ESC ou BEL que sobrar,
+//      depois da redação, para não comer letras de tokens (`ESC[ghp_…` vira `[•••`);
 //      se saiu algo, as etapas 2 a 6 rodam de novo (no máximo duas passadas).
 //
 // Propriedades: idempotente; nunca lança exceção; tempo linear. As expressões
@@ -46,54 +46,78 @@ const OSC_BODY_CONTROLS = /[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F-\x9F]/g;
 const TAB = /\t/g;
 
 // 7. Sequências ANSI (18/10/2026), depois da redação: CSI na gramática do
-// ECMA-48 (parâmetros 0x30–0x3F, intermediários 0x20–0x2F, final 0x40–0x7E) e
-// OSC (até BEL ou ESC \); depois, qualquer ESC que sobrar. Cada tentativa para
-// no próximo ESC, então o tempo é linear. Exportada para o normalizador saber
-// quais espaços em branco a redação remove (fronteiras de leitura).
-export const ESCAPE_SEQUENCES = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g;
+// ECMA-48 (parâmetros 0x30–0x3F, intermediários 0x20–0x2F, final 0x40–0x7E),
+// OSC completa (até BEL ou ESC \) e OSC aberta com o corpo até o próximo ESC,
+// BEL, espaço em branco ou fim (19/10/2026, a mesma forma da alternativa 3 de
+// SEQ: um terminal esconderia esse corpo, e o painel não mostra mais de um
+// token partido do que o terminal mostraria); depois, qualquer ESC ou BEL que
+// sobrar. Cada tentativa para no próximo ESC (o corpo da OSC aberta, também no
+// espaço), então o tempo é linear. Exportada para o normalizador saber quais
+// espaços em branco a redação remove (fronteiras de leitura).
+export const ESCAPE_SEQUENCES = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)|\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*/g;
 // ESC de sequência incompleta e BEL que sobrar. O BEL só chega aqui se fechava
 // uma OSC (etapa 1) e a redação quebrou a sequência, por exemplo engolindo o ESC
 // dentro de um valor redigido; ele sai com o resto da OSC (B6 do tester).
 const LEFTOVER = /[\x07\x1B]/g;
 
 // Sequências ANSI dentro de valores (B8 do tester; seção 10, etapa 6): como o
-// ESC só sai na etapa 7, as classes de valor sem aspas das etapas 3 a 6 aceitam
-// uma sequência como parte do valor: `(?:SEQ|X)+`, em que X é a classe sem o ESC.
-// SEQ é uma CSI completa, uma OSC completa ou um ESC solto. O ESC solto só casa
-// quando não começa uma CSI ou OSC completa: sem isso, `ESC[32m` teria duas
-// leituras (a CSI inteira, ou ESC solto + `[32m` em X), e uma expressão que
-// falha depois do laço (credencial em URL, `-u`) testaria todas as combinações,
-// em tempo exponencial. Com a restrição, cada texto tem uma decomposição só, e o
-// casamento continua linear; o valor casado é o mesmo.
-const CSI = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/.source;
-const OSC = /\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/.source;
-const ESC = /\x1B/.source;
-const SEQ = `${CSI}|${OSC}|${ESC}(?!${CSI.slice(ESC.length)}|${OSC.slice(ESC.length)})`;
+// ESC só sai na etapa 7, as classes de valor sem aspas que não exigem nada
+// depois do laço aceitam uma sequência como parte do valor: `(?:SEQ|X)+`, em que
+// X é a classe sem o ESC. Em cada ESC, exatamente uma das quatro alternativas de
+// SEQ casa, com um único comprimento (leitura única):
+//   1. CSI completa ou incompleta: todos os bytes 0x20–0x3F e, se houver, o
+//      final; se o próximo não for ASCII imprimível (ESC, fim, `ç`), termina
+//      incompleta. Encurtar o laço deixaria um byte 0x20–0x3F como próximo, e as
+//      duas saídas falham.
+//   2. OSC completa (até BEL ou ESC \).
+//   3. OSC aberta (sem terminador, B11 do tester): o `ESC]` e o corpo até o
+//      próximo ESC, BEL, espaço em branco ou fim; o lookahead final força o corpo
+//      máximo. Um espaço continua terminando o valor.
+//   4. ESC solto: todo ESC que não começa `[` nem `]`.
+// A etapa 7 continua removendo só o que o ECMA-48 reconhece (ESCAPE_SEQUENCES).
+//
+// Linearidade por construção (B10 do tester; seção 10, etapa 6), regras para
+// toda expressão das etapas 3 a 6:
+//   1. cabeça antes do laço: pares, `setx` e `--nome` procuram só a cabeça,
+//      julgam o nome e só então leem o valor com uma expressão ancorada;
+//   2. começos disjuntos: nenhum caractere que pode estar dentro do laço de uma
+//      tentativa pode ser a borda à esquerda de um novo começo (tokens e
+//      credencial em URL sem SEQ; `-u` só depois de espaço ou aspas);
+//   3. SEQ só em laços sem exigência depois (pares, `setx`, `--nome`,
+//      cabeçalhos, `Bearer`, `-u` sem aspas): o laço casa de primeira, guloso;
+//   4. o cursor nunca volta.
+const CSI = /\x1B\[[\x20-\x3F]*(?:[\x40-\x7E]|(?![\x20-\x7E]))/.source;
+const OSC = /\x1B\][^\x07\x1B]*(?:\x07|\x1B\x5C)/.source;
+const OSC_OPEN = /\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*(?![^\x07\x1B\s])/.source;
+const LONE_ESC = /\x1B(?![\[\]])/.source;
+const SEQ = `${CSI}|${OSC}|${OSC_OPEN}|${LONE_ESC}`;
 /** Um elemento de valor: uma sequência ANSI ou um caractere da classe `x` (sem ESC). */
 const unit = (/** @type {string} */ x) => `(?:${SEQ}|${x})`;
 
 // 2. Blocos de chave privada: o rótulo precisa conter PRIVATE KEY.
 const PEM_BEGIN = /-----BEGIN ([A-Z0-9 ]{0,60}PRIVATE KEY[A-Z0-9 ]{0,60})-----/g;
 
-// 3. Tokens com prefixo conhecido, com tamanho mínimo depois do prefixo. Os
-// corpos aceitam sequências ANSI entre os caracteres (cor no meio do token).
-const ALNUM = unit('[A-Za-z0-9]');
-const ALNUM_DASH = unit('[A-Za-z0-9_-]');
+// 3. Tokens com prefixo conhecido, com tamanho mínimo depois do prefixo. O corpo
+// tem só os caracteres do token, sem SEQ (revertido do B8 no B10): a borda à
+// esquerda exclui esses mesmos caracteres, então nenhum começo cai dentro do
+// corpo de outro. Um token com cor é pego na segunda passada, sem a cor.
 const TOKEN_FORMS = [
-  `sk-ant-${ALNUM_DASH}{8,}`,
-  `sk-${ALNUM_DASH}{16,}`,
-  `(?:sk|rk)_(?:live|test)_${ALNUM}{10,}`,
-  `gh[pousr]_${ALNUM}{16,}`,
-  `github_pat_${unit('[A-Za-z0-9_]')}{20,}`,
-  `glpat-${ALNUM_DASH}{20,}`,
-  `npm_${ALNUM}{36}(?![A-Za-z0-9])`,
-  `pypi-${ALNUM_DASH}{32,}`,
-  `hf_${ALNUM}{16,}`,
-  `AKIA${unit('[0-9A-Z]')}{16}(?![0-9A-Z])`,
-  `AIza${ALNUM_DASH}{20,}`,
-  `xox[abprs]-${unit('[A-Za-z0-9-]')}{10,}`,
-  `xapp-${unit('[A-Za-z0-9-]')}{10,}`,
-  `eyJ${ALNUM_DASH}+\\.${ALNUM_DASH}+\\.${ALNUM_DASH}+`, // JWT
+  'sk-ant-[A-Za-z0-9_-]{8,}',
+  'sk-[A-Za-z0-9_-]{16,}',
+  '(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}',
+  'gh[pousr]_[A-Za-z0-9]{16,}',
+  'github_pat_[A-Za-z0-9_]{20,}',
+  'glpat-[A-Za-z0-9_-]{20,}',
+  'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])',
+  'pypi-[A-Za-z0-9_-]{32,}',
+  'hf_[A-Za-z0-9]{16,}',
+  'AKIA[0-9A-Z]{16}(?![0-9A-Z])',
+  'AIza[0-9A-Za-z_-]{20,}',
+  'xox[abprs]-[A-Za-z0-9-]{10,}',
+  'xapp-[A-Za-z0-9-]{10,}',
+  // JWT: um começo só cabe no início de um segmento, e cada tentativa examina
+  // no máximo três segmentos.
+  'eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+',
 ];
 const TOKENS = new RegExp(`(?<![A-Za-z0-9_-])(?:${TOKEN_FORMS.join('|')})`, 'g');
 // O mesmo, ancorado numa posição: acha um token colado logo depois de outro
@@ -109,11 +133,15 @@ const SINGLE_QUOTED = /'(?:\\[^\n]|[^'\\\n])*(?:'|\\?(?=\n|$))/.source;
 const BARE_VALUE = `${unit(/[^\s&;,"'{}()[\]<>|\x1B]/.source)}+`;
 const ANY_VALUE = `•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|${BARE_VALUE}`;
 
-// 4. Credenciais embutidas.
-const URL_CREDENTIALS = new RegExp(`(:\\/\\/)${unit(/[^/\s:@\x1B]/.source)}+:${unit(/[^/\s@\x1B]/.source)}+@`, 'g');
+// 4. Credenciais embutidas. Na URL, o corpo exclui `/` (parte da cabeça `://`)
+// e não aceita SEQ (revertido do B8 no B10); a classe já aceita o ESC e o `[`,
+// então uma credencial com cor continua sendo pega. O `-u`/`--user` só começa
+// no início ou depois de espaço em branco ou aspas, e o valor sem aspas é um
+// laço só, sem exigência depois: o `:` é conferido fora da expressão.
+const URL_CREDENTIALS = /(:\/\/)[^/\s:@]+:[^/\s@]+@/g;
 const USER_QUOTED = /"[^"\n]*:[^"\n]*"|'[^'\n]*:[^'\n]*'/.source;
-const USER_VALUE = `${USER_QUOTED}|${unit(/[^\s"':\x1B]/.source)}+:${unit(/[^\s"'\x1B]/.source)}*`;
-const USER_OPTION = new RegExp(`(?<![A-Za-z0-9_-])(?:(-u)([ \\t]*)|(--user)([ \\t]+|=))(?:${USER_VALUE})`, 'g');
+const USER_BARE = `${unit(/[^\s"'\x1B]/.source)}+`;
+const USER_OPTION = new RegExp(`(?<![^\\s"'])(?:(-u)([ \\t]*)|(--user)([ \\t]+|=))(${USER_QUOTED}|${USER_BARE})`, 'g');
 
 // 5. Cabeçalhos (em qualquer caixa, também dentro de aspas) e Bearer solto.
 // Um valor que já começa com "•••" é reconhecido só por isso (idempotência).
@@ -122,14 +150,18 @@ const HEADER_VALUE = `${HEADER_QUOTED}|${unit(/\\[^\r\n]|[^\r\n"'\\\x1B]/.source
 const HEADER = new RegExp(`(?<![A-Za-z0-9-])((?:proxy-)?authorization|set-cookie|cookie|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-(?:key|token|secret))(["']?[ \\t]*:[ \\t]*)(?:${HEADER_VALUE})`, 'gi');
 const BEARER = new RegExp(`(?<![A-Za-z0-9_-])(bearer)[ \\t]+${unit('[A-Za-z0-9._~+/-]')}+=*`, 'gi');
 
-// 6. Pares nome-valor. Separadores: o mais longo vale.
+// 6. Pares nome-valor, `setx NOME valor` e `--nome valor`: uma busca global só
+// da cabeça (nome e separador), o teste de sensibilidade do nome e, para nome
+// sensível, o valor com uma expressão ancorada (flag y) logo depois da cabeça.
+// Um nome não sensível nunca tem o valor examinado. Separadores: o mais longo vale.
 const SEPARATOR = /[ \t]*(?::=|\?=|\+=|=>|=|:)[ \t]*/.source;
 const PAIR_NAME = new RegExp(`(?<![A-Za-z0-9_.-])([A-Za-z_][A-Za-z0-9_.-]*)(["']?${SEPARATOR})`, 'g');
 const PAIR_VALUE = new RegExp(`(?:${ANY_VALUE})`, 'y');
-const SETX = new RegExp(`(?<![A-Za-z0-9_.-])(setx[ \\t]+)([A-Za-z_][A-Za-z0-9_.-]*)([ \\t]+)(${ANY_VALUE})`, 'gi');
-const LONG_OPTION = new RegExp(
-  `(?<![A-Za-z0-9_-])--([A-Za-z][A-Za-z0-9-]*)(=|[ \\t]+)(•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|${unit(/[^\s"'\x1B-]/.source)}${unit(/[^\s"'\x1B]/.source)}*)`,
-  'g',
+const SETX_HEAD = /(?<![A-Za-z0-9_.-])setx[ \t]+([A-Za-z_][A-Za-z0-9_.-]*)[ \t]+/gi;
+const LONG_OPTION_HEAD = /(?<![A-Za-z0-9_-])--([A-Za-z][A-Za-z0-9-]*)(?:=|[ \t]+)/g;
+const LONG_OPTION_VALUE = new RegExp(
+  `•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|${unit(/[^\s"'\x1B-]/.source)}${unit(/[^\s"'\x1B]/.source)}*`,
+  'y',
 );
 
 const CONTAINED_WORDS = ['password', 'passwd', 'passphrase', 'secret', 'credential', 'apikey', 'accesskey', 'privatekey'];
@@ -227,19 +259,29 @@ function redactSecrets(text) {
   let out = redactPrivateKeys(text);
   out = redactTokens(out);
   out = out.replace(URL_CREDENTIALS, `$1${REDACTED}@`);
-  out = out.replace(USER_OPTION, (whole, short, shortSep, long, longSep) => (
-    short !== undefined ? `${short}${shortSep}${REDACTED}` : `${long}${longSep}${REDACTED}`
-  ));
+  out = out.replace(USER_OPTION, (whole, short, shortSep, long, longSep, value) => {
+    // Sem aspas, o valor só é credencial se tiver `:` fora das sequências ANSI.
+    if (!/^["']/.test(value) && !removeEscapes(value).includes(':')) return whole;
+    return short !== undefined ? `${short}${shortSep}${REDACTED}` : `${long}${longSep}${REDACTED}`;
+  });
   out = out.replace(HEADER, `$1$2${REDACTED}`);
   out = out.replace(BEARER, `$1 ${REDACTED}`);
-  out = redactPairs(out);
-  out = out.replace(SETX, (whole, command, name, gap, value) => (
-    value !== REDACTED && isSensitiveName(name) ? `${command}${name}${gap}${REDACTED}` : whole
-  ));
-  out = out.replace(LONG_OPTION, (whole, name, separator, value) => (
-    value !== REDACTED && isSensitiveName(name) ? `--${name}${separator}${REDACTED}` : whole
-  ));
+  out = redactNamedValues(out, PAIR_NAME, PAIR_VALUE);
+  out = redactNamedValues(out, SETX_HEAD, PAIR_VALUE);
+  out = redactNamedValues(out, LONG_OPTION_HEAD, LONG_OPTION_VALUE);
   return out;
+}
+
+/**
+ * Texto limpo, sem redigir: etapas 1 e 7 (sem invisíveis, controles,
+ * sequências ANSI e ESC e BEL soltos). É a única implementação desse texto,
+ * usada para o valor cru dos identificadores (tools.js), para os padrões de
+ * resumo de teste do sanitize.mjs e, no T6, para o parseTestSummary.
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function plainText(text) {
+  return removeEscapes(stripInvisible(text));
 }
 
 /**
@@ -347,28 +389,33 @@ function redactTokens(text) {
 }
 
 /**
- * Pares nome-valor. Quando o nome não é sensível, a busca continua logo depois
- * do separador, para achar um par dentro do valor (`a=token=x`); o valor só é
- * lido quando o nome é sensível, e depois a busca continua depois dele.
+ * Valores de nome sensível (pares, `setx NOME valor`, `--nome valor`), com a
+ * cabeça antes do laço: `head` acha só o nome (grupo 1) e o separador; o valor
+ * só é lido, com `value` ancorado logo depois da cabeça, quando o nome é
+ * sensível. Quando o nome não é sensível, a busca continua logo depois do
+ * separador, para achar um par dentro do valor (`a=token=x`); depois de um
+ * valor lido, continua depois dele. O cursor nunca volta.
  * @param {string} text
+ * @param {RegExp} head                  global
+ * @param {RegExp} value                 ancorada (flag y)
  */
-function redactPairs(text) {
+function redactNamedValues(text, head, value) {
   let out = '';
   let last = 0;
-  PAIR_NAME.lastIndex = 0;
+  head.lastIndex = 0;
   let match;
-  while ((match = PAIR_NAME.exec(text))) {
+  while ((match = head.exec(text))) {
     if (!isSensitiveName(match[1])) continue;
     const valueStart = match.index + match[0].length;
-    PAIR_VALUE.lastIndex = valueStart;
-    const value = PAIR_VALUE.exec(text);
-    if (!value) continue;
-    const valueEnd = valueStart + value[0].length;
-    if (value[0] !== REDACTED) {
+    value.lastIndex = valueStart;
+    const found = value.exec(text);
+    if (!found) continue;
+    const valueEnd = valueStart + found[0].length;
+    if (found[0] !== REDACTED) {
       out += text.slice(last, valueStart) + REDACTED;
       last = valueEnd;
     }
-    PAIR_NAME.lastIndex = valueEnd;
+    head.lastIndex = valueEnd;
   }
   return out + text.slice(last);
 }

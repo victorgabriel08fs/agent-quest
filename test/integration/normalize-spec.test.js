@@ -1008,9 +1008,10 @@ describe('etapa 7 (ANSI depois da redação) e consequências aprovadas em 18/10
       [`password='a ${E}]8;;u${ST}' fim`, 'password=•••'],
       [`${E}]8;;https://u:p@h${ST}link${E}]8;;${ST}`, 'link'],
       [`x ${E}]0;a\u0000b${ST} y`, 'x  y'],
-      [`${E}]0;\u0002 token=abc${ST} resto`, ']0; token=••• resto'],
-      [`${E}]0;a ${E}]1;b${BEL} c${BEL} d`, ']0;a  c d'],
-      [`x ${E}]0;tí\u0000tulo\u0001 password=abc`, 'x ]0;título password=•••'],
+      // OSC aberta: desde 19/10/2026 a etapa 7 a tira com o corpo até o próximo ESC, BEL ou espaço (seção 10).
+      [`${E}]0;\u0002 token=abc${ST} resto`, ' token=••• resto'],
+      [`${E}]0;a ${E}]1;b${BEL} c${BEL} d`, '  c d'],
+      [`x ${E}]0;tí\u0000tulo\u0001 password=abc`, 'x  password=•••'],
       [`${E}]${BEL}x`, 'x'],
       [`${E}]0;a${BEL}${BEL}b`, 'b'],
       [`abc ${E}`, 'abc '],
