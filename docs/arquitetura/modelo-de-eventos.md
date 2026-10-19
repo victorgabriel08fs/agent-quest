@@ -623,7 +623,12 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
      - o token do `Bearer`.
 
      Os valores de cabeçalho também ganham a mesma forma, para uma OSC com espaço dentro não cortar o valor;
-   - **revertido em 19/10/2026 (B10):** os corpos dos tokens da etapa 3 e a credencial em URL **não** aceitam `SEQ`. Com `SEQ` no corpo, um começo de token podia cair dentro do casamento anterior (depois de `]`, `~` ou do byte final de uma sequência), e o tempo ficava quadrático. Um token ou uma credencial com cor é pego na segunda passada, depois que a etapa 7 tira a cor. Resíduo aceito: cor **no meio** de um token cujo trecho antes da cor já tem o tamanho mínimo deixa visível o trecho depois da cor (`ghp_<36>` + `ESC[1m` + `BBBB` vira `•••BBBB`). É um caso artificial; o modo discreto cobre a tela compartilhada;
+   - **revertido em 19/10/2026 (B10):** os corpos dos tokens da etapa 3 e a credencial em URL **não** aceitam `SEQ`. Com `SEQ` no corpo, um começo de token podia cair dentro do casamento anterior (depois de `]`, `~` ou do byte final de uma sequência), e o tempo ficava quadrático. Um token ou uma credencial com cor é pego na segunda passada, depois que a etapa 7 tira a cor. **Resíduo aceito: token solto partido por uma sequência ANSI no meio** (cor, CSI incompleta ou OSC aberta), revisto em 19/10/2026. Vale um princípio: **nesse caso, o painel nunca mostra mais do token do que um terminal mostraria**. Exemplos:
+     - `ghp_<36>` + `ESC[1m` + `BBBB` vira `•••BBBB`;
+     - `ghp_` + 10 + `ESC]` + 26 deixa visíveis só os 10 primeiros, porque a OSC aberta sai com o corpo na etapa 7;
+     - `ghp_` + 10 + `ESC[A` + 25: a CSI come o `A` e o terminal mostra as duas partes, então o painel também mostra.
+
+     Dentro de par, cabeçalho, `Bearer` ou flag sensível, o valor é pego inteiro (B8 e B11). Fora disso, é um caso artificial, e o modo discreto cobre a tela compartilhada;
    - **um valor que começa com ESC casa e absorve a sequência**, em vez de casar vazio ou não casar. Casar vazio deixaria `NOME=•••` seguido do segredo, e a segunda passada pularia. Não casar deixaria o segredo exposto quando a cor está no meio do valor (`abc ESC[1m def`, sem os espaços). Um valor feito só de `SEQ` também casa, o que é inofensivo;
    - valores entre aspas não mudam: já vão até a aspa de fechamento não escapada, com o que houver dentro;
    - **leitura única:** `SEQ` sempre começa com ESC, e `X` não contém ESC, então `SEQ` e `X` são disjuntas pelo primeiro caractere. Dentro de `SEQ`, a disjunção vem do caractere depois do ESC (`[`, `]` ou outro) e, entre as duas formas de OSC, do lookahead que decide se há terminador. Cada alternativa tem um único comprimento possível. O tempo linear depende também das regras de "Linearidade por construção", logo abaixo.
@@ -652,6 +657,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 7. **Sequências ANSI, depois da redação** (18/10/2026):
    - saem as sequências CSI na gramática do ECMA-48: `ESC [`, parâmetros em 0x30–0x3F, intermediários em 0x20–0x2F e um byte final em 0x40–0x7E;
    - saem as OSC: `ESC ]` até BEL ou `ESC \`;
+   - **sai a OSC aberta, com o corpo** (19/10/2026): `\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*`, a mesma forma da alternativa 3 de `SEQ`. Ela tira o `ESC]` e o corpo até o próximo ESC, BEL, espaço em branco ou fim. Antes saía só o ESC, e o `]` ficava separando as partes de um token solto partido: `ghp_` + 10 caracteres + `ESC]` + os outros 26 aparecia inteiro, porque nenhuma das duas passadas casava. Um terminal esconderia esse resto como corpo de OSC. Parar no espaço evita engolir o resto da linha, como na alternativa 3. A busca é linear: a cabeça é o literal `ESC]`, o lookahead vai só até o próximo ESC ou BEL e o corpo para no espaço;
    - qualquer ESC ou BEL que sobrar também sai. Isso cobre sequência incompleta e BEL que ficou sem a OSC porque a redação engoliu o começo dela. Exemplo: em `Authorization: "x ESC]0;y" BEL resto`, o valor entre aspas, com o `ESC]`, vira `•••`. O BEL fica fora e só sumiria num segundo `redact`, o que quebrava a idempotência (B6 do tester).
 
    Como o token já foi trocado nas etapas 2 a 6, `ESC[ghp_…` vira `[•••`.
