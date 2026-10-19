@@ -590,7 +590,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 7. **Sequências ANSI, depois da redação** (18/10/2026):
    - saem as sequências CSI na gramática do ECMA-48: `ESC [`, parâmetros em 0x30–0x3F, intermediários em 0x20–0x2F e um byte final em 0x40–0x7E;
    - saem as OSC: `ESC ]` até BEL ou `ESC \`;
-   - qualquer ESC que sobrar, de sequência incompleta, também sai.
+   - qualquer ESC ou BEL que sobrar também sai. Isso cobre sequência incompleta e BEL que ficou sem a OSC porque a redação engoliu o começo dela. Exemplo: em `Authorization: "x ESC]0;y" BEL resto`, o valor entre aspas, com o `ESC]`, vira `•••`. O BEL fica fora e só sumiria num segundo `redact`, o que quebrava a idempotência (B6 do tester).
 
    Como o token já foi trocado nas etapas 2 a 6, `ESC[ghp_…` vira `[•••`.
 
