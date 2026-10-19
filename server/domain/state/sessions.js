@@ -3,9 +3,9 @@
 // andamento e limpeza (modelo de eventos, seções 7 e 9).
 //
 // Este módulo só muda o modelo em memória; quem emite eventos é o index.js.
-// Não lê o disco: os nomes de `.claude/agents/` para o roster chegam pela
-// função `readAgentNames` do `createState` (T7, ponto 10; a leitura em disco
-// fica em server/agent-names.js).
+// Não lê o disco: os nomes de `.claude/agents/` para o roster chegam depois,
+// por `setAgentNames` (index.js), quando a ligação (T9a) termina a leitura
+// assíncrona de server/agent-names.js (seção 7; T7, ponto 10).
 //
 // Adiantado antes do G0a (plano, T7, condição 1): a chave da sessão fica em
 // `sessionKeyOf` (V9).
@@ -13,7 +13,7 @@
 import { FEED_KINDS, ROLES } from '../../../shared/contract.js';
 import { redact, redactAndCut } from '../redact.js';
 import { resolveRole } from '../roles.js';
-import { LIMITS, normalizeSlashes } from '../tools.js';
+import { LIMITS, canonicalPath } from '../tools.js';
 import { MAIN_KEY, createMainAgent, toAgentState } from './agents.js';
 
 /** Feed por sessão (visão geral, "Limites e valores padrão"). */
@@ -33,6 +33,13 @@ export const IDLE_TTL_MS = 6 * 60 * 60 * 1000;
  * regra 2 da seção 8). Acima disso, sai a mais antiga.
  */
 export const MAX_CALLS = 1000;
+
+/** Limite de agentes por sessão (seção 7): não encerrados (teto defensivo) e encerrados mais recentes. */
+export const MAX_ACTIVE_AGENTS = 100;
+export const MAX_FINISHED_AGENTS = 50;
+
+/** Ids de agentes removidos lembrados por sessão, para ignorar eventos atrasados deles. */
+export const MAX_TOMBSTONES = 1000;
 
 /** Quantos caracteres do id entram no rótulo padrão (`Sessão a1b2c3`). */
 const LABEL_ID_CHARS = 6;
@@ -78,7 +85,8 @@ const FEED_KIND_SET = new Set(FEED_KINDS);
  * @property {number} startedAt
  * @property {number} lastEventAt
  * @property {Map<string, Agent>} agents  na ordem de criação (a saída ordena: `orderedAgents`)
- * @property {Set<RoleId>} fileRoles      papéis do time com arquivo em .claude/agents/
+ * @property {Set<RoleId>} fileRoles      papéis do time com arquivo em .claude/agents/ (vazio até a leitura terminar)
+ * @property {Set<string>} tombstones     agent_id removidos pelo limite (os últimos MAX_TOMBSTONES)
  * @property {Map<string, Delegation>} delegations
  * @property {Map<string, CallRecord>} calls
  * @property {CanonicalEvent[]} feed
@@ -86,8 +94,8 @@ const FEED_KIND_SET = new Set(FEED_KINDS);
  */
 
 /**
- * Lê os nomes dos agentes disponíveis para o roster (seção 7).
- * @typedef {(projectDir: string) => string[]} ReadAgentNames
+ * Projeto da sessão (seção 7).
+ * @typedef {{ key: string, name: string, dir: string }} Project
  */
 
 // ---------------------------------------------------------------------------
@@ -132,6 +140,7 @@ export function createSession(id, fact) {
     lastEventAt: fact.ts,
     agents: new Map([[MAIN_KEY, createMainAgent(fact.ts)]]),
     fileRoles: new Set(),
+    tombstones: new Set(),
     delegations: new Map(),
     calls: new Map(),
     feed: [],
@@ -142,13 +151,13 @@ export function createSession(id, fact) {
 /**
  * Campos da sessão que todo fato pode trazer: horas, projeto (o primeiro
  * conhecido; o normalizador já cai para o `cwd` quando falta `env.projectDir`),
- * cliente e título. Quando o projeto fica conhecido, os nomes de
- * `.claude/agents/` são lidos, uma vez por sessão.
+ * cliente e título.
  * @param {Session} session
  * @param {Fact} fact
- * @param {{ readAgentNames: ReadAgentNames, roleOverrides: unknown }} options
+ * @param {string|null} homeDir          contexto da forma canônica do projeto
+ * @returns {Project|null}                o projeto, se ficou conhecido agora
  */
-export function touchSession(session, fact, { readAgentNames, roleOverrides }) {
+export function touchSession(session, fact, homeDir) {
   if (fact.ts < session.startedAt) session.startedAt = fact.ts;
   if (fact.ts > session.lastEventAt) session.lastEventAt = fact.ts;
   if (session.client === null && fact.client) session.client = fact.client;
@@ -156,24 +165,28 @@ export function touchSession(session, fact, { readAgentNames, roleOverrides }) {
     session.title = fact.sessionTitle;
     session.titleAt = fact.ts;
   }
-  if (session.project === null && fact.projectDir) {
-    session.project = projectOf(fact.projectDir);
-    session.fileRoles = rolesFromNames(safeRead(readAgentNames, fact.projectDir), roleOverrides);
-  }
+  if (session.project !== null || !fact.projectDir) return null;
+  session.project = projectOf(fact.projectDir, homeDir);
+  return session.project;
 }
 
 /**
- * Projeto (seção 7): `key` é o caminho normalizado (barras `/`, letra da
- * unidade minúscula, sem barra no fim), `name` a última parte e `dir` o
- * caminho como veio.
+ * Projeto (seção 7): `key` é o caminho na forma canônica da seção 2, pela
+ * mesma função do normalizador (`canonicalPath`), com a letra da unidade
+ * minúscula e sem barra no fim. Assim `/c/Users/…` (MSYS) se junta com
+ * `c:/Users/…` quando há contexto de unidade (a pasta pessoal). `name` é a
+ * última parte, e a raiz de unidade (`C:\`, `C:/`, `D:`) tem `key` `c:/` e
+ * `name` `C:`. `dir` é o caminho como veio.
  * @param {string} dir
- * @returns {{ key: string, name: string, dir: string }}
+ * @param {string|null} [homeDir]
+ * @returns {Project}
  */
-export function projectOf(dir) {
-  const normalized = normalizeSlashes(dir);
-  const key = normalized.replace(/^([A-Za-z]):/, (_, drive) => `${drive.toLowerCase()}:`);
-  const parts = normalized.split('/').filter((part) => part !== '');
-  const last = parts.length > 0 ? parts[parts.length - 1] : normalized;
+export function projectOf(dir, homeDir = null) {
+  const canonical = canonicalPath(dir, { projectDir: dir, homeDir });
+  const key = canonical.replace(/^([A-Za-z]):/, (_, drive) => `${drive.toLowerCase()}:`);
+  const root = /^([A-Za-z]):\/$/.exec(canonical);
+  const parts = canonical.split('/').filter((part) => part !== '');
+  const last = root ? `${root[1].toUpperCase()}:` : parts.length > 0 ? parts[parts.length - 1] : canonical;
   // `dir` já é ponto fixo de redact (normalizador); um pedaço dele também precisa ser.
   const name = redact(last) === last ? last : redactAndCut(last, LIMITS.name);
   return { key, name, dir };
@@ -198,17 +211,67 @@ export function rolesFromNames(names, overrides) {
 }
 
 /**
- * @param {ReadAgentNames} read
- * @param {string} projectDir
- * @returns {unknown[]}
+ * Mesmos papéis?
+ * @param {ReadonlySet<RoleId>} a
+ * @param {ReadonlySet<RoleId>} b
+ * @returns {boolean}
  */
-function safeRead(read, projectDir) {
-  try {
-    const names = read(projectDir);
-    return Array.isArray(names) ? names : [];
-  } catch {
-    return [];
+export function sameRoles(a, b) {
+  if (a.size !== b.size) return false;
+  for (const role of a) if (!b.has(role)) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Limite de agentes e lápides (seção 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mantém até MAX_ACTIVE_AGENTS não encerrados e os MAX_FINISHED_AGENTS
+ * encerrados mais recentes (por `lastEventAt`). Os removidos vão para as
+ * lápides da sessão, para um evento atrasado deles ser ignorado em vez de
+ * recriar o agente. O `main` nunca sai.
+ * @param {Session} session
+ * @returns {boolean}                    true se algum agente saiu
+ */
+export function pruneAgents(session) {
+  let active = 0;
+  let finished = 0;
+  for (const agent of session.agents.values()) {
+    if (agent.key === MAIN_KEY) continue;
+    if (agent.finished) finished++;
+    else active++;
   }
+  if (active <= MAX_ACTIVE_AGENTS && finished <= MAX_FINISHED_AGENTS) return false;
+  /** @type {Agent[]} */
+  const activeAgents = [];
+  /** @type {Agent[]} */
+  const finishedAgents = [];
+  for (const agent of session.agents.values()) {
+    if (agent.key !== MAIN_KEY) (agent.finished ? finishedAgents : activeAgents).push(agent);
+  }
+  const removed = [
+    ...mostRecent(activeAgents).slice(MAX_ACTIVE_AGENTS),
+    ...mostRecent(finishedAgents).slice(MAX_FINISHED_AGENTS),
+  ];
+  for (const agent of removed) {
+    session.agents.delete(agent.key);
+    session.tombstones.add(agent.key);
+  }
+  for (const id of session.tombstones) {
+    if (session.tombstones.size <= MAX_TOMBSTONES) break;
+    session.tombstones.delete(id);
+  }
+  return removed.length > 0;
+}
+
+/**
+ * Do mais recente para o mais antigo, por `lastEventAt` e, no empate, pela chave.
+ * @param {Agent[]} agents
+ * @returns {Agent[]}
+ */
+function mostRecent(agents) {
+  return agents.sort((a, b) => b.lastEventAt - a.lastEventAt || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 // ---------------------------------------------------------------------------

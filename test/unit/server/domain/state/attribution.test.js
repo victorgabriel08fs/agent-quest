@@ -415,7 +415,7 @@ describe('agent_id sem agent_type', () => {
     }
     // E o reducer, se receber algo que não é fato, não faz nada.
     const state = newState();
-    assert.deepEqual(apply(state, /** @type {any} */ (null), START), { events: [], changed: [] });
+    assert.deepEqual(apply(state, /** @type {any} */ (null), START), { events: [], changed: [], newProjects: [] });
     assert.equal(state.sessions.size, 0);
   });
 });
@@ -475,6 +475,107 @@ describe('falha do Agent (seção 4; T7, ponto 4)', () => {
     const tester = agentOf(view(result.state), T.id);
     assert.equal(tester.label, 'Testar');
     assert.equal(tester.parentKey, 'main');
+  });
+});
+
+describe('[T0] V5: corrida inversa, SubagentStart antes do Pre do Agent (seção 5, passo 2a; A4)', () => {
+  const T1 = agent('inversa-1', 'tester');
+  const T2 = agent('inversa-2', 'tester');
+
+  it('a instância recebe a descrição e o parentKey no Pre, sem esperar o retorno, e o agent.started não se repete', () => {
+    let call;
+    const result = run(scenario('inversa', 'SubagentStart 10 ms antes do Pre', (b) => {
+      b.prompt('Teste');
+      b.start(T1);
+      call = b.delegation('tester', 'Testar');
+      b.pre(call);
+      b.tool('Read', { file_path: `${PROJECT}\\a.md` }, { who: T1 });
+    }));
+    assertEvents(result.steps[1].events, [['agent.started', T1.id, { label: 'tester', parentKey: null }]]);
+    assertEvents(result.steps[2].events, [['agent.delegated', 'main', { toolUseId: call.id, description: 'Testar' }]]);
+    assert.equal(result.events.filter((event) => event.kind === 'agent.started').length, 1);
+    // O estado que vai no update do Pre já leva o elo.
+    const afterPre = view(run(scenario('inversa', 'até o Pre', (b) => {
+      b.prompt('Teste');
+      b.start(T1);
+      b.pre(b.delegation('tester', 'Testar'));
+    })).state);
+    assert.equal(agentOf(afterPre, T1.id).label, 'Testar');
+    assert.equal(agentOf(afterPre, T1.id).parentKey, 'main');
+    assertRunShape(result);
+  });
+
+  it('dois do mesmo tipo com a corrida invertida nos dois: a mais antiga fica com o primeiro Pre', () => {
+    const session = view(run(scenario('inversa-dupla', 'dois SubagentStart antes dos dois Pre', (b) => {
+      b.prompt('Teste');
+      b.start(T1);
+      b.start(T2);
+      b.pre(b.delegation('tester', 'Testar A'));
+      b.pre(b.delegation('tester', 'Testar B'));
+    })).state);
+    assert.equal(agentOf(session, T1.id).label, 'Testar A');
+    assert.equal(agentOf(session, T2.id).label, 'Testar B');
+  });
+
+  it('o Post do Agent corrige um elo trocado pela corrida', () => {
+    const scn = scenario('inversa-trocada', 'SubagentStart na ordem oposta à dos Pre', (b) => {
+      b.prompt('Teste');
+      b.start(T2);
+      b.start(T1);
+      const a = b.delegation('tester', 'Testar A');
+      const c = b.delegation('tester', 'Testar B');
+      b.pre(a);
+      b.pre(c);
+      b.stopAgent(T1);
+      b.returned(a, T1);
+      b.stopAgent(T2);
+      b.returned(c, T2);
+    });
+    const provisional = view(run(scn, { until: 5 }).state);
+    assert.equal(agentOf(provisional, T2.id).label, 'Testar A', 'provisório: a mais antiga ficou com o primeiro Pre');
+    const result = run(scn);
+    assert.equal(agentOf(view(result.state), T1.id).label, 'Testar A');
+    assert.equal(agentOf(view(result.state), T2.id).label, 'Testar B');
+    assert.equal(assertLinks(scn, result.state), 2);
+  });
+
+  it('instância criada 3 s antes do Pre fica de fora; o Post liga depois', () => {
+    const scn = scenario('inversa-antiga', 'SubagentStart 3 s antes do Pre', (b) => {
+      b.prompt('Teste');
+      b.start(T1);
+      b.wait(3000);
+      const call = b.delegation('tester', 'Testar');
+      b.pre(call);
+      b.returned(call, T1);
+    });
+    const beforePost = view(run(scn, { until: 3 }).state);
+    assert.equal(agentOf(beforePost, T1.id).label, 'tester');
+    assert.equal(agentOf(beforePost, T1.id).parentKey, null);
+    assert.equal(agentOf(view(run(scn).state), T1.id).label, 'Testar');
+  });
+
+  it('quem delegou nunca é escolhido, nem os ancestrais dele', () => {
+    const X = agent('inversa-delegador', 'tester');
+    const session = view(run(scenario('inversa-delegador', 'tester sem elo delega a outro tester', (b) => {
+      b.prompt('Teste');
+      b.tool('Read', { file_path: `${PROJECT}\\a.md` }, { who: X });
+      b.pre(b.delegation('tester', 'Subteste', { who: X }));
+    })).state);
+    assert.equal(agentOf(session, X.id).label, 'tester');
+    assert.equal(agentOf(session, X.id).parentKey, null);
+  });
+
+  it('instância encerrada ou já ligada também fica de fora', () => {
+    const session = view(run(scenario('inversa-inelegivel', 'encerrada e ligada', (b) => {
+      b.prompt('Teste');
+      b.pre(b.delegation('tester', 'Primeira'));
+      b.start(T1);
+      b.start(T2);
+      b.stopAgent(T2);
+      b.pre(b.delegation('tester', 'Segunda'));
+    })).state);
+    assert.equal(agentOf(session, T1.id).label, 'Primeira');
+    assert.equal(agentOf(session, T2.id).label, 'tester');
   });
 });
 

@@ -10,6 +10,7 @@ import {
   apply,
   createSequence,
   createState,
+  setAgentNames,
   getSessionState,
   getSessionStates,
   sessionCount,
@@ -23,8 +24,10 @@ import {
   projectOf,
 } from '../../../../../server/domain/state/sessions.js';
 import {
+  HOME,
   OTHER_PROJECT,
   PROJECT,
+  START,
   agent,
   agentOf,
   assertAttribution,
@@ -103,17 +106,43 @@ describe('duas sessões de projetos diferentes', () => {
     assert.deepEqual(targets, ['npm test', 'server/main.js', 'src/loja.js']);
   });
 
-  it('projectOf normaliza barras, caixa da unidade e barra do fim', () => {
+  it('projectOf: forma canônica da seção 2, pela função do normalizador (T7, ponto 3)', () => {
     const cases = [
       ['C:\\Users\\fulana\\Projetos\\x\\', 'c:/Users/fulana/Projetos/x', 'x'],
       ['c:/Users/fulana/Projetos/x', 'c:/Users/fulana/Projetos/x', 'x'],
       ['\\\\?\\D:\\Trabalho\\Loja', 'd:/Trabalho/Loja', 'Loja'],
       ['\\\\servidor\\compartilhado\\proj', '//servidor/compartilhado/proj', 'proj'],
       ['/home/fulana/proj/', '/home/fulana/proj', 'proj'],
+      // MSYS junta com a forma de unidade quando a pasta pessoal tem letra de unidade.
+      ['/c/Users/fulana/Projetos/x', 'c:/Users/fulana/Projetos/x', 'x'],
+      // Raiz de unidade.
+      ['C:\\', 'c:/', 'C:'],
+      ['C:/', 'c:/', 'C:'],
+      ['D:', 'd:/', 'D:'],
+      ['d:', 'd:/', 'D:'],
+      ['/c', 'c:/', 'C:'],
     ];
     for (const [dir, key, name] of cases) {
-      assert.deepEqual(projectOf(dir), { key, name, dir }, dir);
+      assert.deepEqual(projectOf(dir, HOME), { key, name, dir }, dir);
     }
+    // Sem contexto de unidade, /c/... continua um caminho POSIX.
+    assert.equal(projectOf('/c/Users/x', null).key, '/c/Users/x');
+    assert.equal(projectOf('/c/Users/x', '/home/fulana').key, '/c/Users/x');
+  });
+
+  it('a mesma pasta em formas diferentes é o mesmo projeto: um só newProjects', () => {
+    const state = newState();
+    const forms = ['C:\\Users\\fulana\\Projetos\\x', 'c:/Users/fulana/Projetos/x/', '/c/Users/fulana/Projetos/x', '\\\\?\\C:\\Users\\fulana\\Projetos\\x'];
+    const seen = [];
+    forms.forEach((dir, i) => {
+      const result = run(scenario(`formas-${i}`, dir, (b) => {
+        b.use(`forma-${i}`, { projectDir: dir });
+        b.sessionStart();
+      }), { state, start: START + i * 1000 });
+      seen.push(...result.steps.flatMap((step) => step.newProjects));
+    });
+    assert.deepEqual(seen, ['c:/Users/fulana/Projetos/x']);
+    assert.deepEqual(new Set(getSessionStates(state).map((session) => session.project.key)), new Set(['c:/Users/fulana/Projetos/x']));
   });
 });
 
@@ -179,16 +208,29 @@ describe('equipe (roster)', () => {
   });
 
   it('orq + papéis com arquivo em .claude/agents/ + papéis vistos + aux se houver convidado', () => {
-    const calls = [];
-    const state = createState({
-      readAgentNames: (dir) => {
-        calls.push(dir);
-        return ['arquiteto', 'dev-backend', 'tester', 'notas-soltas', 42];
-      },
-    });
-    run(scn, { state });
+    const state = newState();
+    const result = run(scn, { state });
+    // Até a leitura terminar, só os papéis vistos.
+    assert.deepEqual(view(state).roster, ['orq', 'doc', 'aux']);
+    const projects = result.steps.flatMap((step) => step.newProjects);
+    assert.deepEqual(projects, ['c:/Users/fulana/Projetos/agents-quest'], 'uma vez por projeto, na forma canônica');
+    const { changed } = setAgentNames(state, projects[0], ['arquiteto', 'dev-backend', 'tester', 'notas-soltas', 42]);
+    assert.deepEqual(changed, [SID]);
     assert.deepEqual(view(state).roster, ['orq', 'arq', 'dev', 'tes', 'doc', 'aux']);
-    assert.deepEqual(calls, [PROJECT], 'lido uma vez por sessão, com a pasta do projeto');
+    // Os mesmos nomes de novo: nada muda.
+    assert.deepEqual(setAgentNames(state, projects[0], ['tester', 'arquiteto', 'dev-backend']).changed, []);
+  });
+
+  it('a leitura que termina antes de outra sessão do mesmo projeto vale para ela, sem nova leitura', () => {
+    const state = newState();
+    run(scenario('primeira', 'primeira sessão', (b) => b.sessionStart()), { state });
+    setAgentNames(state, PROJECT, ['tester']);
+    const second = run(scenario('segunda', 'segunda sessão', (b) => {
+      b.use('segunda');
+      b.sessionStart();
+    }), { state, start: START + 1000 });
+    assert.deepEqual(second.steps.flatMap((step) => step.newProjects), []);
+    assert.deepEqual(getSessionState(state, sessionId('segunda')).roster, ['orq', 'tes']);
   });
 
   it('só orq sem agentes; convidado sem arquivo; nomes com sobrescrita', () => {
@@ -198,17 +240,22 @@ describe('equipe (roster)', () => {
     assert.deepEqual(view(state).roster, ['orq', 'tes']);
   });
 
-  it('a leitura que falha não quebra o reducer', () => {
-    const state = createState({ readAgentNames: () => { throw new Error('sem acesso'); } });
+  it('nomes inválidos ou projeto vazio não quebram o reducer', () => {
+    const state = newState();
     const result = run(scn, { state });
+    for (const names of [null, 'tester', [null, 42, '']]) {
+      assert.deepEqual(setAgentNames(state, PROJECT, /** @type {any} */ (names)).changed, []);
+    }
+    assert.deepEqual(setAgentNames(state, '', ['tester']).changed, []);
     assert.deepEqual(view(state).roster, ['orq', 'doc', 'aux']);
     assertRunShape(result);
   });
 
-  it('sem readAgentNames, o padrão do createState não lê nada (a leitura em disco é ligada no T9a)', () => {
+  it('o createState não lê o disco nem recebe leitor (T7, ponto 10)', () => {
     const state = createState();
     run(scn, { state });
     assert.deepEqual(view(state).roster, ['orq', 'doc', 'aux']);
+    assert.ok(!('readAgentNames' in state));
   });
 });
 

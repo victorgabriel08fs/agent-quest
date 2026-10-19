@@ -55,6 +55,7 @@ import {
   rng,
   script,
   sessionId,
+  setAgentNames,
   tick,
   view,
   windowOrder,
@@ -595,17 +596,19 @@ describe('equipe (roster)', () => {
     return s.events;
   }
 
-  it('orq + papéis com arquivo em .claude/agents/ (função injetada) + papéis vistos + aux com convidado, na ordem de ROLES', () => {
-    const calls = [];
-    const state = createState({
-      readAgentNames: (dir) => {
-        calls.push(dir);
-        return ['dev-frontend', 'arquiteto', 'nao-e-do-time', 'Tester', 42, null];
-      },
-    });
-    play(rosterScenario(), { state });
+  // Leitor fora do apply (seção 7, revisto em 19/10/2026): o apply devolve
+  // newProjects, uma vez por projeto, na forma canônica, e a ligação entrega os
+  // nomes por setAgentNames, com update sem evento.
+  it('orq + papéis com arquivo em .claude/agents/ (por setAgentNames) + papéis vistos + aux com convidado, na ordem de ROLES', () => {
+    const state = createState();
+    const result = play(rosterScenario(), { state });
+    const reported = result.steps.flatMap((step) => step.newProjects);
+    assert.deepEqual(reported, ['c:/Users/beltrana/Codigo/agents-quest'], 'newProjects uma vez, na forma canônica');
+    assert.deepEqual(view(state).roster, ['orq', 'doc', 'aux'], 'antes da leitura: só os papéis vistos');
+    const { changed } = setAgentNames(state, reported[0], ['dev-frontend', 'arquiteto', 'nao-e-do-time', 'Tester', 42, null]);
+    assert.deepEqual(changed, [SID]);
     assert.deepEqual(view(state).roster, ['orq', 'arq', 'dev', 'doc', 'aux']);
-    assert.deepEqual(calls, [PROJECT], 'lido uma vez por sessão, com a pasta do projeto');
+    assert.deepEqual(setAgentNames(state, reported[0], ['dev-frontend', 'arquiteto']).changed, [], 'os mesmos papéis: nada muda');
   });
 
   it('arquivo de papel sem instância entra; nome desconhecido não traz aux; sobrescrita vale para os arquivos', () => {
@@ -616,22 +619,37 @@ describe('equipe (roster)', () => {
     assert.deepEqual(view(state).roster, ['orq', 'doc']);
   });
 
-  it('leitura que lança ou devolve algo que não é lista não quebra o reducer', () => {
-    for (const readAgentNames of [() => { throw new Error('sem acesso'); }, () => 'tester', () => null]) {
-      const state = createState({ readAgentNames });
+  it('nomes que não são lista, pasta vazia ou outro projeto não quebram nada nem mexem nesta sessão', () => {
+    for (const names of ['tester', null, 42, {}, [], [null, 7]]) {
+      const state = createState();
       const result = play(rosterScenario(), { state });
+      assert.doesNotThrow(() => setAgentNames(state, 'c:/Users/beltrana/Codigo/agents-quest', names));
+      assert.deepEqual(setAgentNames(state, 'D:\\outro', ['tester']).changed, []);
+      assert.deepEqual(setAgentNames(state, '', ['tester']).changed, []);
       assert.deepEqual(view(state).roster, ['orq', 'doc', 'aux']);
       checkState(result.state);
     }
   });
 
-  it('projeto desconhecido: a leitura não é chamada, e o roster fica com os papéis vistos', () => {
-    const calls = [];
+  it('o mesmo projeto em outra sessão, ou em outra forma de caminho, não é novo de novo e já recebe os papéis', () => {
+    const state = newState({ agentNames: ['tester'] });
+    const first = script();
+    first.sessionStart(0);
+    const second = script({ session: sessionId(2), projectDir: 'c:/Users/beltrana/Codigo/agents-quest/' });
+    second.sessionStart(10);
+    const a = play(first.events, { state });
+    const b = play(second.events, { state });
+    assert.deepEqual(a.steps[0].newProjects, ['c:/Users/beltrana/Codigo/agents-quest']);
+    assert.deepEqual(b.steps[0].newProjects, []);
+    assert.deepEqual(view(state, sessionId(2)).roster, ['orq', 'tes']);
+  });
+
+  it('projeto desconhecido: nada em newProjects, e o roster fica com os papéis vistos', () => {
     const s = script({ projectDir: null });
     s.tool(0, 'Read', { file_path: 'CLAUDE.md' }, DOC2);
-    const state = createState({ readAgentNames: (dir) => { calls.push(dir); return ['tester']; } });
-    play(s.events, { state });
-    assert.deepEqual(calls, []);
+    const state = newState({ agentNames: ['tester'] });
+    const result = play(s.events, { state });
+    assert.deepEqual(result.steps.flatMap((step) => step.newProjects), []);
     const session = view(state);
     assert.deepEqual(session.project, { key: '', name: '', dir: '' });
     assert.deepEqual(session.roster, ['orq', 'doc']);

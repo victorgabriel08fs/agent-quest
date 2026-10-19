@@ -307,7 +307,7 @@ describe('delegações em paralelo', () => {
     assert.equal(t.parentKey, 'main');
   });
 
-  it('SubagentStart chega antes do Pre do Agent: a instância recebe a descrição quando o Pre chega, sem esperar o retorno', { todo: 'achado do tester: lacuna da seção 5 (elo só no SubagentStart ou no Post); aguarda o arquiteto' }, () => {
+  it('SubagentStart chega antes do Pre do Agent: a instância recebe a descrição quando o Pre chega, sem esperar o retorno (seção 5, passo 2a)', () => {
     const W = agent(252, 'tester');
     const s = script();
     s.prompt(0);
@@ -389,38 +389,210 @@ describe('aninhamento profundo', () => {
   });
 });
 
-describe('sessão com milhares de agentes', () => {
-  it('3 000 subagentes: sem exceção, forma válida, tempo de apply e tamanho do estado medidos', (t) => {
+describe('sessão com milhares de agentes (limite e lápides, seção 7)', () => {
+  it('3 000 subagentes encerrados: ficam os 50 mais recentes, o estado não cresce, e o apply segue rápido', (t) => {
     const N = 3000;
     const s = script();
     s.prompt(0);
+    const workers = [];
     for (let i = 0; i < N; i++) {
       const w = agent(10_000 + i, i % 2 ? 'tester' : 'Explore');
+      workers.push(w);
       s.start(100 + i * 10, w);
       s.tool(101 + i * 10, 'Read', { file_path: `${PROJECT}\\f${i}.md` }, w, 2);
       s.stopAgent(105 + i * 10, w);
     }
     const state = newState();
+    const tracker = new Tracker();
     const begin = performance.now();
-    play(s.events, { state });
+    play(s.events, { state, tracker });
     const total = performance.now() - begin;
-    // Mais 1 000 fatos com a sessão já cheia (todos os agentes encerrados: o status percorre todos).
     const more = script();
     for (let i = 0; i < 500; i++) more.tool(N * 10 + 1000 + i * 10, 'Read', { file_path: `${PROJECT}\\g${i}.md` });
     const facts = more.events.map((item) => ({ fact: normalize({ v: 1, sentAt: T0 + item.at, env: item.env, payload: item.payload }, { receivedAt: T0 + item.at, homeDir: HOME }), now: T0 + item.at }));
     const begin2 = performance.now();
     for (const { fact, now } of facts) apply(state, fact, now);
     const thousand = performance.now() - begin2;
-    const begin3 = performance.now();
-    const ticked = tick(state, T0 + N * 10 + 20 * MIN);
-    const tickMs = performance.now() - begin3;
     const session = view(state);
     const bytes = Buffer.byteLength(JSON.stringify(withoutFeed(session)));
-    t.diagnostic(`${N} agentes: ${s.events.length} fatos em ${total.toFixed(0)} ms; +1 000 fatos em ${thousand.toFixed(1)} ms; tick em ${tickMs.toFixed(1)} ms; SessionState sem feed = ${(bytes / 1024).toFixed(0)} KiB (${(bytes / (N + 1)).toFixed(0)} bytes por agente)`);
-    assert.equal(session.agents.length, N + 1);
-    assert.deepEqual(ticked.removed, []);
+    t.diagnostic(`${N} agentes: ${s.events.length} fatos em ${total.toFixed(0)} ms; +1 000 fatos em ${thousand.toFixed(1)} ms; SessionState sem feed = ${(bytes / 1024).toFixed(1)} KiB`);
+    assert.equal(session.agents.length, 51, 'main e os 50 encerrados mais recentes');
+    assert.deepEqual(session.agents.slice(1).map((a) => a.key).sort(), workers.slice(-50).map((w) => w.id).sort());
+    assert.ok(bytes < 64 * 1024, `${bytes} bytes`);
     checkSession(session, { feed: true });
-    assert.ok(thousand < 500, `1 000 fatos com ${N} agentes: ${thousand.toFixed(1)} ms`);
+    assert.ok(thousand < 500, `1 000 fatos: ${thousand.toFixed(1)} ms`);
+  });
+
+  it('mistura de ativos e encerrados: até 100 não encerrados (os de evento mais recente) e 50 encerrados; o main nunca sai', () => {
+    const s = script();
+    s.prompt(0);
+    const active = Array.from({ length: 130 }, (_, i) => agent(20_000 + i, 'tester'));
+    const done = Array.from({ length: 80 }, (_, i) => agent(21_000 + i, 'Explore'));
+    let at = 100;
+    for (const w of done) {
+      s.start(at++, w);
+      s.stopAgent(at++, w);
+    }
+    for (const w of active) s.start(at++, w);
+    const state = newState();
+    const result = play(s.events, { state, tracker: new Tracker() });
+    const session = view(state);
+    const keys = new Set(session.agents.map((a) => a.key));
+    assert.ok(keys.has('main'));
+    assert.equal(session.agents.filter((a) => !a.finished && a.key !== 'main').length, 100);
+    assert.equal(session.agents.filter((a) => a.finished).length, 50);
+    for (const w of active.slice(-100)) assert.ok(keys.has(w.id), 'os 100 ativos mais recentes ficam');
+    for (const w of done.slice(-50)) assert.ok(keys.has(w.id), 'os 50 encerrados mais recentes ficam');
+    assert.ok(!result.events.some((e) => e.kind === 'agent.finished' && active.slice(0, 30).some((w) => w.id === e.agentKey)), 'tirar pelo limite não emite agent.finished');
+    checkSession(session, { feed: true });
+  });
+
+  it('lápides: evento atrasado de um agente que saiu pelo limite é ignorado (sem agent.started de novo, sem voltar a trabalhar)', () => {
+    const s = script();
+    s.prompt(0);
+    const done = Array.from({ length: 60 }, (_, i) => agent(22_000 + i, 'Explore'));
+    let at = 100;
+    for (const w of done) {
+      s.start(at++, w);
+      s.stopAgent(at++, w);
+    }
+    const state = newState();
+    const tracker = new Tracker();
+    play(s.events, { state, tracker });
+    const gone = done[0];
+    assert.ok(!view(state).agents.some((a) => a.key === gone.id), 'o mais antigo saiu');
+    const late = script();
+    late.tool(5000, 'Read', { file_path: `${PROJECT}\\atrasado.md` }, gone);
+    late.start(5100, gone);
+    late.stopAgent(5200, gone);
+    const result = play(late.events, { state, tracker });
+    assert.deepEqual(result.events, []);
+    assert.ok(result.steps.every((step) => step.changed.length === 0));
+    assert.ok(!view(state).agents.some((a) => a.key === gone.id));
+  });
+
+  it('lápides esquecem depois de 1 000 ids: um evento muito atrasado do primeiro removido recria o agente (diagnóstico)', (t) => {
+    const s = script();
+    s.prompt(0);
+    const done = Array.from({ length: 1100 }, (_, i) => agent(30_000 + i, 'Explore'));
+    let at = 100;
+    for (const w of done) {
+      s.start(at++, w);
+      s.stopAgent(at++, w);
+    }
+    const state = newState();
+    play(s.events, { state });
+    const late = script();
+    late.tool(at + 1000, 'Read', { file_path: `${PROJECT}\\muito-atrasado.md` }, done[0]);
+    const result = play(late.events, { state });
+    t.diagnostic(`evento do 1º removido, depois de ${done.length - 50} remoções: ${result.events.map((e) => e.kind).join(', ') || 'ignorado'}`);
+    checkSession(view(state), { feed: true });
+  });
+});
+
+describe('A4: SubagentStart antes do Pre do Agent (seção 5, passo 2a)', () => {
+  it('várias instâncias candidatas: cada Pre liga a mais antiga elegível, e o Post corrige o elo trocado', () => {
+    const W1 = agent(40_001, 'tester');
+    const W2 = agent(40_002, 'tester');
+    const s = script();
+    s.prompt(0);
+    s.start(1000, W2); // chegam antes dos dois Pre, em ordem trocada
+    s.start(1010, W1);
+    const c1 = s.delegation('tester', 'Testar a ingestão');
+    const c2 = s.delegation('tester', 'Testar o painel');
+    s.pre(1050, c1);
+    s.pre(1060, c2);
+    const provisional = view(play(s.events).state);
+    assert.equal(agentIn(provisional, W2.id).label, 'Testar a ingestão', 'a mais antiga (W2) fica com o primeiro Pre');
+    assert.equal(agentIn(provisional, W1.id).label, 'Testar o painel');
+    s.stopAgent(5000, W1);
+    s.returned(5010, c1, W1);
+    s.stopAgent(5100, W2);
+    s.returned(5110, c2, W2);
+    const final = view(play(s.events).state);
+    assert.equal(agentIn(final, W1.id).label, 'Testar a ingestão');
+    assert.equal(agentIn(final, W2.id).label, 'Testar o painel');
+    for (const w of [W1, W2]) assert.equal(agentIn(final, w.id).parentKey, 'main');
+  });
+
+  it('relógio fora de ordem: o Pre com ts anterior ao da instância chega depois e ainda liga; o A4 vem no update do agent.delegated', () => {
+    const W = agent(40_010, 'tester');
+    const s = script();
+    s.prompt(0);
+    const c = s.delegation('tester', 'Testar');
+    s.start(1100, W);
+    s.pre(1000, c); // sentAt antes do SubagentStart, chegada depois
+    const result = play(s.events);
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.delegated', 'main']]);
+    const w = agentIn(view(result.state), W.id);
+    assert.equal(w.label, 'Testar');
+    assert.equal(w.parentKey, 'main');
+  });
+
+  it('fica de fora: instância criada mais de 2 s antes, encerrada, já ligada, de outro tipo ou de quem delegou (e ancestrais)', () => {
+    const OLD = agent(40_020, 'tester');
+    const DONE = agent(40_021, 'tester');
+    const OTHER = agent(40_022, 'documentador');
+    const s = script();
+    s.prompt(0);
+    s.start(1000, OLD);
+    s.start(3500, DONE);
+    s.stopAgent(3600, DONE);
+    s.start(3700, OTHER);
+    const c = s.delegation('tester', 'Testar');
+    s.pre(4000, c); // OLD nasceu 3 s antes
+    const session = view(play(s.events).state);
+    for (const key of [OLD.id, DONE.id, OTHER.id]) assert.equal(agentIn(session, key).parentKey, null, key);
+    // Quem delegou e o pai dele nunca são escolhidos, mesmo do mesmo tipo e recém-criados.
+    const PARENT = agent(40_030, 'tester');
+    const CHILD = agent(40_031, 'tester');
+    const t2 = script();
+    t2.prompt(0);
+    const top = t2.delegation('tester', 'Topo');
+    t2.pre(100, top);
+    t2.start(130, PARENT);
+    const mid = t2.delegation('tester', 'Meio', { who: PARENT });
+    t2.pre(200, mid);
+    t2.start(230, CHILD);
+    const own = t2.delegation('tester', 'Do filho', { who: CHILD });
+    t2.pre(300, own);
+    const nested = view(play(t2.events).state);
+    assert.equal(agentIn(nested, PARENT.id).parentKey, 'main');
+    assert.equal(agentIn(nested, CHILD.id).parentKey, PARENT.id);
+    assert.equal(agentIn(nested, CHILD.id).label, 'Meio');
+  });
+});
+
+describe('formas de borda do caminho do projeto (seção 7)', () => {
+  const table = [
+    ['/c/Users/beltrana/Codigo/agents-quest', 'c:/Users/beltrana/Codigo/agents-quest', 'agents-quest'],
+    ['C:\\', 'c:/', 'C:'],
+    ['C:/', 'c:/', 'C:'],
+    ['c:', 'c:/', 'C:'],
+    ['D:', 'd:/', 'D:'],
+    ['/c', 'c:/', 'C:'],
+    ['/d/', 'd:/', 'D:'],
+  ];
+  for (const [dir, key, name] of table) {
+    it(`${JSON.stringify(dir)} → key ${key}, name ${name}`, () => {
+      const s = script({ projectDir: dir });
+      s.tool(0, 'Read', { file_path: 'CLAUDE.md' });
+      const session = view(play(s.events, { state: newState({ homeDir: HOME }) }).state);
+      assert.equal(session.project.key, key);
+      assert.equal(session.project.name, name);
+      checkSession(session, { feed: true });
+    });
+  }
+
+  it('MSYS e Windows do mesmo projeto: uma key só, e newProjects o reporta uma vez', () => {
+    const state = newState({ homeDir: HOME });
+    const s = script({ projectDir: '/c/Users/beltrana/Codigo/agents-quest' });
+    s.tool(0, 'Read', { file_path: 'CLAUDE.md' });
+    s.use({ session: sessionId(2), projectDir: 'C:\\Users\\beltrana\\Codigo\\agents-quest\\' });
+    s.tool(10, 'Read', { file_path: 'CLAUDE.md' });
+    const result = play(s.events, { state });
+    assert.deepEqual(result.steps.flatMap((step) => step.newProjects), ['c:/Users/beltrana/Codigo/agents-quest']);
+    assert.deepEqual(new Set(getSessionStates(state).map((x) => x.project.key)), new Set(['c:/Users/beltrana/Codigo/agents-quest']));
   });
 });
 

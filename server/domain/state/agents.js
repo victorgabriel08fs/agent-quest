@@ -10,7 +10,7 @@
 //
 // Adiantado antes do G0a (plano, T7, condição 1): o que depende de veredito do
 // T0 fica nas funções da seção "Itens a confirmar no T0", com o item V no
-// comentário: `agentKeyOf` (V1), `pickDelegation` e `linkedAgentOf` (V5),
+// comentário: `agentKeyOf` (V1), `pickDelegation`, `pickInstance` e `linkedAgentOf` (V5),
 // `isBackgroundLaunch` (V5) e `listedInBackground` e `runsInBackground` (V5 e V13).
 
 import { resolveRole } from '../roles.js';
@@ -26,6 +26,9 @@ export const STALE_AGENT_MS = 15 * 60 * 1000;
 
 /** Atividades de chamadas guardadas por agente para escolher a mais recente. */
 export const ACTIVITY_WINDOW = 16;
+
+/** Janela da corrida inversa: instância criada até 2 s antes do Pre do `Agent` (seção 5, passo 2a). */
+export const REVERSE_RACE_MS = 2000;
 
 /** Pedidos `Agent` guardados por sessão; acima disso, sai o mais antigo. */
 export const MAX_DELEGATIONS = 200;
@@ -132,6 +135,53 @@ export function pickDelegation(table, agent) {
     if (delegation.toTypeKey === agent.typeKey) return delegation;
   }
   return null;
+}
+
+/**
+ * V5, corrida inversa (seção 5, passo 2a; A4 do tester do T7): o SubagentStart,
+ * ou o primeiro evento do subagente, pode chegar antes do Pre do `Agent`. No
+ * Pre, a delegação se liga provisoriamente à instância mais antiga da sessão
+ * que:
+ * - tem o mesmo tipo cru;
+ * - está sem elo e não está encerrada;
+ * - não é quem delegou nem um ancestral dele;
+ * - foi criada no máximo REVERSE_RACE_MS antes do `ts` do Pre.
+ * O Post do `Agent` confirma ou corrige, como no elo pela fila.
+ * @param {AgentTable} table
+ * @param {Delegation} delegation
+ * @param {number} ts                    `ts` do Pre
+ * @returns {Agent|null}
+ */
+export function pickInstance(table, delegation, ts) {
+  if (delegation.toTypeKey === null) return null;
+  const excluded = lineageOf(table, delegation.from);
+  /** @type {Agent|null} */
+  let best = null;
+  for (const agent of table.agents.values()) {
+    if (agent.key === MAIN_KEY || agent.delegation !== null || agent.finished) continue;
+    if (agent.typeKey !== delegation.toTypeKey || excluded.has(agent.key)) continue;
+    if (agent.startedAt < ts - REVERSE_RACE_MS) continue;
+    if (!best || agent.startedAt < best.startedAt || (agent.startedAt === best.startedAt && agent.key < best.key)) best = agent;
+  }
+  return best;
+}
+
+/**
+ * Quem delegou e os ancestrais dele, pelos `parentKey`.
+ * @param {AgentTable} table
+ * @param {string} key
+ * @returns {Set<string>}
+ */
+function lineageOf(table, key) {
+  /** @type {Set<string>} */
+  const keys = new Set();
+  /** @type {string|null} */
+  let current = key;
+  for (let depth = 0; current !== null && depth < MAX_DEPTH && !keys.has(current); depth++) {
+    keys.add(current);
+    current = table.agents.get(current)?.parentKey ?? null;
+  }
+  return keys;
 }
 
 /**
@@ -388,6 +438,16 @@ export function openDelegation(table, fact, from, overrides) {
     if (oldest !== undefined) table.delegations.delete(oldest);
   }
   return delegation;
+}
+
+/**
+ * Liga o pedido à instância (elo provisório da corrida inversa).
+ * @param {Delegation} delegation
+ * @param {Agent} agent
+ */
+export function linkDelegation(delegation, agent) {
+  delegation.agentKey = agent.key;
+  attach(agent, delegation);
 }
 
 /**

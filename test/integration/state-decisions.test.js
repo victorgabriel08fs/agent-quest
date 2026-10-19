@@ -42,6 +42,7 @@ import {
   play,
   script,
   sessionId,
+  setAgentNames,
   tick,
   view,
 } from './state-helpers.js';
@@ -66,7 +67,7 @@ function makeSequence(runId, start = 0) {
   };
 }
 
-const stateWith = (sequence) => createState({ readAgentNames: () => [], sequence });
+const stateWith = (sequence) => createState({ sequence });
 
 // ---------------------------------------------------------------------------
 
@@ -134,7 +135,7 @@ describe('ponto 1: o reducer numera cada evento ao criá-lo, pelo sequence injet
   });
 
   it('sem sequence, o padrão é um contador local com runId fixo, contínuo', () => {
-    const state = createState({ readAgentNames: () => [] });
+    const state = createState();
     const tracker = new Tracker({ numbered: true });
     const result = play(turn(), { state, tracker });
     const seqs = result.events.map((e) => e.seq);
@@ -311,7 +312,7 @@ describe('ponto 8: volta depois do encerramento inferido pelos 15 min', () => {
 });
 
 describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
-  it('createState sem readAgentNames não lê o disco: num projeto com .claude/agents/, o roster fica só com os papéis vistos', () => {
+  it('o estado nunca lê o disco: num projeto com .claude/agents/, sem setAgentNames, o roster fica só com os papéis vistos', () => {
     const names = readdirSync(path.join(REPO, '.claude', 'agents')).filter((n) => n.endsWith('.md'));
     assert.ok(names.length > 0, 'o próprio repositório tem agentes em .claude/agents/');
     const s = script({ projectDir: REPO });
@@ -343,7 +344,7 @@ describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
     assert.equal(sessions.readAgentNamesFromDisk, undefined);
   });
 
-  describe('leitor de disco (server/agent-names.js), com pastas temporárias reais', () => {
+  describe('leitor assíncrono (server/agent-names.js), com pastas temporárias reais e listagens falsas', () => {
     let reader;
     let root;
     let project;
@@ -364,44 +365,106 @@ describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
 
     after(() => rmSync(root, { recursive: true, force: true }));
 
-    it('lê só os nomes .md do projeto e da pasta pessoal; ligado ao reducer, os papéis entram no roster', () => {
-      const read = reader.createAgentNamesReader({ homeDir: home });
-      assert.deepEqual(read(project).sort(), ['Documentador', 'arquiteto', 'tester']);
+    /** Temporizadores falsos: o prazo só vence quando o teste manda. */
+    function fakeTimers() {
+      const pending = new Set();
+      return {
+        timers: {
+          setTimeout: (run) => { const h = { run }; pending.add(h); return h; },
+          clearTimeout: (h) => pending.delete(h),
+        },
+        expire: () => { for (const h of [...pending]) { pending.delete(h); h.run(); } },
+        pending: () => pending.size,
+      };
+    }
+
+    it('lê só os nomes .md do projeto e da pasta pessoal; ligado ao estado por newProjects e setAgentNames, os papéis entram no roster', async () => {
+      const { read } = reader.createAgentNamesReader({ homeDir: home });
       const s = script({ projectDir: project });
       s.prompt(0);
-      const state = createState({ readAgentNames: read });
-      play(s.events, { state });
+      const state = createState();
+      const result = play(s.events, { state });
+      const [projectKey] = result.steps[0].newProjects;
+      const names = await read(projectKey);
+      assert.deepEqual(names.sort(), ['Documentador', 'arquiteto', 'tester']);
+      assert.deepEqual(setAgentNames(state, projectKey, names).changed, [SID]);
       assert.deepEqual(view(state).roster, ['orq', 'arq', 'tes'], '"Documentador" não é nome do time (caixa diferente)');
     });
 
-    it('UNC, prefixo \\\\?\\, //, caminho relativo e valores que não são texto não chegam ao disco', () => {
+    it('UNC, prefixo \\\\?\\, //, caminho relativo e valores que não são texto não chegam ao disco', async () => {
       const listed = [];
-      const read = reader.createAgentNamesReader({ homeDir: null, list: (folder) => { listed.push(folder); return ['tester']; } });
+      const { read } = reader.createAgentNamesReader({ homeDir: null, list: (folder) => { listed.push(folder); return ['tester.md']; } });
       for (const dir of ['\\\\servidor\\projetos\\x', '\\\\?\\C:\\x', '\\\\?\\UNC\\srv\\x', '//srv/x', 'relativo\\x', 'C:relativo', '', '   ', null, 42]) {
-        assert.deepEqual(read(dir), [], String(dir));
+        assert.deepEqual(await read(dir), [], String(dir));
       }
       assert.deepEqual(listed, []);
     });
 
-    it('cache por pasta: cada pasta é listada uma vez; arquivo novo só aparece com um leitor novo (reinício)', () => {
+    it('cache por pasta: cada pasta é listada uma vez; arquivo novo só aparece com um leitor novo (reinício)', async () => {
       const listed = [];
-      const read = reader.createAgentNamesReader({ homeDir: home, list: (folder) => { listed.push(folder); return reader.listAgentFiles(folder); } });
-      read(project);
-      read(project);
+      const { read } = reader.createAgentNamesReader({ homeDir: home, list: (folder) => { listed.push(folder); return reader.listAgentFiles(folder); } });
+      await read(project);
+      await read(project);
       assert.equal(listed.length, 2, 'projeto e pasta pessoal, uma vez cada');
       writeFileSync(path.join(project, '.claude', 'agents', 'dev-backend.md'), '');
-      assert.ok(!read(project).includes('dev-backend'));
-      assert.ok(reader.createAgentNamesReader({ homeDir: home })(project).includes('dev-backend'));
+      assert.ok(!(await read(project)).includes('dev-backend'));
+      assert.ok((await reader.createAgentNamesReader({ homeDir: home }).read(project)).includes('dev-backend'));
     });
 
-    it('pasta que não existe, listagem que lança e mais pastas que o cache: lista vazia, sem lançar', () => {
-      const read = reader.createAgentNamesReader({ homeDir: home, list: () => { throw new Error('EACCES'); } });
-      assert.deepEqual(read(path.join(root, 'nao-existe')), []);
-      const listed = [];
-      const many = reader.createAgentNamesReader({ homeDir: null, list: (folder) => { listed.push(folder); return []; } });
-      for (let i = 0; i <= reader.MAX_CACHED_FOLDERS; i++) many(path.join(root, `p${i}`));
-      many(path.join(root, 'p0'));
-      assert.equal(listed.length, reader.MAX_CACHED_FOLDERS + 2, 'a mais antiga saiu do cache e é listada de novo');
+    it('listagem que falha, que devolve lixo ou que lança: lista vazia, sem rejeitar', async () => {
+      for (const list of [() => { throw new Error('EACCES'); }, () => Promise.reject(new Error('EIO')), () => 'tester.md', () => null, () => [42, null, '.md', 'a.md']]) {
+        const { read } = reader.createAgentNamesReader({ homeDir: null, list });
+        const names = await read(project);
+        assert.ok(Array.isArray(names));
+        assert.ok(names.every((n) => n === 'a'), JSON.stringify(names));
+      }
+    });
+
+    it('listagem lenta ou que nunca responde: o read resolve com [] no prazo, e a pasta seguinte não espera a travada para sempre', async () => {
+      const clock = fakeTimers();
+      let release;
+      const never = new Promise(() => {});
+      const slow = new Promise((resolve) => { release = resolve; });
+      const late = [];
+      const list = (folder) => (folder.includes('morta') ? never : folder.includes('lenta') ? slow : ['tester.md']);
+      const { read } = reader.createAgentNamesReader({ homeDir: null, list, timers: clock.timers, timeoutMs: 500, onLate: (dir, names) => late.push([dir, names]) });
+      const dead = read(path.join(root, 'morta'));
+      clock.expire();
+      assert.deepEqual(await dead, [], 'prazo vencido: lista vazia');
+      const lenta = read(path.join(root, 'lenta'));
+      clock.expire();
+      assert.deepEqual(await lenta, []);
+      release(['revisor.md']);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(late, [], 'a lenta está na fila atrás da morta, que nunca termina');
+      // Uma pasta morta segura a fila; o read das seguintes ainda resolve no prazo.
+      const third = read(path.join(root, 'outra'));
+      clock.expire();
+      assert.deepEqual(await third, []);
+    });
+
+    it('listagem lenta que termina depois do prazo: o cache guarda o resultado, e onLate entrega os nomes do projeto', async () => {
+      const clock = fakeTimers();
+      let release;
+      const slow = new Promise((resolve) => { release = resolve; });
+      const late = [];
+      const { read } = reader.createAgentNamesReader({ homeDir: null, list: () => slow, timers: clock.timers, onLate: (dir, names) => late.push([dir, names]) });
+      const first = read(project);
+      clock.expire();
+      assert.deepEqual(await first, []);
+      release(['tester.md', 'notas.txt']);
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(late, [[project, ['tester']]]);
+      assert.deepEqual(await read(project), ['tester'], 'cache');
+      assert.equal(clock.pending(), 0);
+    });
+
+    it('os .md são filtrados antes do limite de 200 nomes', async () => {
+      const entries = [...Array.from({ length: 300 }, (_, i) => `nota-${i}.txt`), ...Array.from({ length: 250 }, (_, i) => `agente-${i}.md`)];
+      const { read } = reader.createAgentNamesReader({ homeDir: null, list: () => entries });
+      const names = await read(project);
+      assert.equal(names.length, reader.MAX_AGENT_FILES);
+      assert.ok(names.every((n) => n.startsWith('agente-')));
     });
   });
 });

@@ -18,7 +18,7 @@ import { AGENT_STATUS, FEED_KINDS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from
 import { normalize } from '../../../../../server/domain/normalize.js';
 import { redact } from '../../../../../server/domain/redact.js';
 import { LIMITS, textLine } from '../../../../../server/domain/tools.js';
-import { LOCAL_RUN_ID, apply, createState, getSessionState, getSessionStates } from '../../../../../server/domain/state/index.js';
+import { LOCAL_RUN_ID, apply, createState, getSessionState, getSessionStates, setAgentNames } from '../../../../../server/domain/state/index.js';
 import { scenarioEnvelopes } from '../scenarios.js';
 
 /** Pasta pessoal e projetos fictícios. */
@@ -193,12 +193,19 @@ function builder({ projectDir, entrypoint, session, prefix }) {
 // Execução
 // ---------------------------------------------------------------------------
 
+/** Nomes de `.claude/agents/` que `run` entrega a cada projeto novo, por estado. */
+const AGENT_NAMES = new WeakMap();
+
 /**
- * Estado com a leitura de `.claude/agents/` falsa (nunca lê o disco nos testes)
- * e, por padrão, o contador local de `seq`.
+ * Estado com o contador local de `seq`, a pasta pessoal fictícia e, se
+ * `agentNames` vier, os nomes que `run` entrega por `setAgentNames` a cada
+ * projeto novo, como a ligação (T9a) faz depois da leitura assíncrona. Nunca lê
+ * o disco.
  */
-export function newState({ roleOverrides = {}, agentNames = [], sequence } = {}) {
-  return createState({ roleOverrides, readAgentNames: () => agentNames, ...(sequence ? { sequence } : {}) });
+export function newState({ roleOverrides = {}, agentNames = null, sequence, homeDir = HOME } = {}) {
+  const state = createState({ roleOverrides, homeDir, ...(sequence ? { sequence } : {}) });
+  if (agentNames) AGENT_NAMES.set(state, agentNames);
+  return state;
 }
 
 /**
@@ -216,9 +223,11 @@ export function run(scn, { state = newState(), start = START, until = Infinity, 
   for (const { envelope, receivedAt, event, index } of scenarioEnvelopes(scn, { start })) {
     if (index >= until) break;
     const fact = normalize(envelope, { receivedAt, homeDir });
-    const result = fact ? apply(state, fact, receivedAt) : { events: [], changed: [] };
-    steps.push({ index, payload: event.payload, fact, events: result.events, changed: result.changed, at: receivedAt });
+    const result = fact ? apply(state, fact, receivedAt) : { events: [], changed: [], newProjects: [] };
+    steps.push({ index, payload: event.payload, fact, events: result.events, changed: result.changed, newProjects: result.newProjects, at: receivedAt });
     events.push(...result.events);
+    const names = AGENT_NAMES.get(state);
+    if (names) for (const projectDir of result.newProjects) setAgentNames(state, projectDir, names);
     end = receivedAt;
   }
   return { state, steps, events, end };

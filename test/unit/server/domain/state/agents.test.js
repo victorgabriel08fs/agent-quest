@@ -5,6 +5,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { normalize } from '../../../../../server/domain/normalize.js';
 import { apply, getSessionStates, tick } from '../../../../../server/domain/state/index.js';
 import { HEALTH_WINDOW, STALE_AGENT_MS } from '../../../../../server/domain/state/agents.js';
@@ -321,6 +322,64 @@ describe('a ordem de chegada não muda o estado final (seção 9, "Horas no esta
     assert.deepEqual(canonical.agents.map((item) => item.key), ['main', A.id, B.id]);
     assert.equal(agentOf(canonical, 'main').activity.tool, 'Read');
     assert.deepEqual(agentOf(canonical, A.id).health, { ok: 9, total: 10 });
+  });
+});
+
+describe('limite de agentes por sessão, com lápides (seção 7; T7, ponto 4)', () => {
+  const N = 3000;
+  const workers = Array.from({ length: N }, (_, i) => agent(`limite-${i}`, i % 2 ? 'tester' : 'Explore'));
+  const scn = scenario('limite', `${N} delegações`, (b) => {
+    b.prompt('Muitas delegações');
+    workers.forEach((who, i) => {
+      const call = b.delegation(who.type, `Tarefa ${i}`);
+      b.pre(call);
+      b.start(who);
+      b.tool('Read', { file_path: `${PROJECT}\\f${i}.md` }, { who });
+      b.stopAgent(who);
+      b.returned(call, who);
+    });
+  });
+
+  it(`${N} delegações: ficam os 50 encerrados mais recentes, e o SessionState fica abaixo de 100 KiB`, () => {
+    const result = run(scn);
+    const session = getSessionStates(result.state, { feed: false })[0];
+    assert.equal(session.agents.length, 1 + 50);
+    assert.deepEqual(session.agents.slice(1).map((item) => item.key).sort(), workers.slice(-50).map((who) => who.id).sort());
+    const bytes = Buffer.byteLength(JSON.stringify(session));
+    assert.ok(bytes < 100 * 1024, `update com ${bytes} bytes`);
+    const snapshot = Buffer.byteLength(JSON.stringify(getSessionStates(result.state)[0]));
+    assert.ok(snapshot < 200 * 1024, `snapshot com ${snapshot} bytes`);
+    assertRunShape(result);
+  });
+
+  it('evento atrasado de um agente removido é ignorado, sem recriá-lo', () => {
+    const result = run(scn);
+    // Removidos ainda dentro das lápides (os últimos 1 000 ids removidos).
+    const removed = [workers.at(-51), workers.at(-52), workers.at(-500)];
+    const late = run(scenario('limite-atrasado', 'atrasados', (b) => {
+      b.tool('Read', { file_path: `${PROJECT}\\atrasado.md` }, { who: removed[0] });
+      b.stopAgent(removed[1]);
+      b.start(removed[2]);
+    }), { state: result.state, start: result.end + 10 });
+    for (const step of late.steps) {
+      assert.deepEqual(step.events, []);
+      assert.deepEqual(step.changed, []);
+    }
+    const session = view(result.state);
+    assert.ok(!session.agents.some((item) => removed.some((who) => who.id === item.key)));
+    assert.equal(session.agents.length, 1 + 50);
+  });
+
+  it('não encerrados: teto defensivo de 100, com os mais recentes', () => {
+    const running = Array.from({ length: 130 }, (_, i) => agent(`ativo-${i}`, 'tester'));
+    const result = run(scenario('limite-ativos', '130 subagentes trabalhando', (b) => {
+      b.prompt('Trabalhem');
+      for (const who of running) b.tool('Read', { file_path: `${PROJECT}\\a.md` }, { who });
+    }));
+    const session = view(result.state);
+    assert.equal(session.agents.length, 1 + 100);
+    assert.ok(session.agents.slice(1).every((item) => item.status === 'working'));
+    assert.ok(!session.agents.some((item) => item.key === running[0].id), 'o mais antigo saiu');
   });
 });
 

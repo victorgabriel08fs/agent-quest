@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { AGENT_STATUS, FEED_KINDS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from '../../shared/contract.js';
 import { normalize } from '../../server/domain/normalize.js';
 import { redact } from '../../server/domain/redact.js';
-import { apply, createState, getSessionState, getSessionStates, tick } from '../../server/domain/state/index.js';
+import { apply, createState, getSessionState, getSessionStates, setAgentNames, tick } from '../../server/domain/state/index.js';
 
 export const HOME = 'C:\\Users\\beltrana';
 export const PROJECT = `${HOME}\\Codigo\\agents-quest`;
@@ -159,9 +159,18 @@ export function toFixture(name, description, events) {
 // Execução: envelope v1 → normalize → apply
 // ---------------------------------------------------------------------------
 
-/** Estado com a leitura de `.claude/agents/` falsa: os testes nunca leem o disco. */
-export function newState({ agentNames = [], ...options } = {}) {
-  return createState({ readAgentNames: () => agentNames, ...options });
+/** Nomes de `.claude/agents/` que `play` entrega a cada estado (simula a ligação do T9a). */
+const agentNamesOf = new WeakMap();
+
+/**
+ * Estado novo. `agentNames`: o que o leitor de `.claude/agents/` devolveria;
+ * `play` os entrega por `setAgentNames` a cada projeto novo (`newProjects`),
+ * como a ligação faz depois do `read` assíncrono. Os testes nunca leem o disco.
+ */
+export function newState({ agentNames = null, ...options } = {}) {
+  const state = createState(options);
+  if (agentNames !== null) agentNamesOf.set(state, agentNames);
+  return state;
 }
 
 /** Envelope v1 de um evento do cenário (sentAt = instante do evento). */
@@ -181,9 +190,12 @@ export function play(list, { state = newState(), tracker = null } = {}) {
   for (const item of list) {
     const receivedAt = T0 + (item.arrive ?? item.at);
     const fact = normalize(envelopeOf(item), { receivedAt, homeDir: HOME });
-    const result = fact ? apply(state, fact, receivedAt) : { events: [], changed: [] };
+    const result = fact ? apply(state, fact, receivedAt) : { events: [], changed: [], newProjects: [] };
     tracker?.consume(result.events, fact);
-    steps.push({ item, fact, events: result.events, changed: result.changed });
+    const names = agentNamesOf.get(state);
+    const rosterChanged = [];
+    if (names !== undefined) for (const project of result.newProjects ?? []) rosterChanged.push(...setAgentNames(state, project, names).changed);
+    steps.push({ item, fact, events: result.events, changed: result.changed, newProjects: result.newProjects, rosterChanged });
     events.push(...result.events);
     last = receivedAt;
   }
@@ -683,4 +695,4 @@ export function randomEnvelope(random, now, { toolFor = null } = {}) {
   };
 }
 
-export { apply, createState, getSessionState, getSessionStates, normalize, tick };
+export { apply, createState, getSessionState, getSessionStates, normalize, setAgentNames, tick };

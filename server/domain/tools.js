@@ -288,7 +288,7 @@ export function displayPath(filePath, { projectDir = null, homeDir = null } = {}
   if (typeof filePath !== 'string' || filePath.trim() === '') return null;
   // `/c/...` (MSYS, Git Bash) só vira `c:/...` quando o contexto é do Windows.
   const drives = hasDriveLetter(projectDir) || hasDriveLetter(homeDir);
-  const file = toDriveForm(normalizeSlashes(filePath), drives);
+  const file = canonicalPath(filePath, { projectDir, homeDir });
   if (!isAbsolute(file)) return file;
 
   const insideProject = relativeTo(file, projectDir, drives);
@@ -296,6 +296,22 @@ export function displayPath(filePath, { projectDir = null, homeDir = null } = {}
   const insideHome = relativeTo(file, homeDir, drives);
   if (insideHome !== null) return insideHome === '' ? '~' : `~/${insideHome}`;
   return file;
+}
+
+/**
+ * Forma canônica de um caminho (seção 2, "Formas de caminho"): barras `/`,
+ * prefixos `\\?\` e `\\.\` removidos, UNC com `//`, `.` e `..` resolvidos e,
+ * quando o projeto ou a pasta pessoal têm letra de unidade, `/c/...` (MSYS)
+ * como `c:/...`. A letra de unidade sozinha (`D:`) é a raiz (`D:/`). É a mesma
+ * função para os caminhos exibidos e para o projeto do estado (seção 7).
+ * @param {string} value
+ * @param {PathContext} [context]
+ * @returns {string}
+ */
+export function canonicalPath(value, { projectDir = null, homeDir = null } = {}) {
+  const text = /^[A-Za-z]:$/.test(value) ? `${value}/` : value;
+  const drives = hasDriveLetter(projectDir) || hasDriveLetter(homeDir);
+  return toDriveForm(normalizeSlashes(text), drives);
 }
 
 /**

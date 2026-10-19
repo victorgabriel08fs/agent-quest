@@ -22,6 +22,11 @@
 //
 // Nenhum valor cru (`*Key` do fato) sai daqui: o papel e o elo usam o cru, e
 // o estado e os eventos levam o valor exibido (seções 2 e 5).
+//
+// O reducer não lê o disco (seção 7; T7, ponto 10): `apply` devolve em
+// `newProjects` as pastas de projeto vistas pela primeira vez, a ligação (T9a)
+// lê `.claude/agents/` de forma assíncrona e entrega os nomes por
+// `setAgentNames`.
 
 import {
   MAIN_KEY,
@@ -41,10 +46,12 @@ import {
   learnType,
   linkAgent,
   linkedAgentOf,
+  linkDelegation,
   listedInBackground,
   markBackground,
   markWorking,
   openDelegation,
+  pickInstance,
   recordOutcome,
   reviveAgent,
   runsInBackground,
@@ -55,7 +62,11 @@ import {
   createSession,
   isExpired,
   openCall,
+  pruneAgents,
   pushFeed,
+  rolesFromNames,
+  sameRoles,
+  projectOf,
   sessionKeyOf,
   sessionStatus,
   toSessionState,
@@ -74,7 +85,7 @@ export const LOCAL_RUN_ID = 'local';
  * @typedef {import('./agents.js').ToolFact} ToolFact
  * @typedef {import('./sessions.js').Session} Session
  * @typedef {import('./sessions.js').CallRecord} CallRecord
- * @typedef {import('./sessions.js').ReadAgentNames} ReadAgentNames
+ * @typedef {import('../../../shared/contract.js').RoleId} RoleId
  */
 
 /**
@@ -90,14 +101,18 @@ export const LOCAL_RUN_ID = 'local';
  * @typedef {object} State
  * @property {Map<string, Session>} sessions
  * @property {unknown} roleOverrides       "roles" do config.json (resolveRole)
- * @property {ReadAgentNames} readAgentNames
  * @property {Sequence} sequence
+ * @property {string|null} homeDir         contexto da forma canônica do projeto (seção 7)
+ * @property {Map<string, Set<RoleId>|null>} projects   papéis de .claude/agents/ por project.key;
+ *                                         null enquanto a leitura não terminou
  */
 
 /**
  * @typedef {object} ApplyResult
  * @property {CanonicalEvent[]} events    na ordem em que aconteceram, já numerados
  * @property {string[]} changed           sessões cujo estado mudou
+ * @property {string[]} newProjects       pastas de projeto vistas pela primeira vez (forma canônica),
+ *                                        para a ligação ler .claude/agents/ (seção 7)
  */
 
 /**
@@ -131,15 +146,39 @@ export function createSequence(runId) {
 }
 
 /**
- * @param {{ roleOverrides?: unknown, readAgentNames?: ReadAgentNames, sequence?: Sequence }} [options]
- *   `roleOverrides`: "roles" do config.json. `readAgentNames(projectDir)`: nomes
- *   dos agentes de `.claude/agents/` (padrão: nenhum; a leitura em disco fica em
- *   server/agent-names.js e é ligada no T9a). `sequence`: a numeração da
- *   execução (padrão: contador local, com o runId LOCAL_RUN_ID).
+ * @param {{ roleOverrides?: unknown, sequence?: Sequence, homeDir?: string|null }} [options]
+ *   `roleOverrides`: "roles" do config.json. `sequence`: a numeração da
+ *   execução (padrão: contador local, com o runId LOCAL_RUN_ID). `homeDir`:
+ *   pasta pessoal, o contexto que decide se `/c/...` é `c:/...` na chave do
+ *   projeto, como no normalizador (padrão: nenhum).
  * @returns {State}
  */
-export function createState({ roleOverrides = {}, readAgentNames = () => [], sequence = createSequence(LOCAL_RUN_ID) } = {}) {
-  return { sessions: new Map(), roleOverrides, readAgentNames, sequence };
+export function createState({ roleOverrides = {}, sequence = createSequence(LOCAL_RUN_ID), homeDir = null } = {}) {
+  return { sessions: new Map(), roleOverrides, sequence, homeDir, projects: new Map() };
+}
+
+/**
+ * Nomes de `.claude/agents/` lidos pela ligação para um projeto (seção 7).
+ * Atualiza o `roster` das sessões desse projeto e guarda os papéis para as
+ * sessões que vierem depois.
+ * @param {State} state
+ * @param {string} projectDir
+ * @param {readonly unknown[]} names
+ * @returns {{ changed: string[] }}       sessões cujo roster mudou
+ */
+export function setAgentNames(state, projectDir, names) {
+  /** @type {string[]} */
+  const changed = [];
+  if (typeof projectDir !== 'string' || projectDir === '') return { changed };
+  const { key } = projectOf(projectDir, state.homeDir);
+  const roles = rolesFromNames(Array.isArray(names) ? names : [], state.roleOverrides);
+  state.projects.set(key, roles);
+  for (const session of state.sessions.values()) {
+    if (session.project?.key !== key || sameRoles(session.fileRoles, roles)) continue;
+    session.fileRoles = new Set(roles);
+    changed.push(session.id);
+  }
+  return { changed };
 }
 
 /**
@@ -152,22 +191,35 @@ export function createState({ roleOverrides = {}, readAgentNames = () => [], seq
 export function apply(state, fact, now) {
   /** @type {CanonicalEvent[]} */
   const events = [];
-  if (!isFact(fact)) return { events, changed: [] };
+  /** @type {string[]} */
+  const newProjects = [];
+  if (!isFact(fact)) return { events, changed: [], newProjects };
   const id = sessionKeyOf(fact);
   const existing = state.sessions.get(id);
-  if (isNoise(fact, existing)) return { events, changed: [] };
+  if (isNoise(fact, existing)) return { events, changed: [], newProjects };
+  // Agente removido pelo limite (seção 7): o evento atrasado dele é ignorado.
+  if (existing && fact.agentId !== null && existing.tombstones.has(fact.agentId)) return { events, changed: [], newProjects };
 
   let session = existing;
   if (!session) {
     session = createSession(id, fact);
     state.sessions.set(id, session);
   }
-  touchSession(session, fact, state);
+  const project = touchSession(session, fact, state.homeDir);
+  if (project) {
+    const roles = state.projects.get(project.key);
+    if (roles) session.fileRoles = new Set(roles);
+    if (roles === undefined) {
+      state.projects.set(project.key, null);
+      newProjects.push(project.key);
+    }
+  }
   /** @type {Context} */
   const ctx = { state, session, events };
   (HANDLERS[fact.kind] ?? onOther)(ctx, fact);
+  pruneAgents(session);
   session.status = sessionStatus(session, now);
-  return { events, changed: [id] };
+  return { events, changed: [id], newProjects };
 }
 
 /**
@@ -202,6 +254,7 @@ export function tick(state, now) {
       if (agent.key === MAIN_KEY) agent.status = 'idle';
       else finish(ctx, agent, 'unknown', now, { revivable: true });
     }
+    if (pruneAgents(session)) dirty = true;
     const status = sessionStatus(session, now);
     if (status !== session.status) {
       session.status = status;
@@ -456,6 +509,11 @@ function delegationCall(ctx, fact, agent, record) {
   let delegation = callId === null ? undefined : session.delegations.get(callId);
   if (!record && (pre || callId !== null)) {
     delegation = openDelegation(session, fact, agent.key, state.roleOverrides);
+    // Corrida inversa (seção 5, passo 2a): a instância pode ter chegado antes do Pre.
+    if (pre) {
+      const instance = pickInstance(session, delegation, fact.ts);
+      if (instance) linkDelegation(delegation, instance);
+    }
     emit(ctx, agent.key, 'agent.delegated', {
       toolUseId: callId,
       toType: delegation.toType,
