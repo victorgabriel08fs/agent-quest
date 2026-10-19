@@ -8,6 +8,9 @@
 // 4. Grava o runtime.json (atômico), com o token que o POST /hooks exige, e o
 //    apaga no encerramento normal.
 // 5. Com --debug-dump, grava os envelopes aceitos em <dados>/dumps/ (ADR 0005).
+// 6. Liga a ingestão ao estado e ao SSE (server/pipeline.js, T9a): cada envelope
+//    aceito passa pelo normalizador e pelo reducer, e os painéis recebem um
+//    `update` por evento; o `tick` roda a cada 5 s e é desligado no encerramento.
 //
 // `startServer` também é usado pelos testes, sempre com `AGENT_QUEST_HOME`
 // temporário e porta 0 (porta livre).
@@ -19,7 +22,9 @@ import { realpathSync } from 'node:fs';
 import { HOST, StartupError, VERSION, portCommand, resolveConfig } from './config.js';
 import { createApp } from './http/app.js';
 import { installProtocolErrorHandlers } from './http/client-error.js';
+import { createRunId } from './http/sse.js';
 import { createDebugDump, dumpsDir } from './ingest/debug-dump.js';
+import { createPipeline } from './pipeline.js';
 import { createToken, isPidAlive, readRuntimeFile, removeRuntimeFile, writeRuntimeFile } from './runtime-file.js';
 
 /** @typedef {import('./http/app.js').HttpServer} HttpServer */
@@ -37,6 +42,8 @@ const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
  * @property {string} [platform]
  * @property {string} [homedir]
  * @property {(message: string) => void} [logError]      erros inesperados durante a execução
+ * @property {Partial<import('./pipeline.js').PipelineOptions>} [pipeline]
+ *   só para testes: relógio, temporizadores e leitor de .claude/agents/ da ligação
  */
 
 /**
@@ -48,6 +55,7 @@ const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
  * @property {string[]} warnings
  * @property {import('./runtime-file.js').RuntimeInfo} runtime
  * @property {HttpServer} server
+ * @property {import('./pipeline.js').Pipeline} pipeline   a ligação de ponta a ponta (testes)
  * @property {() => Promise<void>} close                 apaga o runtime.json e fecha o servidor
  */
 
@@ -70,6 +78,7 @@ export async function startServer(options = {}) {
     platform = process.platform,
     homedir = os.homedir(),
     logError = console.error,
+    pipeline: pipelineOptions = {},
   } = options;
   const config = resolveConfig({ argv, env, platform, homedir });
 
@@ -88,7 +97,21 @@ export async function startServer(options = {}) {
         onError: (err) => logError(`Erro ao gravar o --debug-dump; a gravação parou: ${errorKind(err)}`),
       })
     : null;
-  const { server } = createApp({ version: VERSION, startedAt, token, dump, logError });
+  // Um único runId e um único sequence para o hub e o estado (seção 9).
+  const runId = createRunId();
+  const pipeline = createPipeline({ runId, roleOverrides: config.roles, homeDir: homedir, logError, ...pipelineOptions });
+  const { server, hub } = createApp({
+    version: VERSION,
+    startedAt,
+    token,
+    dump,
+    logError,
+    runId,
+    onEnvelope: pipeline.handleEnvelope,
+    getSnapshot: pipeline.snapshot,
+    sessionCount: pipeline.sessionCount,
+  });
+  pipeline.attach(hub);
   installProtocolErrorHandlers(server);
   try {
     await listen(server, config.port);
@@ -123,10 +146,13 @@ export async function startServer(options = {}) {
     );
   }
 
+  pipeline.start();
+
   /** @type {Promise<void>|null} */
   let closing = null;
   function close() {
     if (!closing) {
+      pipeline.stop();
       // Primeiro o runtime.json, para os encaminhadores pararem de tentar na hora.
       removeRuntimeFile(config.dataDir, runtime);
       const serverClosed = new Promise((resolve) => {
@@ -146,6 +172,7 @@ export async function startServer(options = {}) {
     warnings: config.warnings,
     runtime,
     server,
+    pipeline,
     close,
   };
 }

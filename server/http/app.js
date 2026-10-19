@@ -53,14 +53,16 @@ import { SHARED_DIR, WEB_DIR, readStaticFile, resolveStaticPath } from './static
  * @property {() => number} [clock]      relógio (ms); os testes trocam
  * @property {(envelope: Envelope, meta: { receivedAt: number }) => boolean|void} [onEnvelope]
  *   processa cada envelope aceito, fora do ciclo da requisição; devolver `false`
- *   conta o evento como `ignored`. Até o T9a, não faz nada.
+ *   conta o evento como `ignored`, e uma exceção também (o log mostra só o tipo).
+ *   No servidor, é a ligação de ponta a ponta (server/pipeline.js); padrão: não faz nada.
  * @property {{ write(envelope: Envelope, receivedAt: number): void }|null} [dump]   --debug-dump
  * @property {number} [queueLimit]       padrão: 10 000
  * @property {(run: () => void) => unknown} [schedule]   agenda o processamento da fila (padrão: setImmediate)
  * @property {string} [runId]            identifica esta execução no SSE (padrão: aleatório)
  * @property {() => SnapshotMessage} [getSnapshot]
- *   estado para o `snapshot` do SSE e para GET /api/state; até a ligação com o
- *   estado (T7), um snapshot vazio
+ *   estado para o `snapshot` do SSE e para GET /api/state; no servidor, vem da
+ *   ligação de ponta a ponta; padrão: um snapshot vazio
+ * @property {() => number} [sessionCount]   `sessions` do /api/health; padrão: 0
  * @property {{ maxClients?: number, heartbeatMs?: number, timers?: import('./sse.js').HubTimers }} [sse]
  */
 
@@ -73,7 +75,7 @@ const HOOKS_PATH = '/hooks';
 const EVENTS_PATH = '/events';
 const STATE_PATH = '/api/state';
 
-/** Snapshot enquanto o estado não está ligado ao servidor (até o T7). */
+/** Snapshot sem estado ligado (testes do HTTP e do hub). */
 const EMPTY_SNAPSHOT = () => ({ seq: 0, sessions: [] });
 
 /**
@@ -117,6 +119,7 @@ export function createApp({
   schedule = setImmediate,
   runId = createRunId(),
   getSnapshot = EMPTY_SNAPSHOT,
+  sessionCount = () => 0,
   sse = {},
 }) {
   const roots = { webDir, sharedDir };
@@ -157,7 +160,7 @@ export function createApp({
         ignored: counters.ignored,
       },
       lastEventAt,
-      sessions: 0,
+      sessions: sessionCount(),
       clients: hub.clientCount(),
     };
   }
