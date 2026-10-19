@@ -227,6 +227,18 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
 - O código do painel importa o contrato por caminho relativo à pasta real, por exemplo `import { ROLES } from '../../shared/contract.js'` em `web/js/main.js`, ou `'../../../shared/contract.js'` em `web/js/themes/`. O mesmo import funciona no Node (testes unitários) e no navegador. No navegador, `/js/main.js` mais `../../shared/contract.js` vira `/shared/contract.js`, porque a resolução de URL não sobe além da raiz (conferido com `new URL` em 18/10/2026).
 - Por isso não pode existir uma pasta `web/shared/`: ela ficaria escondida pela rota `/shared/`. O caminho `/web/...` não existe no servidor.
 
+### Painel: estrutura e regras de interface (registradas no T11b, 19/10/2026)
+
+- **Cartão de atividade** (`web/index.html`): quatro partes fixas, `#feed-head`, `#feed-filters` (chips), `#feed-empty` e `#feed-entries`. O redesenho troca só o conteúdo delas.
+- **Filtros do feed:**
+  - por papel, pelos chips;
+  - por instância, pelo cartão da equipe. Enquanto o filtro de instância está ligado, aparece também um chip dessa instância, que se desfaz com o próprio chip ou com "Todos" (acréscimo previsto no T14);
+  - o filtro volta para "Todos" ao trocar de sessão e quando o botão que o ligou some (a instância foi para o "+N" ou o papel saiu da equipe);
+  - o filtro de uma instância mostra os eventos dela. A delegação que a criou aparece no filtro de quem delegou, porque o estado do agente não guarda o id da chamada que o criou. Guardar esse id seria mudança de contrato (`AgentState` ou `agent.started`), fora da v1.
+- **Regras para qualquer parte interativa redesenhada** (valem para o T12b, o T13 e o T14):
+  - **o foco não se perde:** depois do redesenho, o foco volta ao botão equivalente, achado pela chave estável (`data-key` ou equivalente);
+  - **o clique não se perde:** enquanto um botão da região está apertado, ela não é redesenhada, por no máximo 1,5 s. Os dados pendentes entram no redesenho seguinte.
+
 ## Como rodar localmente
 
 ```powershell
