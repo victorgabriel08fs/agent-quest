@@ -335,36 +335,52 @@ describe('leitura de .claude/agents/ fora do apply (seção 7; T7, ponto 10)', (
   });
 });
 
-describe('leitura atrasada: onLate do leitor em disco (ajuste de 19/10/2026)', () => {
+describe('leitura atrasada: onLate do leitor em disco (ajustes de 19/10/2026)', () => {
   it('a listagem que termina depois do prazo atualiza o roster num update sem evento', async () => {
-    const deadlines = new Set();
+    // Relógio falso que avança: separa o prazo do read (500 ms) do de listagem perdida (10 s).
+    let now = 0;
+    const pending = new Set();
     const timers = {
-      setTimeout(run) {
-        const handle = { run };
-        deadlines.add(handle);
+      setTimeout(run, ms) {
+        const handle = { run, at: now + ms };
+        pending.add(handle);
         return handle;
       },
       clearTimeout(handle) {
-        deadlines.delete(handle);
+        pending.delete(handle);
       },
+    };
+    const advance = (ms) => {
+      now += ms;
+      for (const handle of [...pending].sort((a, b) => a.at - b.at)) {
+        if (handle.at <= now && pending.has(handle)) {
+          pending.delete(handle);
+          handle.run();
+        }
+      }
+    };
+    const tickPromises = async () => {
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
     };
     const held = [];
     const list = (folder) => new Promise((resolve) => held.push({ folder, resolve }));
     const { feed, messages, pipeline } = setup({ reader: undefined, readerOptions: { list, timers } });
+    await tickPromises();
+    assert.equal(held.length, 1, 'a pasta pessoal é listada já na criação');
+    assert.ok(held[0].folder.includes('fulana'), held[0].folder);
     feed(scenario('atrasada', 'sessão', (b) => b.sessionStart()));
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(held.length, 1, 'uma listagem por vez: a pasta do projeto primeiro');
-    for (const handle of [...deadlines]) handle.run();
+    await tickPromises();
+    assert.equal(held.length, 1, 'uma listagem por vez: a do projeto espera na fila');
+    advance(500);
     await pipeline.settled();
     const before = messages.length;
     assert.deepEqual(pipeline.snapshot().sessions[0].roster, ['orq'], 'prazo vencido: só os papéis vistos');
-    held[0].resolve(['tester.md']);
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(held.length, 2, 'a pasta pessoal sai da fila depois');
-    assert.equal(messages.length, before, 'nada parcial antes da pasta pessoal');
-    held[1].resolve(['arquiteto.md']);
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
+    held[0].resolve(['arquiteto.md']);
+    await tickPromises();
+    assert.equal(held.length, 2, 'a pasta do projeto sai da fila depois');
+    assert.equal(messages.length, before, 'nada parcial antes da pasta do projeto');
+    held[1].resolve(['tester.md']);
+    await tickPromises();
     assert.equal(messages.length, before + 1);
     assert.equal(messages.at(-1).event, null);
     assert.deepEqual(messages.at(-1).session.roster, ['orq', 'arq', 'tes']);
@@ -523,11 +539,14 @@ describe('servidor real no mesmo processo (startServer)', () => {
 describe('pastas de rede presas não travam o servidor (ajuste de 19/10/2026)', () => {
   it('quatro projetos com a listagem presa numa thread do libuv: no máximo uma listagem, e os estáticos seguem saindo', async (t) => {
     // Calibração no próprio teste (ADR 0010): um pbkdf2 ocupa uma thread do
-    // libuv como um readdir preso numa pasta de rede, por cerca de 1 s nesta máquina.
+    // libuv como um readdir preso numa pasta de rede, por cerca de 2 s nesta máquina.
+    // A conferência não depende da calibração: na hora em que a página chega,
+    // exatamente uma listagem ocupa uma thread (sem a fila, a página só sairia
+    // depois de várias terminarem, todas juntas).
     const base = 2000;
     const begin = performance.now();
     pbkdf2Sync('agente', 'sal', base, 32, 'sha512');
-    const iterations = Math.max(base, Math.round((base * 1000) / Math.max(performance.now() - begin, 0.5)));
+    const iterations = Math.max(base, Math.round((base * 2000) / Math.max(performance.now() - begin, 0.5)));
     let active = 0;
     let maxActive = 0;
     let finished = 0;
@@ -566,16 +585,89 @@ describe('pastas de rede presas não travam o servidor (ajuste de 19/10/2026)', 
       }
       await waitUntil(async () => active === 1);
       const page = await request(server.port, { path: '/' });
+      const runningAtPage = active;
       assert.equal(page.status, 200);
       assert.match(page.body, /<html/i);
-      t.diagnostic(`pbkdf2 com ${iterations} iterações; listagens terminadas quando a página chegou: ${finished}`);
-      assert.equal(finished, 0, 'a página saiu enquanto a primeira listagem presa ainda ocupava a thread');
+      t.diagnostic(`pbkdf2 com ${iterations} iterações; listagens terminadas quando a página chegou: ${finished}; em andamento: ${runningAtPage}`);
+      assert.equal(runningAtPage, 1, 'a página saiu com uma listagem presa ainda ocupando a thread');
       assert.equal(maxActive, 1, 'no máximo uma listagem em andamento');
       assert.equal(JSON.parse((await request(server.port, { path: '/api/health' })).body).sessions, 4);
     } finally {
       released = true;
       await server.close();
       await waitUntil(async () => active === 0, { timeoutMs: 15_000 });
+      home.cleanup();
+    }
+  });
+});
+
+describe('listagens perdidas (pasta que nunca responde, decidido em 19/10/2026)', () => {
+  it('com duas listagens presas e perdidas, nenhuma nova começa, e os estáticos seguem saindo', async (t) => {
+    // Calibração no próprio teste (ADR 0010): cada pbkdf2 ocupa uma thread do
+    // libuv como um readdir preso numa pasta de rede, por cerca de 4 s nesta máquina.
+    // A conferência é o estado na hora da página: duas listagens ainda ocupando
+    // threads, e nenhuma terceira começada.
+    const base = 2000;
+    const begin = performance.now();
+    pbkdf2Sync('agente', 'sal', base, 32, 'sha512');
+    const iterations = Math.max(base, Math.round((base * 4000) / Math.max(performance.now() - begin, 0.5)));
+    let running = 0;
+    let maxRunning = 0;
+    let started = 0;
+    let finished = 0;
+    let released = false;
+    const list = () => {
+      if (released) return [];
+      started++;
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      return new Promise((resolve) => {
+        pbkdf2('agente', 'sal', iterations, 32, 'sha512', () => {
+          running--;
+          finished++;
+          resolve([]);
+        });
+      });
+    };
+    const home = tempDir('aq-t9a-perdida-');
+    const server = await startServer({
+      argv: ['--port', '0'],
+      env: { AGENT_QUEST_HOME: home.dir },
+      homedir: home.dir,
+      logError: () => {},
+      // Perdida depois de 150 ms (em produção, 10 s), para o teste não esperar.
+      pipeline: { readerOptions: { list, timeoutMs: 100, lostAfterMs: 150 } },
+    });
+    try {
+      // A pasta pessoal começou na criação do leitor.
+      await waitUntil(async () => started === 1);
+      for (let i = 1; i <= 4; i++) {
+        const body = JSON.stringify({
+          v: 1, sentAt: Date.now(), env: { projectDir: `D:\\Rede\\morta-${i}` },
+          payload: { hook_event_name: 'SessionStart', session_id: `sessao-morta-${i}`, source: 'startup' },
+        });
+        const res = await request(server.port, {
+          method: 'POST', path: '/hooks', body,
+          headers: { 'Content-Type': 'application/json', 'X-Agent-Quest-Token': server.runtime.token },
+        });
+        assert.equal(res.status, 204);
+      }
+      await waitUntil(async () => started === 2);
+      // Tempo para a segunda também virar perdida: sem o teto, a terceira começaria aqui.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const page = await request(server.port, { path: '/' });
+      const runningAtPage = running;
+      assert.equal(page.status, 200);
+      t.diagnostic(`pbkdf2 com ${iterations} iterações; listagens começadas: ${started}; terminadas quando a página chegou: ${finished}; em andamento: ${runningAtPage}`);
+      assert.equal(runningAtPage, 2, 'a página saiu com as duas listagens presas ainda ocupando threads');
+      assert.equal(started, 2, 'no teto, nenhuma listagem nova começou');
+      assert.equal(maxRunning, 2, 'nunca mais de 2 listagens não terminadas');
+      const health = JSON.parse((await request(server.port, { path: '/api/health' })).body);
+      assert.equal(health.sessions, 4, 'o servidor seguiu processando os eventos');
+    } finally {
+      released = true;
+      await server.close();
+      await waitUntil(async () => running === 0, { timeoutMs: 30_000 });
       home.cleanup();
     }
   });

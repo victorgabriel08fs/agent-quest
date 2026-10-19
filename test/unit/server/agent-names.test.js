@@ -1,8 +1,9 @@
 // Leitura dos nomes de `.claude/agents/` para a equipe (roster), fora do
 // domínio e fora do `apply` (modelo de eventos, seção 7; T7, ponto 10, e
-// ajuste de 19/10/2026: uma listagem por vez, com `onLate`). Usa pastas
-// temporárias, nunca a pasta pessoal real, e temporizadores falsos nos prazos
-// (ADR 0010, complemento "testes de tempo estáveis").
+// ajustes de 19/10/2026: uma listagem por vez com `onLate`, pasta pessoal
+// primeiro e listagens perdidas). Usa pastas temporárias, nunca a pasta
+// pessoal real, e um relógio falso nos prazos (ADR 0010, complemento "testes
+// de tempo estáveis").
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  LOST_AFTER_MS,
   MAX_AGENT_FILES,
+  MAX_UNFINISHED_LISTINGS,
   READ_TIMEOUT_MS,
   agentNamesFrom,
   createAgentNamesReader,
@@ -37,13 +40,14 @@ async function withFixture(run) {
   }
 }
 
-/** Temporizadores falsos: o prazo só vence quando o teste manda. */
-function fakeTimers() {
+/** Relógio falso: os temporizadores vencem quando o teste avança o tempo. */
+function fakeClock() {
+  let now = 0;
   const pending = new Set();
   return {
     timers: {
-      setTimeout(run) {
-        const handle = { run };
+      setTimeout(run, ms) {
+        const handle = { run, at: now + ms };
         pending.add(handle);
         return handle;
       },
@@ -51,37 +55,40 @@ function fakeTimers() {
         pending.delete(handle);
       },
     },
-    /** Vence todos os prazos pendentes. */
-    expire() {
-      for (const handle of [...pending]) {
-        pending.delete(handle);
-        handle.run();
+    /** Avança `ms` e roda, em ordem, o que venceu. */
+    advance(ms) {
+      now += ms;
+      for (const handle of [...pending].sort((a, b) => a.at - b.at)) {
+        if (handle.at <= now && pending.has(handle)) {
+          pending.delete(handle);
+          handle.run();
+        }
       }
     },
-    pending: () => pending.size,
   };
 }
 
 /**
- * Listagem controlada pelo teste: cada chamada fica presa até `finish(folder, entries)`.
- * Conta quantas estão em andamento ao mesmo tempo.
+ * Listagem controlada pelo teste: cada chamada fica presa até `finish`.
+ * Conta as listagens não terminadas e o máximo delas ao mesmo tempo.
  */
 function heldList() {
   const calls = [];
-  let active = 0;
-  let maxActive = 0;
+  let unfinished = 0;
+  let maxUnfinished = 0;
   return {
     calls,
-    maxActive: () => maxActive,
-    active: () => active,
+    folders: () => calls.map((call) => call.folder),
+    unfinished: () => unfinished,
+    maxUnfinished: () => maxUnfinished,
     list(folder) {
-      active++;
-      maxActive = Math.max(maxActive, active);
+      unfinished++;
+      maxUnfinished = Math.max(maxUnfinished, unfinished);
       return new Promise((resolve) => {
         calls.push({
           folder,
           finish(entries) {
-            active--;
+            unfinished--;
             resolve(entries);
           },
         });
@@ -97,7 +104,9 @@ function heldList() {
 }
 
 /** Deixa as promessas e os `then` pendentes rodarem. */
-const settle = () => new Promise((resolve) => setImmediate(resolve));
+const settle = async () => {
+  for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+};
 
 const abs = (name) => path.resolve(`/${name}`);
 const folderOf = (base) => path.join(base, '.claude', 'agents');
@@ -169,29 +178,25 @@ describe('nomes de .claude/agents/ (leitor assíncrono)', () => {
   });
 });
 
-describe('uma listagem por vez, prazo por leitura e onLate (ajuste de 19/10/2026)', () => {
-  it(`quatro pastas com a listagem presa ocupam no máximo uma listagem; cada read resolve [] no prazo (${READ_TIMEOUT_MS} ms por padrão)`, async () => {
-    const clock = fakeTimers();
+describe('uma listagem por vez, prazo por leitura e onLate', () => {
+  it(`quatro pastas presas: uma listagem por vez, e cada read resolve [] no prazo (${READ_TIMEOUT_MS} ms por padrão)`, async () => {
+    const clock = fakeClock();
     const held = heldList();
     const reader = createAgentNamesReader({ homeDir: null, timers: clock.timers, list: held.list });
     const reads = ['p1', 'p2', 'p3', 'p4'].map((name) => reader.read(abs(name)));
     await settle();
-    assert.equal(held.calls.length, 1, 'só a primeira pasta começou a ser listada');
-    assert.equal(held.maxActive(), 1);
-    assert.equal(held.calls[0].folder, folderOf(abs('p1')), 'a fila segue a ordem de chegada');
-    clock.expire();
+    assert.deepEqual(held.folders(), [folderOf(abs('p1'))], 'só a primeira começou, na ordem de chegada');
+    clock.advance(READ_TIMEOUT_MS);
     assert.deepEqual(await Promise.all(reads), [[], [], [], []]);
-    // As presas vão saindo uma de cada vez, na ordem.
-    for (const [i, name] of ['p1', 'p2', 'p3', 'p4'].entries()) {
-      held.finish(name, []);
-      await settle();
-      assert.equal(held.calls.length, Math.min(i + 2, 4));
-      assert.equal(held.maxActive(), 1);
-    }
+    // Antes de virar perdida, a presa segura a fila; ao terminar, a próxima começa.
+    held.finish('p1', []);
+    await settle();
+    assert.deepEqual(held.folders().slice(1), [folderOf(abs('p2'))]);
+    assert.equal(held.maxUnfinished(), 1);
   });
 
-  it('listagem que termina depois do prazo atualiza o cache e chama onLate com os nomes completos do projeto', async () => {
-    const clock = fakeTimers();
+  it('listagem que termina depois do prazo atualiza o cache e chama onLate uma vez, com os nomes completos', async () => {
+    const clock = fakeClock();
     const held = heldList();
     const late = [];
     const reader = createAgentNamesReader({
@@ -203,67 +208,118 @@ describe('uma listagem por vez, prazo por leitura e onLate (ajuste de 19/10/2026
     const project = abs('projeto');
     const reading = reader.read(project);
     await settle();
-    clock.expire();
+    clock.advance(READ_TIMEOUT_MS);
     assert.deepEqual(await reading, [], 'no prazo, nada');
-    held.finish('projeto', ['tester.md']);
-    await settle();
-    assert.deepEqual(late, [], 'a pasta pessoal ainda não terminou: nada parcial');
     held.finish('casa', ['arquiteto.md']);
     await settle();
-    assert.deepEqual(late, [{ projectDir: project, names: ['tester', 'arquiteto'] }], 'uma chamada, completa');
-    // O cache tem os dois: o próximo read responde na hora, sem listar de novo.
-    assert.deepEqual(await reader.read(project), ['tester', 'arquiteto']);
+    assert.deepEqual(late, [], 'a pasta do projeto ainda não terminou: nada parcial');
+    held.finish('projeto', ['tester.md']);
+    await settle();
+    assert.deepEqual(late, [{ projectDir: project, names: ['tester', 'arquiteto'] }]);
+    assert.deepEqual(await reader.read(project), ['tester', 'arquiteto'], 'cache: responde na hora');
     assert.equal(held.calls.length, 2);
   });
 
-  it('a pasta pessoal atrasada chama onLate para cada projeto que perdeu o prazo dela', async () => {
-    const clock = fakeTimers();
-    const held = heldList();
-    const late = [];
-    const reader = createAgentNamesReader({
-      homeDir: abs('casa'),
-      timers: clock.timers,
-      list: (folder) => (folder.includes('casa') ? held.list(folder) : Promise.resolve([`${path.basename(path.dirname(path.dirname(folder)))}.md`])),
-      onLate: (projectDir, names) => late.push({ projectDir, names }),
-    });
-    // A pasta pessoal entra na fila logo depois da primeira pasta de projeto.
-    const reads = [reader.read(abs('p1')), reader.read(abs('p2'))];
-    await settle();
-    clock.expire();
-    await Promise.all(reads);
-    held.finish('casa', ['arquiteto.md']);
-    await settle();
-    await settle();
-    assert.deepEqual(
-      late.map((item) => [item.projectDir, item.names]).sort(),
-      [[abs('p1'), ['p1', 'arquiteto']], [abs('p2'), ['p2', 'arquiteto']]].sort(),
-    );
-  });
-
-  it('dentro do prazo, onLate não é chamado; e um erro em onLate não para a fila', async () => {
+  it('um erro em onLate não para a fila; dentro do prazo, onLate não é chamado', async () => {
     const calls = [];
-    const reader = createAgentNamesReader({
-      homeDir: null,
-      list: async () => ['tester.md'],
-      onLate: () => {
-        calls.push('chamado');
-        throw new Error('quem recebe falhou');
-      },
-    });
-    assert.deepEqual(await reader.read(abs('projeto')), ['tester']);
+    const quick = createAgentNamesReader({ homeDir: null, list: async () => ['tester.md'], onLate: () => calls.push('chamado') });
+    assert.deepEqual(await quick.read(abs('projeto')), ['tester']);
     assert.deepEqual(calls, []);
 
-    const clock = fakeTimers();
+    const clock = fakeClock();
     const held = heldList();
     const failing = createAgentNamesReader({ homeDir: null, timers: clock.timers, list: held.list, onLate: () => { throw new Error('falhou'); } });
-    const first = failing.read(abs('a'));
-    const second = failing.read(abs('b'));
+    const reads = [failing.read(abs('a')), failing.read(abs('b'))];
     await settle();
-    clock.expire();
-    await Promise.all([first, second]);
+    clock.advance(READ_TIMEOUT_MS);
+    await Promise.all(reads);
     held.finish('a', ['x.md']);
     await settle();
     assert.equal(held.calls.length, 2, 'a fila seguiu depois do erro em onLate');
     held.finish('b', []);
+  });
+});
+
+describe('pasta que nunca responde (seção 7, decidido em 19/10/2026)', () => {
+  it('a pasta pessoal é listada logo na criação do leitor, antes de uma pasta de projeto presa', async () => {
+    const clock = fakeClock();
+    const held = heldList();
+    const reader = createAgentNamesReader({ homeDir: abs('casa'), timers: clock.timers, list: held.list });
+    await settle();
+    assert.deepEqual(held.folders(), [folderOf(abs('casa'))], 'listada antes de qualquer read');
+    held.finish('casa', ['arquiteto.md']);
+    const reading = reader.read(abs('preso'));
+    await settle();
+    assert.deepEqual(held.folders().at(-1), folderOf(abs('preso')));
+    clock.advance(READ_TIMEOUT_MS);
+    assert.deepEqual(await reading, ['arquiteto'], 'a pessoal chega mesmo com a do projeto presa');
+  });
+
+  it(`depois de ${LOST_AFTER_MS / 1000} s a listagem é dada como perdida, a pasta fica morta e a próxima da fila é listada`, async () => {
+    const clock = fakeClock();
+    const held = heldList();
+    const reader = createAgentNamesReader({ homeDir: null, timers: clock.timers, list: held.list });
+    const reads = [reader.read(abs('p1')), reader.read(abs('p2'))];
+    await settle();
+    clock.advance(LOST_AFTER_MS - 1);
+    await settle();
+    assert.deepEqual(held.folders(), [folderOf(abs('p1'))], 'ainda não perdida');
+    clock.advance(1);
+    await settle();
+    assert.deepEqual(held.folders(), [folderOf(abs('p1')), folderOf(abs('p2'))]);
+    assert.deepEqual(await Promise.all(reads), [[], []]);
+    // Morta: [] na hora, sem nova tentativa.
+    assert.deepEqual(await reader.read(abs('p1')), []);
+    assert.equal(held.calls.filter((call) => call.folder === folderOf(abs('p1'))).length, 1);
+  });
+
+  it(`com duas presas, a terceira não começa e recebe [] no prazo; nunca mais de ${MAX_UNFINISHED_LISTINGS} não terminadas`, async () => {
+    const clock = fakeClock();
+    const held = heldList();
+    const reader = createAgentNamesReader({ homeDir: null, timers: clock.timers, list: held.list });
+    reader.read(abs('p1'));
+    reader.read(abs('p2'));
+    const third = reader.read(abs('p3'));
+    await settle();
+    clock.advance(LOST_AFTER_MS);
+    await settle();
+    clock.advance(LOST_AFTER_MS);
+    await settle();
+    assert.equal(held.calls.length, 2, 'as duas presas viraram perdidas; a terceira não começou');
+    assert.deepEqual(await third, [], 'recebeu [] no prazo normal');
+    const fourth = reader.read(abs('p4'));
+    clock.advance(READ_TIMEOUT_MS);
+    assert.deepEqual(await fourth, []);
+    assert.equal(held.calls.length, 2);
+    assert.equal(held.maxUnfinished(), MAX_UNFINISHED_LISTINGS);
+    // Uma perdida termina: abre a vaga, e a fila anda.
+    held.finish('p1', []);
+    await settle();
+    assert.equal(held.calls.length, 3);
+    assert.equal(held.calls[2].folder, folderOf(abs('p3')));
+    assert.ok(held.maxUnfinished() <= MAX_UNFINISHED_LISTINGS);
+  });
+
+  it('uma perdida que termina tarde tira a marca de morta, atualiza o cache e chama onLate', async () => {
+    const clock = fakeClock();
+    const held = heldList();
+    const late = [];
+    const reader = createAgentNamesReader({
+      homeDir: null,
+      timers: clock.timers,
+      list: held.list,
+      onLate: (projectDir, names) => late.push({ projectDir, names }),
+    });
+    const project = abs('rede');
+    const first = reader.read(project);
+    await settle();
+    clock.advance(LOST_AFTER_MS);
+    await settle();
+    assert.deepEqual(await first, []);
+    assert.deepEqual(await reader.read(project), [], 'morta');
+    held.finish('rede', ['tester.md', 'arquiteto.md']);
+    await settle();
+    assert.deepEqual(late, [{ projectDir: project, names: ['tester', 'arquiteto'] }]);
+    assert.deepEqual(await reader.read(project), ['tester', 'arquiteto'], 'viva de novo, pelo cache');
   });
 });

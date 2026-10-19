@@ -1970,6 +1970,126 @@ describe('Leitor de .claude/agents/ lento ou travado (leitor de disco da ligaç�
     assert.deepEqual(local.logs, []);
   });
 
+  it('pasta pessoal primeiro; listagem perdida deixa a pasta morta e a fila anda; no máximo 2 não terminadas, com estáticos e eventos saindo; a perdida que termina tarde chama onLate', { skip: windowsOnly, ...TEST }, async (t) => {
+    // Contrato de 19/10/2026 (modelo de eventos, seção 7, "pasta que nunca responde"; commit 8a74329).
+    // Threads do libuv presas de verdade (pipe nomeado); os prazos do leitor (o do read e o da listagem
+    // perdida) são temporizadores injetados, disparados pelo teste: nada depende do relógio.
+    const READ_MS = 500;
+    const LOST_MS = 10_000;
+    const pendingTimers = new Set();
+    const timers = {
+      setTimeout(run, ms) {
+        const handle = { run, ms, unref() { return this; } };
+        pendingTimers.add(handle);
+        return handle;
+      },
+      clearTimeout(handle) {
+        pendingTimers.delete(handle);
+      },
+    };
+    const expire = (ms) => {
+      for (const handle of [...pendingTimers]) {
+        if (handle.ms !== ms) continue;
+        pendingTimers.delete(handle);
+        handle.run();
+      }
+    };
+    const settle = async () => {
+      for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    };
+    const order = [];
+    const blockers = new Map();
+    let running = 0;
+    let maxRunning = 0;
+    let stopped = false;
+    const list = async (folder) => {
+      const match = /preso-\d+/.exec(folder);
+      order.push(match ? match[0] : 'pessoal');
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      try {
+        if (!match) return ['documentador.md'];
+        if (stopped) return [];
+        const blocker = await stuckThread();
+        blockers.set(match[0], blocker);
+        if (stopped) blocker.release();
+        await blocker.reading;
+        return ['tester.md', 'arquiteto.md'];
+      } finally {
+        running--;
+      }
+    };
+    t.after(() => {
+      stopped = true;
+      for (const blocker of blockers.values()) blocker.release();
+    });
+    const local = await startLocal(t, { reader: null, pipeline: { readerOptions: { list, timers, timeoutMs: READ_MS, lostAfterMs: LOST_MS } } });
+
+    // 1. A pasta pessoal é listada na criação do leitor, antes de qualquer pasta de projeto.
+    await waitFor(() => order.length >= 1, { label: 'listagem da pasta pessoal' });
+    assert.deepEqual(order, ['pessoal']);
+    const client = await connected(local.port);
+    const project = (n) => `${FAKE_HOME}\\Projetos\\preso-${n}`;
+    for (let n = 1; n <= 3; n++) {
+      assert.equal((await local.send(hook('SessionStart', sid(970 + n), { source: 'startup' }), { projectDir: project(n) })).status, 204);
+    }
+    for (let n = 1; n <= 3; n++) {
+      await client.waitFor((m) => m.data?.event?.kind === 'session.started' && m.data.event.sessionId === sid(970 + n), { label: `sessão ${n}` });
+    }
+    await waitFor(() => blockers.has('preso-1'), { label: 'preso-1 presa' });
+    assert.deepEqual(order, ['pessoal', 'preso-1'], 'uma listagem por vez');
+    // Prazo do read: o roster sai com o que havia, a pasta pessoal (já listada) e os papéis vistos.
+    expire(READ_MS);
+    for (let n = 1; n <= 3; n++) {
+      const update = await client.waitFor((m) => m.event === 'update' && m.data.event === null && m.data.session.id === sid(970 + n), { label: `roster no prazo, sessão ${n}` });
+      assert.deepEqual(update.data.session.roster, ['orq', 'doc'], 'a pasta pessoal não ficou atrás das de projeto');
+    }
+
+    // 2. A primeira passa do limite: é perdida, a pasta fica morta, e a fila anda.
+    expire(LOST_MS);
+    await waitFor(() => blockers.has('preso-2'), { label: 'preso-2 presa depois da perda de preso-1' });
+    assert.deepEqual(order, ['pessoal', 'preso-1', 'preso-2']);
+
+    // 3. A segunda também é perdida: com 2 não terminadas, a terceira não começa.
+    expire(LOST_MS);
+    await settle();
+    assert.deepEqual(order, ['pessoal', 'preso-1', 'preso-2'], 'no máximo 2 listagens não terminadas');
+    assert.equal(maxRunning, 2);
+    assert.equal(blockers.size, 2);
+
+    // 5. Com duas listagens presas (duas threads do libuv ocupadas), estáticos, API e eventos seguem.
+    for (const urlPath of ['/', '/js/main.js', '/shared/contract.js', '/favicon.svg', '/api/health', '/api/state']) {
+      assert.equal((await request(local.port, { path: urlPath })).status, 200, urlPath);
+    }
+    assert.equal((await local.send(pre(sid(971), tid('Teto1')), { projectDir: project(1) })).status, 204);
+    await client.waitFor((m) => m.data?.event?.data?.toolUseId === tid('Teto1'));
+
+    // 4. A segunda, perdida, termina tarde: onLate atualiza o roster por update sem evento, e a vaga libera a terceira.
+    let from = client.messages.length;
+    blockers.get('preso-2').release();
+    let update = await client.waitFor((m) => m.event === 'update' && m.data.event === null && m.data.session.id === sid(972), { from, label: 'roster de preso-2 pelo onLate' });
+    assert.deepEqual(update.data.session.roster, ['orq', 'arq', 'tes', 'doc']);
+    await waitFor(() => blockers.has('preso-3'), { label: 'preso-3 começa quando a vaga abre' });
+    assert.deepEqual(order, ['pessoal', 'preso-1', 'preso-2', 'preso-3']);
+    // A primeira, perdida há mais tempo, também termina tarde.
+    from = client.messages.length;
+    blockers.get('preso-1').release();
+    update = await client.waitFor((m) => m.event === 'update' && m.data.event === null && m.data.session.id === sid(971), { from, label: 'roster de preso-1 pelo onLate' });
+    assert.deepEqual(update.data.session.roster, ['orq', 'arq', 'tes', 'doc']);
+    from = client.messages.length;
+    blockers.get('preso-3').release();
+    update = await client.waitFor((m) => m.event === 'update' && m.data.event === null && m.data.session.id === sid(973), { from, label: 'roster de preso-3' });
+    assert.deepEqual(update.data.session.roster, ['orq', 'arq', 'tes', 'doc']);
+
+    assert.ok(maxRunning <= 2);
+    assert.equal(new Set(order).size, order.length, 'cada pasta listada uma vez');
+    const state = await local.state();
+    for (const session of state.sessions) assert.deepEqual(session.roster, ['orq', 'arq', 'tes', 'doc']);
+    await caughtUp(client, state);
+    assertSameAsState(replay(client.messages), state);
+    assert.deepEqual(local.logs, []);
+  });
+
   it('listagem lenta que termina depois do prazo (temporizadores injetados): o roster sai com os papéis vistos e se atualiza quando a listagem termina', TEST, async (t) => {
     const deadlines = [];
     const timers = {

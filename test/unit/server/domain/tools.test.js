@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { TOOL_CATEGORIES } from '../../../../shared/contract.js';
 import { charLength, redact } from '../../../../server/domain/redact.js';
-import { performance } from 'node:perf_hooks';
+import { growthWithin } from '../../../integration/timing.js';
 import {
   AGENT_TOOLS,
   CATEGORY_BY_TOOL,
@@ -321,11 +321,14 @@ describe('dropCutWords (B3, marcador de corte do encaminhador)', () => {
     assert.match('…[cortado 12 caracteres]…', CUT_MARKER);
   });
 
-  it('tempo linear em palavras enormes dos dois lados', () => {
-    const text = `${'x'.repeat(1_000_000)}${M(5)}${'y'.repeat(1_000_000)}`;
-    const started = performance.now();
-    assert.equal(dropCutWords(text), '…');
-    assert.ok(performance.now() - started < 500);
+  it('tempo linear em palavras enormes dos dois lados (razão contra 1/16 do tamanho, ADR 0010)', () => {
+    const text = (size) => `${'x'.repeat(size)}${M(5)}${'y'.repeat(size)}`;
+    const small = text(62_500);
+    const big = text(1_000_000);
+    assert.equal(dropCutWords(big), '…');
+    // 16 vezes a entrada: linear dá razão perto de 16, quadrático perto de 256.
+    const growth = growthWithin(dropCutWords, small, big, { maxRatio: 48 });
+    assert.ok(growth.ok, growth.text);
   });
 });
 
@@ -468,10 +471,12 @@ describe('firstLine e textLine', () => {
     assert.equal(redactWindow('linha 1 token=abc\nlinha 2'), 'linha 1 token=•••\nlinha 2');
     assert.equal(redactWindow(`ab ${'x'.repeat(SCAN_CHARS * 2)}`), 'ab');
     assert.equal(redactWindow(42), '');
-    const huge = `echo ${'a '.repeat(500_000)}`;
-    const started = performance.now();
+    const text = (n) => `echo ${'a '.repeat(n)}`;
+    const huge = text(500_000);
     assert.ok(redactWindow(huge).length <= SCAN_CHARS);
-    assert.ok(performance.now() - started < 500);
+    // Só a janela é redigida: o custo não cresce com o texto (razão contra 1/16 do tamanho, ADR 0010).
+    const growth = growthWithin(redactWindow, text(31_250), huge, { maxRatio: 8 });
+    assert.ok(growth.ok, growth.text);
   });
 
   it('scanWindow: texto curto inteiro; espaço logo depois da borda mantém o trecho todo; sem espaço, o trecho todo', () => {

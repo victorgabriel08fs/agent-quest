@@ -420,27 +420,61 @@ describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
       }
     });
 
-    it('listagem lenta ou que nunca responde: o read resolve com [] no prazo, e a pasta seguinte não espera a travada para sempre', async () => {
-      const clock = fakeTimers();
-      let release;
-      const never = new Promise(() => {});
-      const slow = new Promise((resolve) => { release = resolve; });
+    // Atualizado em 19/10/2026 pelo tester do T9a ao contrato novo (modelo de eventos, seção 7, "pasta que
+    // nunca responde"; commit 8a74329). A versão anterior afirmava que "uma pasta morta segura a fila", com
+    // onLate nunca chamado para a lenta: é o comportamento que o ajuste do leitor eliminou.
+    it('listagem lenta ou que nunca responde: o read resolve com [] no prazo; a que passa do limite é perdida, a pasta fica morta e a fila anda; no máximo 2 não terminadas; a perdida que termina tarde chama onLate', async () => {
+      const LOST = 10_000;
+      const pending = new Set();
+      const timers = {
+        setTimeout: (run, ms) => { const h = { run, ms, unref() { return this; } }; pending.add(h); return h; },
+        clearTimeout: (h) => pending.delete(h),
+      };
+      /** Dispara só os temporizadores com esse prazo (o do read ou o da listagem perdida). */
+      const expire = (ms) => { for (const h of [...pending]) if (h.ms === ms) { pending.delete(h); h.run(); } };
+      const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
+      const nameOf = (folder) => path.basename(path.dirname(path.dirname(folder)));
+      const started = [];
+      const releases = new Map();
+      const list = (folder) => {
+        started.push(nameOf(folder));
+        if (nameOf(folder) === 'rapida') return ['tester.md'];
+        return new Promise((resolve) => releases.set(nameOf(folder), resolve)); // morta nunca é solta
+      };
       const late = [];
-      const list = (folder) => (folder.includes('morta') ? never : folder.includes('lenta') ? slow : ['tester.md']);
-      const { read } = reader.createAgentNamesReader({ homeDir: null, list, timers: clock.timers, timeoutMs: 500, onLate: (dir, names) => late.push([dir, names]) });
-      const dead = read(path.join(root, 'morta'));
-      clock.expire();
-      assert.deepEqual(await dead, [], 'prazo vencido: lista vazia');
+      const { read } = reader.createAgentNamesReader({ homeDir: null, list, timers, timeoutMs: 500, lostAfterMs: LOST, onLate: (dir, names) => late.push([path.basename(dir), names]) });
+
+      // Prazo do read: lista vazia, sem esperar a listagem.
+      const morta = read(path.join(root, 'morta'));
+      expire(500);
+      assert.deepEqual(await morta, [], 'prazo vencido: lista vazia');
+      // Uma listagem por vez: a lenta espera na fila enquanto a morta não é dada como perdida.
       const lenta = read(path.join(root, 'lenta'));
-      clock.expire();
+      await settle();
+      assert.deepEqual(started, ['morta']);
+      expire(500);
       assert.deepEqual(await lenta, []);
-      release(['revisor.md']);
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.deepEqual(late, [], 'a lenta está na fila atrás da morta, que nunca termina');
-      // Uma pasta morta segura a fila; o read das seguintes ainda resolve no prazo.
-      const third = read(path.join(root, 'outra'));
-      clock.expire();
-      assert.deepEqual(await third, []);
+      // A morta passa do limite: é perdida, e a fila anda.
+      expire(LOST);
+      await settle();
+      assert.deepEqual(started, ['morta', 'lenta'], 'a pasta seguinte não espera a travada para sempre');
+      // A pasta morta responde [] na hora, sem nova listagem.
+      assert.deepEqual(await read(path.join(root, 'morta')), []);
+      // A lenta também é perdida: com 2 listagens não terminadas, a terceira não começa e recebe [] no prazo.
+      expire(LOST);
+      const rapida = read(path.join(root, 'rapida'));
+      await settle();
+      assert.deepEqual(started, ['morta', 'lenta'], 'no máximo 2 listagens não terminadas');
+      expire(500);
+      assert.deepEqual(await rapida, []);
+      // A lenta, perdida, termina tarde: deixa de estar morta, vai para o cache, chama onLate e libera a vaga.
+      releases.get('lenta')(['revisor.md']);
+      await settle();
+      assert.deepEqual(late.find(([dir]) => dir === 'lenta'), ['lenta', ['revisor']]);
+      assert.deepEqual(await read(path.join(root, 'lenta')), ['revisor'], 'cache');
+      assert.deepEqual(started, ['morta', 'lenta', 'rapida'], 'a vaga liberada deixa a fila andar');
+      assert.deepEqual(late.find(([dir]) => dir === 'rapida'), ['rapida', ['tester']], 'a que ficou devendo recebe pelo onLate');
+      assert.equal(late.some(([dir]) => dir === 'morta'), false, 'a morta nunca terminou');
     });
 
     it('listagem lenta que termina depois do prazo: o cache guarda o resultado, e onLate entrega os nomes do projeto', async () => {

@@ -72,7 +72,7 @@ export const TICK_MS = 5000;
  * @property {unknown} [roleOverrides]     "roles" do config.json
  * @property {string|null} [homeDir]       pasta pessoal (caminhos com `~`, chave do projeto e `~/.claude/agents/`)
  * @property {AgentNamesReader} [reader]   leitor pronto (testes); sem ele, o leitor em disco, com `onLate` ligado
- * @property {{ list?: (folder: string) => Promise<unknown>|unknown, timeoutMs?: number, timers?: import('./agent-names.js').ReaderTimers }} [readerOptions]
+ * @property {{ list?: (folder: string) => Promise<unknown>|unknown, timeoutMs?: number, lostAfterMs?: number, timers?: import('./agent-names.js').ReaderTimers }} [readerOptions]
  *   opções do leitor em disco padrão (os testes trocam a listagem e o prazo)
  * @property {() => number} [clock]        relógio do `tick` (ms)
  * @property {number} [tickMs]
