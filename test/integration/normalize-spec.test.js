@@ -46,6 +46,7 @@ import { charLength, redact, redactAndCut } from '../../server/domain/redact.js'
 import { normalize } from '../../server/domain/normalize.js';
 import { SCAN_CHARS, describeTool, displayPath, inputHash } from '../../server/domain/tools.js';
 import { resolveRole } from '../../server/domain/roles.js';
+import { growthWithin } from './timing.js';
 
 const HOME = 'C:\\Users\\fulana';
 const PROJECT = `${HOME}\\Code\\agents-quest`;
@@ -1062,15 +1063,28 @@ describe('etapa 7 (ANSI depois da redação) e consequências aprovadas em 18/10
 });
 
 describe('tempo com strings enormes', () => {
+  // ADR 0010, complemento de 19/10/2026: o custo de 1 MB é comparado, pela razão
+  // e com o melhor de 5 intercalado, com a mesma forma em 1/16 do tamanho, medida
+  // no mesmo processo logo antes. Com a leitura limitada (SCAN_CHARS), o que sobra
+  // de linear (inputHash, contagem de caracteres) dá até cerca de 16; quadrático
+  // daria cerca de 256. O limite é 96, 6 vezes o linear; passou dele, uma nova
+  // tentativa com o melhor de 9; duas seguidas é falha. Medido em 19/10/2026
+  // (pior combinação, melhor de 5): razão 23 em repouso, 18 com 12 processos
+  // ocupando a CPU e até 79 com 24. Com o limite de 64, uma rodada em três com
+  // 24 processos falhou por ruído (73 e 66); com 96, nenhuma em quatro. Uma
+  // cópia do normalizador com um passo quadrático falha em repouso e com 24
+  // processos (razões de 107 a 1 517).
   const MB = 1_000_000;
+  const REFERENCE = MB / 16;
+  const MAX_RATIO = 96;
   const shapes = {
-    'texto contínuo': 'x'.repeat(MB),
-    'token= repetido': 'token='.repeat(MB / 6),
-    'invisível entre letras': 'a\u200B'.repeat(MB / 2),
-    'Authorization: repetido': 'Authorization: '.repeat(MB / 15),
-    'caminho com ..': `C:\\${'a\\..\\'.repeat(MB / 5)}`,
-    'só quebras de linha': '\n'.repeat(MB),
-    emoji: '🙂'.repeat(MB / 2),
+    'texto contínuo': (n) => 'x'.repeat(n),
+    'token= repetido': (n) => 'token='.repeat(n / 6),
+    'invisível entre letras': (n) => 'a\u200B'.repeat(n / 2),
+    'Authorization: repetido': (n) => 'Authorization: '.repeat(n / 15),
+    'caminho com ..': (n) => `C:\\${'a\\..\\'.repeat(n / 5)}`,
+    'só quebras de linha': (n) => '\n'.repeat(n),
+    emoji: (n) => '🙂'.repeat(n / 2),
   };
   const slots = [
     ['UserPromptSubmit', (s) => ({ prompt: s })],
@@ -1083,22 +1097,18 @@ describe('tempo com strings enormes', () => {
     // agent_id acima de 128 descarta o evento (seção 2, 18/10/2026): o tamanho fica nos outros campos.
     ['SubagentStop', (s) => ({ agent_id: 'a0123456789abcdef', agent_type: s, agent_transcript_path: s })],
   ];
-  it('cada campo com ~1 MB (o corpo do POST vai até 1 MiB): menos de 500 ms por fato', () => {
+  it('cada campo com ~1 MB (o corpo do POST vai até 1 MiB): custo limitado, pela razão contra a mesma forma com 1/16 do tamanho', () => {
     const slow = [];
-    for (const [shape, text] of Object.entries(shapes)) {
+    const run = (env) => normalize(env, { receivedAt: 1, homeDir: HOME });
+    for (const [shape, make] of Object.entries(shapes)) {
       for (const [hook, fields] of slots) {
-        const env = { v: 1, sentAt: 1, env: { projectDir: PROJECT }, payload: { session_id: SESSION, hook_event_name: hook, ...fields(text) } };
-        normalize(env, { receivedAt: 1, homeDir: HOME });
-        let best = Infinity;
-        let out;
-        for (let i = 0; i < 3; i++) {
-          const t0 = performance.now();
-          out = normalize(env, { receivedAt: 1, homeDir: HOME });
-          best = Math.min(best, performance.now() - t0);
-        }
+        const envelope = (n) => ({ v: 1, sentAt: 1, env: { projectDir: PROJECT }, payload: { session_id: SESSION, hook_event_name: hook, ...fields(make(n)) } });
+        const big = envelope(MB);
+        const out = run(big);
         assert.ok(out, `${shape} em ${hook} virou null`);
         assertSection10(out, `${shape} em ${hook}`);
-        if (best > 500) slow.push(`${shape} em ${hook}: ${best.toFixed(0)} ms`);
+        const growth = growthWithin(run, envelope(REFERENCE), big, { maxRatio: MAX_RATIO });
+        if (!growth.ok) slow.push(`${shape} em ${hook}: ${growth.text}`);
       }
     }
     assert.deepEqual(slow, []);

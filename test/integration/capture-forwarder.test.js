@@ -23,6 +23,7 @@ import {
   PLUGIN_VERSION,
   STUCK_LIMIT_MS,
   assertDelivered,
+  assertDeliveredCalibrated,
   assertLifetimeWithin,
   assertLossesOnlyByDeadline,
   assertSilentExit,
@@ -779,32 +780,30 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
     ['16 MiB com o máximo de chaves (atalho; JSON.parse no limite)', (id) => keysUpTo(id, 16 * MiB), 'emergência'],
   ];
 
+  // Tempo pela calibração simultânea (ADR 0010, complemento de 19/10/2026; ver
+  // assertDeliveredCalibrated): entrega e até 2,2 s são exigidas sempre que ler e
+  // interpretar o mesmo stdin coube no orçamento do encaminhador naquele instante.
   it('casos do critério com o servidor real: 204, obrigatórios intactos, caminho certo (passos ou atalho), corpo no teto e até 2,2 s', async (t) => {
     for (const [name, makeStdin, path_] of criterionCases) {
       let id;
-      const results = [];
-      const samples = [];
       const before = await server.health();
-      const envelope = await assertDelivered(
-        t,
-        name,
-        async () => {
-          id = hookPayload().tool_use_id;
-          const stdin = makeStdin(id);
-          const bytes = Buffer.byteLength(stdin);
-          if (path_ === 'emergência') assert.ok(bytes > 8 * MiB, `${name}: ${bytes} bytes não acionam o atalho`);
-          else assert.ok(bytes <= 8 * MiB, `${name}: ${bytes} bytes acionariam o atalho`);
-          const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home }), stdin });
-          results.push(result);
-          const tag = id;
-          return { result, delivered: () => server.dumped().find((e) => e.payload.tool_use_id === tag) };
-        },
-        { samplesOut: samples },
-      );
-      assertLifetimeWithin(t, name, results, samples, STUCK_LIMIT_MS);
-      if (!envelope) continue;
+      const delivery = await assertDeliveredCalibrated(t, name, () => {
+        id = hookPayload().tool_use_id;
+        const stdin = makeStdin(id);
+        const bytes = Buffer.byteLength(stdin);
+        if (path_ === 'emergência') assert.ok(bytes > 8 * MiB, `${name}: ${bytes} bytes não acionam o atalho`);
+        else assert.ok(bytes <= 8 * MiB, `${name}: ${bytes} bytes acionariam o atalho`);
+        const tag = id;
+        return {
+          stdin,
+          run: (guardMs) => runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home }), stdin, guardMs }),
+          delivered: () => server.dumped().find((e) => e.payload.tool_use_id === tag),
+        };
+      });
+      if (!delivery) continue;
+      const envelope = delivery.value;
       const bytes = Buffer.byteLength(JSON.stringify(envelope), 'utf8');
-      t.diagnostic(`${name}: ${bytes} bytes, ${Object.keys(envelope.payload).length} chaves, ${results.at(-1).ownMs.toFixed(0)} ms de vida`);
+      t.diagnostic(`${name}: ${bytes} bytes, ${Object.keys(envelope.payload).length} chaves, ${delivery.result.ownMs.toFixed(0)} ms de vida`);
       assert.ok(bytes <= MAX_BODY, `${name}: corpo de ${bytes} bytes`);
       assert.equal(envelope.truncated, true, name);
       const head = headFields(id);

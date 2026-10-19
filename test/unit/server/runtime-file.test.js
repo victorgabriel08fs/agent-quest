@@ -1,10 +1,12 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import process from 'node:process';
 import {
+  REMOVE_RETRY_WINDOW_MS,
   RENAME_RETRY_WINDOW_MS,
   RUNTIME_FILE_NAME,
   createToken,
@@ -139,6 +141,130 @@ describe('removeRuntimeFile', () => {
 
   it('não lança se o arquivo não existe', () => {
     assert.equal(removeRuntimeFile(path.join(tmp.dir, 'vazio'), sample()), false);
+  });
+
+  /** Erro de arquivo, como o `node:fs` lança. */
+  const fsError = (code) => Object.assign(new Error(code), { code });
+
+  /**
+   * Relógio falso: a espera só anda o relógio e fica registrada.
+   * @returns {{ now: () => number, sleep: (ms: number) => void, sleeps: number[] }}
+   */
+  const fakeClock = () => {
+    let time = 1_000;
+    const sleeps = [];
+    return {
+      now: () => time,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        time += ms;
+      },
+      sleeps,
+    };
+  };
+
+  /** Pasta própria para cada caso, com o runtime.json desta execução já gravado. */
+  let dirs = 0;
+  const ownFile = async () => {
+    const dataDir = path.join(tmp.dir, `rm-${++dirs}`);
+    const info = sample();
+    await writeRuntimeFile(dataDir, info);
+    return { dataDir, info, file: runtimeFilePath(dataDir) };
+  };
+
+  it('remoção presa (EBUSY, EPERM, EACCES): tenta de novo, com espera crescente, e apaga quando solta', async () => {
+    const { dataDir, info, file } = await ownFile();
+    const failures = ['EBUSY', 'EPERM', 'EACCES'];
+    const clock = fakeClock();
+    let calls = 0;
+    const unlink = (target) => {
+      calls++;
+      assert.equal(target, file);
+      if (failures.length > 0) throw fsError(failures.shift());
+      unlinkSync(target);
+    };
+    assert.equal(removeRuntimeFile(dataDir, info, { unlink, sleep: clock.sleep, now: clock.now }), true);
+    assert.equal(existsSync(file), false);
+    assert.equal(calls, 4);
+    assert.deepEqual(clock.sleeps, [10, 20, 40]);
+  });
+
+  it('leitura presa (aberto sem compartilhar leitura, EBUSY): tenta de novo e apaga', async () => {
+    const { dataDir, info, file } = await ownFile();
+    const clock = fakeClock();
+    let reads = 0;
+    const read = (target) => {
+      if (++reads <= 2) throw fsError('EBUSY');
+      return readFileSync(target, 'utf8');
+    };
+    assert.equal(removeRuntimeFile(dataDir, info, { read, sleep: clock.sleep, now: clock.now }), true);
+    assert.equal(existsSync(file), false);
+    assert.equal(reads, 3);
+    assert.deepEqual(clock.sleeps, [10, 20]);
+  });
+
+  it('preso a janela toda: desiste sem lançar, dentro da janela, e o arquivo fica (sobra para a próxima partida)', async () => {
+    assert.equal(REMOVE_RETRY_WINDOW_MS, 500);
+    const { dataDir, info, file } = await ownFile();
+    const clock = fakeClock();
+    let calls = 0;
+    const unlink = () => {
+      calls++;
+      throw fsError('EBUSY');
+    };
+    assert.equal(removeRuntimeFile(dataDir, info, { unlink, sleep: clock.sleep, now: clock.now }), false);
+    assert.equal(existsSync(file), true);
+    // 10, 20, 40, 80 e depois 100 ms até a próxima espera passar da janela.
+    assert.deepEqual(clock.sleeps, [10, 20, 40, 80, 100, 100, 100]);
+    assert.ok(clock.sleeps.reduce((a, b) => a + b, 0) <= REMOVE_RETRY_WINDOW_MS);
+    assert.equal(calls, clock.sleeps.length + 1);
+  });
+
+  it('confere o dono a cada tentativa: se outra execução gravou o arquivo durante a espera, não apaga', async () => {
+    const { dataDir, info, file } = await ownFile();
+    const other = sample({ token: createToken() });
+    let calls = 0;
+    const unlink = () => {
+      calls++;
+      throw fsError('EBUSY');
+    };
+    // Durante a espera, outro servidor grava o seu runtime.json.
+    const sleep = () => writeFileSync(file, JSON.stringify(other));
+    assert.equal(removeRuntimeFile(dataDir, info, { unlink, sleep, now: () => 0 }), false);
+    assert.equal(calls, 1);
+    assert.deepEqual(readRuntimeFile(dataDir), other);
+  });
+
+  it('erro que não é de arquivo preso: não tenta de novo', async () => {
+    const { dataDir, info, file } = await ownFile();
+    for (const code of ['ENOENT', 'EISDIR', undefined]) {
+      const clock = fakeClock();
+      let calls = 0;
+      const unlink = () => {
+        calls++;
+        throw code ? fsError(code) : new Error('sem código');
+      };
+      assert.equal(removeRuntimeFile(dataDir, info, { unlink, sleep: clock.sleep, now: clock.now }), false, String(code));
+      assert.equal(calls, 1, String(code));
+      assert.deepEqual(clock.sleeps, [], String(code));
+    }
+    assert.equal(existsSync(file), true);
+  });
+
+  it('com o relógio e a espera reais: a espera bloqueia de verdade e termina perto do fim da janela', async () => {
+    const { dataDir, info, file } = await ownFile();
+    const unlink = () => {
+      throw fsError('EBUSY');
+    };
+    const begin = performance.now();
+    assert.equal(removeRuntimeFile(dataDir, info, { unlink }), false);
+    const elapsed = performance.now() - begin;
+    assert.equal(existsSync(file), true);
+    // Desiste quando a próxima espera (no máximo 100 ms) passaria da janela: nunca
+    // antes de ~400 ms (folga para a resolução do relógio). O teto é só uma
+    // garantia de que o processo sai, com folga larga para máquina carregada.
+    assert.ok(elapsed >= REMOVE_RETRY_WINDOW_MS - 100 - 30, `${elapsed.toFixed(0)} ms`);
+    assert.ok(elapsed < REMOVE_RETRY_WINDOW_MS + 1500, `${elapsed.toFixed(0)} ms`);
   });
 });
 

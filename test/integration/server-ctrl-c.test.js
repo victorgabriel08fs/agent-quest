@@ -98,25 +98,37 @@ function emulateCtrlC(commandLine, dataDir) {
 
 const quote = (p) => `"${p}"`;
 
+/**
+ * O critério é o arquivo sumir. O `removedMs` do ajudante só mede quando ele
+ * notou a remoção, dentro da janela de espera; se veio null (por exemplo, o
+ * próprio ajudante ficou sem CPU), quem decide é o disco, conferido aqui depois
+ * de o ajudante terminar.
+ */
+function assertRuntimeRemoved(t, r, dataDir) {
+  const leftover = existsSync(path.join(dataDir, 'runtime.json'));
+  assert.equal(leftover, false, `o runtime.json ficou para trás:\n${r.screen}`);
+  if (r.removedMs === null) t.diagnostic('o runtime.json sumiu depois da janela de espera do ajudante');
+  else t.diagnostic(`runtime.json apagado ${r.removedMs} ms depois do Ctrl+C`);
+}
+
 describe('T2 integração: Ctrl+C emulado no console', { skip: !isWindows && 'Ctrl+C de console só existe no Windows' }, () => {
-  it('npm start no PowerShell: Ctrl+C apaga o runtime.json e o servidor sai com 0', { timeout: 120_000 }, () => {
+  it('npm start no PowerShell: Ctrl+C apaga o runtime.json e o servidor sai com 0', { timeout: 120_000 }, (t) => {
     const dataDir = home();
     const r = emulateCtrlC('powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "npm start -- --port 0"', dataDir);
     assert.equal(r.ok, true, `${r.error}\n${r.screen}`);
     assert.equal(r.ctrlC, 'ok');
     assert.notEqual(r.port, 47821);
     assert.match(r.screen, /Encerrando o Agent Quest\.\.\./, r.screen);
-    assert.notEqual(r.removedMs, null, `o runtime.json ficou para trás:\n${r.screen}`);
-    assert.equal(existsSync(path.join(dataDir, 'runtime.json')), false);
+    assertRuntimeRemoved(t, r, dataDir);
     assert.equal(r.serverExitCode, 0, r.screen);
   });
 
-  it('npm start direto no console: Ctrl+C apaga o runtime.json e o servidor sai com 0', { timeout: 120_000 }, () => {
+  it('npm start direto no console: Ctrl+C apaga o runtime.json e o servidor sai com 0', { timeout: 120_000 }, (t) => {
     const dataDir = home();
     const r = emulateCtrlC(`${quote(process.execPath)} ${quote(npmCli())} start -- --port 0`, dataDir);
     assert.equal(r.ok, true, `${r.error}\n${r.screen}`);
     assert.match(r.screen, /Encerrando o Agent Quest\.\.\./, r.screen);
-    assert.notEqual(r.removedMs, null, `o runtime.json ficou para trás:\n${r.screen}`);
+    assertRuntimeRemoved(t, r, dataDir);
     assert.equal(r.serverExitCode, 0, r.screen);
   });
 

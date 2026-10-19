@@ -93,12 +93,43 @@ const SLOW_TIMER_URL = pathToFileURL(SLOW_TIMER).href;
 
 /** Referência: só importa os mesmos módulos node:* do encaminhador e sai. */
 const REFERENCE = path.join(TIMING_DIR, 'reference.mjs');
+const FORWARDER_NODE_IMPORTS = [...readFileSync(FORWARDER, 'utf8').matchAll(/^\s*import\s[^;]*?from\s+['"](node:[^'"]+)['"]/gm)]
+  .map((m) => `import '${m[1]}';`);
+writeFileSync(REFERENCE, FORWARDER_NODE_IMPORTS.join('\n'));
+
+/**
+ * Calibração do trabalho que o encaminhador não pode interromper (ADR 0010,
+ * complemento de 19/10/2026; modelo de eventos, seção 1): Node com os mesmos
+ * módulos node:*, que lê o stdin inteiro como o encaminhador (eventos `data` e
+ * `Buffer.concat`), faz o `JSON.parse` e, se AQ_LIST_KEYS=1, lista uma vez as
+ * chaves de todos os objetos (a outra etapa sem interrupção, só abaixo do atalho
+ * de 8 MiB). Código do teste, independente do encaminhador: uma regressão nele
+ * não entra na calibração.
+ */
+const CALIBRATION = path.join(TIMING_DIR, 'calibration.mjs');
 writeFileSync(
-  REFERENCE,
-  [...readFileSync(FORWARDER, 'utf8').matchAll(/^\s*import\s[^;]*?from\s+['"](node:[^'"]+)['"]/gm)]
-    .map((m) => `import '${m[1]}';`)
-    .join('\n'),
+  CALIBRATION,
+  [
+    ...FORWARDER_NODE_IMPORTS,
+    'const listAll = (value) => {',
+    '  if (Array.isArray(value)) { for (const item of value) listAll(item); return; }',
+    "  if (value === null || typeof value !== 'object') return;",
+    '  for (const key of Object.keys(value)) listAll(value[key]);',
+    '};',
+    'const chunks = [];',
+    'let total = 0;',
+    "process.stdin.on('data', (chunk) => { chunks.push(chunk); total += chunk.length; });",
+    "process.stdin.on('end', () => {",
+    "  const value = JSON.parse(Buffer.concat(chunks, total).toString('utf8'));",
+    "  if (process.env.AQ_LIST_KEYS === '1') listAll(value);",
+    '  process.exit(0);',
+    '});',
+    '',
+  ].join('\n'),
 );
+
+/** Acima disto o encaminhador vai direto ao envelope de emergência, sem listar chaves (seção 1). */
+const SHORTCUT_STDIN_BYTES = 8 * 1024 * 1024;
 let timingSeq = 0;
 
 /**
@@ -311,6 +342,84 @@ export async function assertDelivered(t, label, attempt, { attempts = 3, waitMs 
   const load = loadFrom(samples);
   assert.ok(!load.normal, `${label}: nenhuma entrega com a máquina normal (${load.text}): ${misses.join('; ')}`);
   t.skip(`entrega não avaliada: máquina sobrecarregada (${load.text}); nas ${attempts} tentativas o encaminhador esgotou o prazo do ADR 0001 sem entregar: ${misses.join('; ')}`);
+  return null;
+}
+
+// --- entrega com calibração simultânea ----------------------------------------
+//
+// Para stdin grande, o custo dominante do encaminhador é ler o stdin e fazer o
+// JSON.parse, que não pode ser interrompido (seção 1: com payloads patológicos,
+// o evento pode se perder). A referência de partida do Node (acima) não capta a
+// disputa de CPU durante um parse de ~1,5 s, e um JSON.parse no processo do
+// teste também não capta o que a partida e o pipe de 16 MiB sofrem sob carga
+// (medido em 19/10/2026: com 12 processos ocupando a CPU, parse de 0,9 a 2,1 s
+// no teste e encaminhador de 3 a 6 s). Por isso a calibração roda num processo
+// irmão, logo antes do encaminhador e com o mesmo stdin: partida, pipe e parse,
+// como ele. Rodar os dois ao mesmo tempo foi descartado: dobrava o trabalho
+// pesado, e em repouso o caso de 16 MiB passava a perder o prazo.
+
+/**
+ * Calibração acima disto: nem ler e interpretar o stdin coube no orçamento do
+ * encaminhador (prazo de 2 s menos a reserva de 250 ms do POST), com 250 ms de
+ * folga para o que ele faz depois do parse (runtime.json, envelope, POST) e
+ * para a diferença de agenda entre os dois processos. Em repouso, o encaminhador
+ * viveu até 454 ms além da calibração (16 MiB com o máximo de chaves).
+ */
+export const CALIBRATION_EXCUSE_MS = 2000 - 250 - 250;
+
+/**
+ * Exige a entrega dentro do prazo, com a calibração simultânea:
+ * - cada tentativa roda a calibração e, logo depois, o encaminhador, com o mesmo stdin;
+ * - sucesso: entregou e viveu até `limitMs`;
+ * - saiu rápido sem entregar, sem ter esperado prazo nenhum, é falha na hora;
+ * - tentativa desculpada: a calibração passou de CALIBRATION_EXCUSE_MS (a
+ *   exceção da seção 1); se entregou, o envelope ainda é conferido;
+ * - tentativa sem desculpa (calibração dentro do orçamento): ganha uma nova
+ *   tentativa; duas seguidas é falha (ADR 0010);
+ * - todas desculpadas, sem entrega: pula com as medidas.
+ * @param {import('node:test').TestContext} t
+ * @param {string} label
+ * @param {(n: number) => { stdin: string, run: (guardMs: number) => Promise<any>, delivered: () => any }} attempt
+ * @param {{ attempts?: number, waitMs?: number, limitMs?: number }} [options]
+ * @returns {Promise<{ value: any, result: any }|null>}
+ */
+export async function assertDeliveredCalibrated(t, label, attempt, { attempts = 3, waitMs = 3000, limitMs = STUCK_LIMIT_MS } = {}) {
+  const rows = [];
+  let unexcusedInARow = 0;
+  for (let n = 0; n < attempts || (unexcusedInARow === 1 && n < attempts + 1); n++) {
+    const { stdin, run, delivered } = attempt(n);
+    const listKeys = Buffer.byteLength(stdin) <= SHORTCUT_STDIN_BYTES ? '1' : '0';
+    const calibration = await runNode(CALIBRATION, { env: minimalEnv({ AQ_LIST_KEYS: listKeys }), stdin, guardMs: 60_000 });
+    // O guarda contra travamento também segue a calibração: 10 s, ou 20 vezes o que
+    // ler e interpretar o stdin levou agora (máquina saturada; nos passos, o
+    // encaminhador ainda lista as chaves e reduz), até 2 min. Ele só existe para
+    // um travamento virar falha.
+    const result = await run(Math.min(120_000, Math.max(10_000, 20 * calibration.ownMs)));
+    assertSilentExit(result, label);
+    const value = await waitFor(delivered, { timeoutMs: waitMs, label }).catch(() => null);
+    rows.push(`${result.ownMs.toFixed(0)} ms de vida (parede ${result.wallMs.toFixed(0)}), calibração ${calibration.ownMs.toFixed(0)} ms${value ? '' : ', sem entrega'}`);
+    if (value && result.ownMs <= limitMs) {
+      if (rows.length > 1) t.diagnostic(`${label}: entregue na tentativa ${n + 1}; antes: ${rows.slice(0, -1).join('; ')}`);
+      return { value, result };
+    }
+    if (!value) {
+      assert.ok(hitDeadline(result), `${label}: o encaminhador saiu em ${result.ownMs.toFixed(0)} ms sem entregar, sem ter esperado nenhum prazo do ADR 0001`);
+    }
+    if (!(calibration.ownMs <= CALIBRATION_EXCUSE_MS)) {
+      unexcusedInARow = 0;
+      if (value) {
+        t.diagnostic(`${label}: entregue acima de ${limitMs} ms, com a calibração também acima do orçamento (exceção da seção 1): ${rows.at(-1)}`);
+        return { value, result };
+      }
+      continue;
+    }
+    unexcusedInARow++;
+    assert.ok(
+      unexcusedInARow < 2,
+      `${label}: ${value ? `acima de ${limitMs} ms` : 'sem entrega'} duas vezes seguidas com a calibração dentro do orçamento (${CALIBRATION_EXCUSE_MS} ms): ${rows.join('; ')}`,
+    );
+  }
+  t.skip(`${label}: não avaliado: em todas as tentativas, ler e interpretar o stdin passou do orçamento do encaminhador (exceção da seção 1): ${rows.join('; ')}`);
   return null;
 }
 

@@ -706,15 +706,30 @@ describe('orçamento de tempo da redução (captura 0.1.2)', () => {
   });
 
   it('passos que certamente não cabem são abandonados cedo (piso do tamanho), sem visitar tudo', () => {
-    const payload = bigPayload(1_000_000);
+    // Só contadores, sem medir tempo: a medida ia de 0,5 s a quase 6 s com a
+    // máquina carregada. Os passos param antes da chave 100 mil (os passos 1 e 2
+    // pelo piso, o passo 3 quando o envelope mínimo enche).
+    // - Leituras do relógio: o orçamento olha o relógio a cada 1 000 itens dos
+    //   passos 2 e 3; percorrer o milhão de chaves daria mais de 1 000 leituras.
+    // - Sentinela: uma chave com getter na posição 250 mil. O passo 1 não olha o
+    //   relógio, então só ela mostra que ele também parou cedo: qualquer passo que
+    //   passe do primeiro quarto do payload a lê.
+    const SENTINEL_AT = 250_000;
+    let sentinelReads = 0;
+    const payload = {};
+    for (let i = 0; i < 1_000_000; i++) {
+      if (i === SENTINEL_AT) {
+        Object.defineProperty(payload, 'sentinela', { get: () => (sentinelReads++, 0), enumerable: true, configurable: true });
+      }
+      payload[`k${i}`] = i;
+    }
+    Object.assign(payload, ids);
     let reads = 0;
-    const begin = performance.now();
     const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now: () => (reads++, 0) }));
-    const elapsed = performance.now() - begin;
     assert.equal(envelope.truncated, true);
     assert.equal(envelope.payload.session_id, ids.session_id);
     assert.ok(reads < 400, `${reads} leituras do relógio: o passo 2 parou pelo tamanho, não percorreu 1 milhão de chaves`);
-    assert.ok(elapsed < 2000, `${elapsed.toFixed(0)} ms`);
+    assert.equal(sentinelReads, 0, 'nenhum passo (nem o 1, que não olha o relógio) passou do primeiro quarto do payload');
   });
 
   it('createKeyCache: lista as chaves de um objeto grande uma vez só entre os passos', () => {

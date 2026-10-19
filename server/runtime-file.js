@@ -15,13 +15,27 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 export const RUNTIME_FILE_NAME = 'runtime.json';
 
+/** Erros de arquivo preso por outro processo: vale tentar de novo daqui a pouco. */
+const RETRYABLE_LOCK_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
 /** No Windows, antivírus e indexadores seguram arquivos novos por instantes. */
 // Um encaminhador lendo o runtime.json no mesmo instante também bloqueia o
 // rename (EPERM). Tenta por até ~2 s, com espera crescente (10, 20, 40... até 200 ms).
 export const RENAME_RETRY_WINDOW_MS = 2000;
 const RENAME_FIRST_DELAY_MS = 10;
 const RENAME_MAX_DELAY_MS = 200;
-const RETRYABLE_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/** Na remoção, o mesmo: um processo que abriu o arquivo sem compartilhar exclusão a impede (EBUSY). */
+// A espera aqui é síncrona, porque a remoção roda no encerramento: o `close()` a
+// chama sem esperar, e o evento `exit` só aceita código síncrono. Por isso a
+// janela é curta: até ~0,5 s por chamada, com espera crescente (10, 20, 40, 80 e
+// depois 100 ms). No encerramento normal a remoção é chamada duas vezes (no
+// `close()` e no evento `exit`), então, com o arquivo preso o tempo todo, o
+// processo sai cerca de 1 s depois de "Encerrando o Agent Quest...". Se a janela
+// acabar, o arquivo fica, e a próxima partida o trata como sobra (pid morto).
+export const REMOVE_RETRY_WINDOW_MS = 500;
+const REMOVE_FIRST_DELAY_MS = 10;
+const REMOVE_MAX_DELAY_MS = 100;
 
 /**
  * @typedef {object} RuntimeInfo
@@ -55,9 +69,25 @@ export function createToken() {
  * @returns {RuntimeInfo|null}
  */
 export function readRuntimeFile(dataDir) {
+  let text;
+  try {
+    text = readFileSync(runtimeFilePath(dataDir), 'utf8');
+  } catch {
+    return null;
+  }
+  return parseRuntimeInfo(text);
+}
+
+/**
+ * Valida o conteúdo do runtime.json. `null` se não for JSON ou se faltar algum
+ * campo com o tipo certo.
+ * @param {string} text
+ * @returns {RuntimeInfo|null}
+ */
+function parseRuntimeInfo(text) {
   let data;
   try {
-    data = JSON.parse(readFileSync(runtimeFilePath(dataDir), 'utf8'));
+    data = JSON.parse(text);
   } catch {
     return null;
   }
@@ -102,21 +132,69 @@ export async function writeRuntimeFile(dataDir, info) {
 }
 
 /**
+ * Dependências da remoção, trocadas só nos testes.
+ * @typedef {object} RemoveDeps
+ * @property {(file: string) => string} [read]     lê o arquivo como texto
+ * @property {(file: string) => void} [unlink]
+ * @property {(ms: number) => void} [sleep]        espera síncrona
+ * @property {() => number} [now]                  relógio em ms
+ */
+
+/**
  * Apaga o runtime.json se ele ainda for desta execução (mesmo `pid` e `token`).
  * Síncrono, para poder rodar no evento `exit` do processo. Nunca lança.
+ *
+ * Se outro processo segura o arquivo (EPERM, EACCES ou EBUSY, na leitura ou na
+ * remoção), tenta de novo por até `REMOVE_RETRY_WINDOW_MS`, conferindo o dono a
+ * cada tentativa: se outra execução gravou o seu runtime.json no meio, não apaga.
+ * Acabou a janela: desiste em silêncio e devolve false.
  * @param {string} dataDir
  * @param {{ pid: number, token: string }} owner
+ * @param {RemoveDeps} [deps]
  * @returns {boolean}                    true se apagou
  */
-export function removeRuntimeFile(dataDir, owner) {
-  const current = readRuntimeFile(dataDir);
-  if (!current || current.pid !== owner.pid || current.token !== owner.token) return false;
-  try {
-    unlinkSync(runtimeFilePath(dataDir));
-    return true;
-  } catch {
-    return false;
+export function removeRuntimeFile(
+  dataDir,
+  owner,
+  { read = readText, unlink = unlinkSync, sleep = sleepSync, now = Date.now } = {},
+) {
+  const file = runtimeFilePath(dataDir);
+  const deadline = now() + REMOVE_RETRY_WINDOW_MS;
+  let delay = REMOVE_FIRST_DELAY_MS;
+  for (;;) {
+    let code;
+    try {
+      const current = parseRuntimeInfo(read(file));
+      if (!current || current.pid !== owner.pid || current.token !== owner.token) return false;
+      unlink(file);
+      return true;
+    } catch (err) {
+      code = /** @type {any} */ (err)?.code;
+    }
+    if (!RETRYABLE_LOCK_ERRORS.has(code) || now() + delay > deadline) return false;
+    sleep(delay);
+    delay = Math.min(delay * 2, REMOVE_MAX_DELAY_MS);
   }
+}
+
+/**
+ * @param {string} file
+ * @returns {string}
+ */
+function readText(file) {
+  return readFileSync(file, 'utf8');
+}
+
+/** Célula para a espera síncrona (`Atomics.wait` sem ninguém para acordar). */
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Bloqueia a thread por `ms`. Só para as esperas curtas do encerramento, que
+ * precisam ser síncronas (evento `exit`).
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  Atomics.wait(sleepCell, 0, 0, ms);
 }
 
 /**
@@ -148,7 +226,7 @@ async function renameWithRetry(from, to) {
       return;
     } catch (err) {
       const code = /** @type {any} */ (err)?.code;
-      if (!RETRYABLE_RENAME_ERRORS.has(code) || Date.now() + delay > deadline) throw err;
+      if (!RETRYABLE_LOCK_ERRORS.has(code) || Date.now() + delay > deadline) throw err;
       await sleep(delay);
       delay = Math.min(delay * 2, RENAME_MAX_DELAY_MS);
     }
