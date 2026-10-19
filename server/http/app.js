@@ -63,6 +63,7 @@ import { SHARED_DIR, WEB_DIR, readStaticFile, resolveStaticPath } from './static
  *   estado para o `snapshot` do SSE e para GET /api/state; no servidor, vem da
  *   ligação de ponta a ponta; padrão: um snapshot vazio
  * @property {() => number} [sessionCount]   `sessions` do /api/health; padrão: 0
+ * @property {() => number} [getSeq]         `seq` atual, para a retomada do SSE sem montar o snapshot; padrão: o do snapshot
  * @property {{ maxClients?: number, heartbeatMs?: number, timers?: import('./sse.js').HubTimers }} [sse]
  */
 
@@ -120,10 +121,11 @@ export function createApp({
   runId = createRunId(),
   getSnapshot = EMPTY_SNAPSHOT,
   sessionCount = () => 0,
+  getSeq,
   sse = {},
 }) {
   const roots = { webDir, sharedDir };
-  const hub = createSseHub({ runId, serverVersion: version, getSnapshot, ...sse });
+  const hub = createSseHub({ runId, serverVersion: version, getSnapshot, ...(getSeq ? { getSeq } : {}), ...sse });
 
   // Contadores do /api/health. received = accepted + deduped + rejected;
   // dropped (fila cheia) e ignored (processamento) são subconjuntos de accepted.

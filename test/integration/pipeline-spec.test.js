@@ -21,7 +21,7 @@
 // Ids, nomes e caminhos são fictícios. Nada usa o diretório de dados real, a
 // pasta pessoal real nem a porta 47821.
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -612,6 +612,12 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     ({ port, token } = runtime);
   }, TEST);
 
+  // Cada teste começa sem clientes do anterior, mesmo se uma asserção falhou no meio (o limite é 8).
+  afterEach(async () => {
+    for (const client of [...openClients]) client.close();
+    await waitFor(async () => (await getJson(port, '/api/health')).clients === 0, { label: 'clientes fechados', timeoutMs: 20_000 }).catch(() => {});
+  }, TEST);
+
   after(async () => {
     for (const client of [...openClients]) client.close();
     if (run) await stopProcess(run).catch(() => {});
@@ -624,7 +630,9 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     }
   }, TEST);
 
-  it('toda conexão recebe hello e snapshot, com e sem Last-Event-ID; snapshot = /api/state; no-store', TEST, async () => {
+  // Atualizado no T9b (seção 9, "Retomada"): no T9a toda conexão recebia snapshot; agora um id desta
+  // execução que dá para retomar recebe hello e só o que faltou.
+  it('hello em toda conexão; snapshot (= /api/state) sem Last-Event-ID ou com id de outra execução, inválido ou futuro; id desta execução retoma sem snapshot; no-store', TEST, async () => {
     const S = sid(101);
     for (const payload of [hook('SessionStart', S, { source: 'startup', model: 'claude-opus-5-5' }), pre(S, tid('A1')), post(S, tid('A1'))]) {
       assert.equal((await postHook(port, token, envelope(payload))).status, 204);
@@ -632,30 +640,41 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     const state = await settledState(port);
     assert.ok(state.seq >= 3, `seq ${state.seq}`);
     const runId = state.sessions.find((s) => s.id === S).feed[0].id.split(':')[0];
-    const variants = [
-      {},
-      { 'Last-Event-ID': `${runId}:${state.seq}` },
-      { 'Last-Event-ID': `${runId}:1` },
-      { 'Last-Event-ID': `${runId}:${state.seq + 1000}` },
-      { 'Last-Event-ID': 'outraExecucao:5' },
-      { 'Last-Event-ID': 'lixo sem formato' },
-      { 'Last-Event-ID': '' },
-    ];
-    for (const headers of variants) {
-      const label = JSON.stringify(headers);
-      const client = await connected(port, { headers });
-      assert.match(client.headers['content-type'], /^text\/event-stream/, label);
-      assert.equal(client.headers['cache-control'], 'no-store', label);
-      assertAdrHeaders(client.headers, label);
-      assertNoCors(client.headers, label);
-      assert.equal(client.retry, 2000, label);
-      assert.deepEqual(client.messages.slice(0, 2).map((m) => m.event), ['hello', 'snapshot'], label);
-      const [hello, snapshot] = client.messages;
-      assert.equal(hello.id, undefined, `${label}: hello sem id`);
-      assert.deepEqual(hello.data, { protocol: 1, runId, seq: state.seq, serverVersion: VERSION }, label);
-      assert.equal(snapshot.id, `${runId}:${state.seq}`, label);
-      assert.deepEqual(snapshot.data, state, `${label}: snapshot = /api/state`);
-      client.close();
+    const opened = [];
+    try {
+      // Com snapshot.
+      for (const headers of [
+        {},
+        { 'Last-Event-ID': `${runId}:${state.seq + 1000}` },
+        { 'Last-Event-ID': 'outraExecucao:5' },
+        { 'Last-Event-ID': 'lixo sem formato' },
+        { 'Last-Event-ID': '' },
+      ]) {
+        const label = JSON.stringify(headers);
+        const client = await connected(port, { headers });
+        opened.push(client);
+        assert.match(client.headers['content-type'], /^text\/event-stream/, label);
+        assert.equal(client.headers['cache-control'], 'no-store', label);
+        assertAdrHeaders(client.headers, label);
+        assertNoCors(client.headers, label);
+        assert.equal(client.retry, 2000, label);
+        assert.deepEqual(client.messages.slice(0, 2).map((m) => m.event), ['hello', 'snapshot'], label);
+        const [hello, snapshot] = client.messages;
+        assert.equal(hello.id, undefined, `${label}: hello sem id`);
+        assert.deepEqual(hello.data, { protocol: 1, runId, seq: state.seq, serverVersion: VERSION }, label);
+        assert.equal(snapshot.id, `${runId}:${state.seq}`, label);
+        assert.deepEqual(snapshot.data, state, `${label}: snapshot = /api/state`);
+      }
+      // Retomada: id 1 desta execução recebe hello e as mensagens de 2 até o seq atual, sem snapshot.
+      const resumed = await openSse(port, { headers: { 'Last-Event-ID': `${runId}:1` } });
+      opened.push(resumed);
+      await resumed.waitFor((m) => m.data?.seq === state.seq && m.event !== 'hello', { label: 'retomada até o seq atual' });
+      assert.equal(resumed.messages[0].event, 'hello');
+      assert.deepEqual(resumed.messages[0].data, { protocol: 1, runId, seq: state.seq, serverVersion: VERSION });
+      assert.ok(!resumed.messages.some((m) => m.event === 'snapshot'), 'sem snapshot');
+      assert.deepEqual(resumed.messages.slice(1).map((m) => m.data.seq), Array.from({ length: state.seq - 1 }, (_, i) => i + 2));
+    } finally {
+      for (const client of opened) client.close();
     }
   });
 

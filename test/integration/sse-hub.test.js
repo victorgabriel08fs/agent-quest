@@ -250,19 +250,41 @@ describe('T9a hub: servidor real (node server/main.js --port 0)', () => {
     client.destroy();
   });
 
-  it('toda conexão recebe hello e snapshot, com ou sem Last-Event-ID, e o runId é o mesmo na execução', async () => {
-    const first = await openSse(port);
-    const [, hello] = await opening(first);
-    const runId = hello.data.runId;
-    for (const lastId of [`${runId}:${hello.data.seq}`, `${runId}:999999`, 'outraExec:5', 'lixo', '']) {
-      const client = await openSse(port, { headers: { 'Last-Event-ID': lastId } });
-      const [retry, h, snapshot] = await opening(client);
-      assert.equal(retry.retry, 2000, lastId);
-      assert.equal(h.data.runId, runId, lastId);
-      assert.equal(snapshot.event, 'snapshot', lastId);
-      client.destroy();
+  // Atualizado no T9b (retomada por Last-Event-ID; seção 9, "Retomada"): só o id desta execução que
+  // ainda dá para retomar dispensa o snapshot. No T9a, toda conexão recebia snapshot.
+  it('hello em toda conexão, com o mesmo runId; snapshot sem Last-Event-ID ou com id de outra execução, inválido ou futuro; id igual ao seq atual recebe só o hello', async () => {
+    const opened = [];
+    try {
+      const first = await openSse(port);
+      opened.push(first);
+      const [, hello] = await opening(first);
+      const runId = hello.data.runId;
+      for (const lastId of [`${runId}:999999`, 'outraExec:5', 'lixo', '', `${runId}:-1`, `${runId}:1.5`]) {
+        const client = await openSse(port, { headers: { 'Last-Event-ID': lastId } });
+        opened.push(client);
+        const [retry, h, snapshot] = await opening(client);
+        assert.equal(retry.retry, 2000, lastId);
+        assert.equal(h.data.runId, runId, lastId);
+        assert.equal(snapshot.event, 'snapshot', lastId);
+        assert.equal(snapshot.id, `${runId}:${h.data.seq}`, lastId);
+      }
+      // Id igual ao seq atual: só retry e hello; o que vier depois já é o fluxo ao vivo (sem snapshot).
+      const current = await openSse(port, { headers: { 'Last-Event-ID': `${runId}:${hello.data.seq}` } });
+      opened.push(current);
+      const { message: resumedHello } = await current.waitMessage((m) => m.event === 'hello');
+      assert.equal(resumedHello.data.runId, runId);
+      assert.equal(resumedHello.data.seq, hello.data.seq);
+      const { token } = JSON.parse(readFileSync(path.join(home.dir, 'runtime.json'), 'utf8'));
+      const body = JSON.stringify({ v: 1, sentAt: Date.now(), forwarder: 'teste', env: { projectDir: null, entrypoint: null }, truncated: false, payload: { hook_event_name: 'SessionStart', session_id: 'sessao-hub-retomada', source: 'startup' } });
+      const res = await request(port, { method: 'POST', path: '/hooks', headers: { 'Content-Type': 'application/json', 'X-Agent-Quest-Token': token }, body });
+      assert.equal(res.status, 204);
+      const { index } = await current.waitMessage((m) => m.event === 'update');
+      assert.deepEqual(current.messages.slice(0, index + 1).map((m) => m.event ?? 'retry'), ['retry', 'hello', 'update'], 'sem snapshot entre o hello e o primeiro update');
+      assert.equal(current.messages[index].data.seq, hello.data.seq + 1);
+    } finally {
+      for (const client of opened) client.destroy();
+      await waitFor(async () => (await health()).clients === 0, { label: 'clientes fechados' }).catch(() => {});
     }
-    first.destroy();
   });
 
   it('GET /api/state: o mesmo conteúdo do snapshot, JSON, no-store e cabeçalhos do ADR 0006', async () => {
@@ -338,7 +360,8 @@ describe('T9a hub: servidor real (node server/main.js --port 0)', () => {
 
     for (const client of clients) client.destroy();
     await waitFor(async () => (await health()).clients === 0, { label: 'contagem voltar a 0' });
-    assert.equal((await health()).sessions, 0, 'sessions continua 0 até a ligação');
+    // Desde a ligação do T9a, `sessions` é o número real de sessões em memória.
+    assert.equal((await health()).sessions, JSON.parse((await request(port, { path: '/api/state' })).text).sessions.length);
   });
 
   it('Host, Origin e Sec-Fetch-Site de outra origem: 403 nas duas rotas, sem entrar na contagem', async () => {

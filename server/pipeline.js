@@ -90,6 +90,7 @@ export const TICK_MS = 5000;
  * @property {() => void} start            liga o `tick` periódico
  * @property {() => void} stop             desliga o `tick` periódico
  * @property {() => SnapshotMessage} snapshot    `{ seq, sessions }`, sessões com feed
+ * @property {() => number} currentSeq    o último `seq` reservado (retomada do SSE)
  * @property {() => number} sessionCount
  * @property {(publisher: Publisher) => void} attach
  * @property {() => Promise<void>} settled  espera as leituras de .claude/agents/ em andamento (testes)
@@ -241,6 +242,7 @@ export function createPipeline({
       timer = null;
     },
     snapshot: () => ({ seq: sequence.current(), sessions: getSessionStates(state) }),
+    currentSeq: () => sequence.current(),
     sessionCount: () => sessionCount(state),
     attach(next) {
       publisher = next;

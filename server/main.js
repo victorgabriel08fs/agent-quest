@@ -109,6 +109,7 @@ export async function startServer(options = {}) {
     runId,
     onEnvelope: pipeline.handleEnvelope,
     getSnapshot: pipeline.snapshot,
+    getSeq: pipeline.currentSeq,
     sessionCount: pipeline.sessionCount,
   });
   pipeline.attach(hub);
