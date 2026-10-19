@@ -20,13 +20,21 @@ import {
   HEAD_CHARS,
   MAX_BODY_BYTES,
   MAX_LIST_ITEMS,
+  BUDGET_CHECK_EVERY,
   MAX_STRING_CHARS,
   MINIMAL_PRIORITY_KEYS,
+  POST_RESERVE_MS,
+  REDUCTION_BUDGET_MS,
+  ReductionTimeout,
+  createKeyCache,
+  createTimeBudget,
+  emergencyPayload,
   MINIMAL_REQUIRED_KEYS,
   POST_TIMEOUT_MS,
   SHORT_HEAD_CHARS,
   SHORT_STRING_CHARS,
   SHORT_TAIL_CHARS,
+  SHORTCUT_STDIN_BYTES,
   STEP2_RULES,
   TAIL_CHARS,
   buildBody,
@@ -234,9 +242,10 @@ const OVERLOADED_NODE_MS = 150;
  *   se a mediana do encaminhador passar da mediana da referência em no máximo o
  *   limite menos a folga de partida (medianas, para um pico isolado da referência
  *   não esconder uma regressão);
- * - se todas falharem e até a referência estiver muito acima do normal, a máquina
- *   está sobrecarregada e não há como medir: o teste é marcado como pulado, com o
- *   motivo e as medidas (as checagens de saída 0 e silêncio continuam valendo).
+ * - se todas falharem e a mediana da referência estiver muito acima do normal, a
+ *   máquina está sobrecarregada e não há como medir: o teste é marcado como
+ *   pulado, com o motivo e as medidas (as checagens de saída 0 e silêncio
+ *   continuam valendo), e o resultado volta com `timingSkipped: true`.
  * Uma regressão real (uma espera fixa, um trabalho pesado) numa máquina normal
  * reprova. Toda tentativa precisa sair em silêncio.
  */
@@ -265,9 +274,10 @@ async function assertFast(t, run, limitMs, label) {
     `${label}: acima de ${limitMs} ms em todas as tentativas, e a mediana (${ownMedian.toFixed(0)} ms) ` +
     `passa da mediana da referência (${referenceMedian.toFixed(0)} ms) em mais de ` +
     `${limitMs - NODE_STARTUP_ALLOWANCE_MS} ms: ${attempts.join('; ')}`;
-  const fastestReference = Math.min(...referenceTimes);
-  if (fastestReference > OVERLOADED_NODE_MS) {
-    t.skip(`tempo não avaliado, máquina sobrecarregada (referência em no mínimo ${fastestReference.toFixed(0)} ms). ${summary}`);
+  // Sobrecarga também pela mediana: uma referência rápida isolada não decide.
+  if (referenceMedian > OVERLOADED_NODE_MS) {
+    t.skip(`tempo não avaliado, máquina sobrecarregada (mediana da referência ${referenceMedian.toFixed(0)} ms). ${summary}`);
+    result.timingSkipped = true;
     return result;
   }
   assert.fail(summary);
@@ -279,6 +289,9 @@ function median(values) {
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
+
+/** Obrigatórios dos payloads grandes (teto do corpo e orçamento de tempo). */
+const BIG_IDS = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
 
 const hookPayload = (extra = {}) => ({
   session_id: 'sessao-teste',
@@ -414,7 +427,9 @@ describe('payload e envelope', () => {
 
 describe('teto do corpo: 1 000 000 bytes em até três passos (modelo de eventos, seção 1)', () => {
   const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
-  const options = { sentAt: 123, env: { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' } };
+  // Relógio parado no início: aqui se testam os passos, sem o orçamento de tempo
+  // (o process.uptime() deste processo de teste já passou de 1 s há muito tempo).
+  const options = { sentAt: 123, env: { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' }, now: () => 0 };
   const s600 = (i) => `${i}-`.padEnd(600, 'x');
   const bytes = (text) => Buffer.byteLength(text, 'utf8');
 
@@ -570,6 +585,174 @@ describe('teto do corpo: 1 000 000 bytes em até três passos (modelo de eventos
     // session_id absurdo: o passo 2 (genérico) o cortaria, mas não cabe em 400 bytes;
     // o passo 3 o mantém inteiro, e aí também não cabe: não envia.
     assert.equal(buildBody({ ...ids, session_id: 'x'.repeat(2000) }, { ...options, maxBytes: 400 }), null);
+  });
+});
+
+describe('orçamento de tempo da redução (captura 0.1.2)', () => {
+  const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
+  const env = { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' };
+
+  it('limites da decisão: 1 s de orçamento, conferido a cada 1 000 itens', () => {
+    assert.equal(REDUCTION_BUDGET_MS, 1000);
+    assert.equal(BUDGET_CHECK_EVERY, 1000);
+  });
+
+  it('createTimeBudget: check confere sempre; tick só consulta o relógio a cada 1 000 itens', () => {
+    let reads = 0;
+    let time = 0;
+    const budget = createTimeBudget(() => (reads++, time), 1000);
+    for (let i = 0; i < 2500; i++) budget.tick();
+    assert.equal(reads, 2, 'o relógio foi lido no 1 000º e no 2 000º item');
+    time = 1000;
+    assert.throws(() => budget.check(), ReductionTimeout);
+    for (let i = 0; i < 499; i++) budget.tick();
+    assert.throws(() => budget.tick(), ReductionTimeout, 'no 3 000º item');
+  });
+
+  /** Relógio de teste: começa em `start` e anda `step` ms a cada leitura. */
+  const clock = (start, step = 0) => {
+    let time = start - step;
+    return () => (time += step);
+  };
+  const bigPayload = (n) => ({ ...Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, i])), ...ids });
+
+  it('atalho: stdin acima de 8 MiB vai direto ao envelope de emergência, sem listar chaves', () => {
+    assert.equal(SHORTCUT_STDIN_BYTES, 8 * 1024 * 1024);
+    const small = { ...ids, tool_name: 'Read', tool_input: { file_path: 'a.md' } };
+    assert.equal(
+      buildBody(small, { sentAt: 1, env, now: () => 0, inputBytes: SHORTCUT_STDIN_BYTES }),
+      JSON.stringify(buildEnvelope(small, { sentAt: 1, env })),
+      'exatamente 8 MiB: passos normais',
+    );
+    const shortcut = JSON.parse(buildBody(small, { sentAt: 1, env, now: () => 0, inputBytes: SHORTCUT_STDIN_BYTES + 1 }));
+    assert.equal(shortcut.truncated, true);
+    assert.deepEqual(shortcut.payload, { ...ids, tool_name: 'Read' });
+    // Custo constante: com centenas de milhares de chaves, nenhuma listagem.
+    const huge = { ...Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, i])), ...ids };
+    const begin = performance.now();
+    const body = buildBody(huge, { sentAt: 1, env, now: () => 0, inputBytes: 9 * 1024 * 1024 });
+    const elapsed = performance.now() - begin;
+    assert.deepEqual(JSON.parse(body).payload, ids);
+    assert.ok(elapsed < 50, `${elapsed.toFixed(1)} ms`);
+  });
+
+  it('payload pequeno sai sempre completo, mesmo com o orçamento esgotado (máquina lenta)', () => {
+    const payload = {
+      ...ids,
+      tool_name: 'Read',
+      tool_input: { file_path: 'docs/a.md' },
+      prompt: 'Leia o arquivo',
+      tool_response: { stdout: 'x'.repeat(5000) },
+    };
+    // Relógio muito além do prazo desde a primeira leitura: o passo 1 não olha o tempo.
+    for (const now of [clock(1_000_000), clock(0, 10_000)]) {
+      const body = buildBody(payload, { sentAt: 1, env, now });
+      assert.equal(body, JSON.stringify(buildEnvelope(payload, { sentAt: 1, env })), 'o mesmo corpo do passo 1');
+      const envelope = JSON.parse(body);
+      assert.equal(envelope.payload.tool_input.file_path, 'docs/a.md');
+      assert.equal(envelope.payload.prompt, 'Leia o arquivo');
+    }
+  });
+
+  it('payload acima do teto com o orçamento esgotado: envelope de emergência, com truncated true', () => {
+    const payload = {
+      ...bigPayload(200_000),
+      tool_input: { file_path: 'a.md' },
+      agent_id: 'agente-1',
+      tool_name: 'Read',
+      tool_use_id: 'toolu_1',
+      outro: 'fica de fora',
+      cwd: 'c'.repeat(600),
+    };
+    // Começa em 0 e pula para depois do orçamento na leitura seguinte (antes do passo 2).
+    const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now: clock(0, 5000) }));
+    assert.equal(envelope.truncated, true);
+    assert.deepEqual(envelope.payload, {
+      hook_event_name: 'PostToolUse',
+      session_id: ids.session_id,
+      agent_id: 'agente-1',
+      tool_name: 'Read',
+      tool_use_id: 'toolu_1',
+      cwd: cutString('c'.repeat(600), 128, 384),
+    });
+  });
+
+  it('orçamento que acaba no meio de um passo: interrompe e manda o envelope de emergência', () => {
+    const payload = { ...bigPayload(300_000), tool_name: 'X', tool_input: Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`t${i}`, 'v'])) };
+    let reads = 0;
+    // A 1ª leitura marca o início; da 5ª em diante, o orçamento acabou (dentro dos laços).
+    const now = () => (++reads >= 5 ? 5000 : 0);
+    const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now }));
+    assert.equal(envelope.truncated, true);
+    assert.deepEqual(envelope.payload, { ...ids, tool_name: 'X' });
+    assert.ok(reads < 20, `parou cedo (${reads} leituras do relógio)`);
+  });
+
+  it('o orçamento conta do início da redução, não da partida do processo', () => {
+    const payload = { ...bigPayload(200_000), tool_name: 'X' };
+    // A redução começa aos 990 ms (o JSON.parse demorou): ainda há orçamento para o passo 3.
+    const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now: clock(990, 1) }));
+    assert.equal(envelope.truncated, true);
+    assert.ok(Object.keys(envelope.payload).length > 1000, 'passo 3 (envelope mínimo), não emergência');
+    assert.ok(Buffer.byteLength(JSON.stringify(envelope), 'utf8') <= MAX_BODY_BYTES);
+  });
+
+  it('o orçamento nunca passa do prazo total menos a reserva do POST', () => {
+    assert.equal(POST_RESERVE_MS, 250);
+    const payload = { ...bigPayload(200_000), tool_name: 'X' };
+    // A redução começa aos 1 800 ms: depois de 1 750 ms não há orçamento, sai a emergência.
+    const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now: clock(1800, 1) }));
+    assert.deepEqual(envelope.payload, { ...ids, tool_name: 'X' });
+  });
+
+  it('passos que certamente não cabem são abandonados cedo (piso do tamanho), sem visitar tudo', () => {
+    const payload = bigPayload(1_000_000);
+    let reads = 0;
+    const begin = performance.now();
+    const envelope = JSON.parse(buildBody(payload, { sentAt: 1, env, now: () => (reads++, 0) }));
+    const elapsed = performance.now() - begin;
+    assert.equal(envelope.truncated, true);
+    assert.equal(envelope.payload.session_id, ids.session_id);
+    assert.ok(reads < 400, `${reads} leituras do relógio: o passo 2 parou pelo tamanho, não percorreu 1 milhão de chaves`);
+    assert.ok(elapsed < 2000, `${elapsed.toFixed(0)} ms`);
+  });
+
+  it('createKeyCache: lista as chaves de um objeto grande uma vez só entre os passos', () => {
+    const keysOf = createKeyCache();
+    const big = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`k${i}`, i]));
+    const small = { a: 1 };
+    assert.equal(keysOf(big), keysOf(big), 'o mesmo array (cache)');
+    assert.deepEqual(keysOf(small), ['a']);
+    assert.notEqual(keysOf(small), keysOf(small), 'objetos pequenos não ficam no cache');
+  });
+
+  it('emergencyPayload: só obrigatórios e prioritários simples, custo constante', () => {
+    const big = Object.fromEntries(Array.from({ length: 200_000 }, (_, i) => [`k${i}`, i]));
+    const payload = { ...big, ...ids, agent_type: 'tester', source: ['lista'], trigger: { a: 1 }, reason: null };
+    const begin = performance.now();
+    const result = emergencyPayload(payload);
+    const elapsed = performance.now() - begin;
+    assert.deepEqual(result, { ...ids, agent_type: 'tester', reason: null });
+    assert.ok(elapsed < 50, `${elapsed.toFixed(1)} ms com 200 mil chaves`);
+  });
+
+  it('surrogates nas duas bordas, nos dois cortes: o par inteiro sai, nada fica solto', () => {
+    const emoji = '😀';
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (const [head, tail] of [[HEAD_CHARS, TAIL_CHARS], [SHORT_HEAD_CHARS, SHORT_TAIL_CHARS]]) {
+      // Borda do início: o par começa na última unidade do trecho inicial.
+      const atHead = `${'a'.repeat(head - 1)}${emoji}${'b'.repeat(tail * 3)}`;
+      const cutHead = cutString(atHead, head, tail);
+      assert.doesNotMatch(cutHead, lone, `início ${head}`);
+      assert.ok(cutHead.startsWith(`${'a'.repeat(head - 1)}…`), `início ${head}: o par saiu inteiro`);
+      // Borda do fim: o par termina na primeira unidade do trecho final.
+      const atTail = `${'b'.repeat(head * 3)}${emoji}${'c'.repeat(tail - 1)}`;
+      const cutTail = cutString(atTail, head, tail);
+      assert.doesNotMatch(cutTail, lone, `fim ${tail}`);
+      assert.ok(cutTail.endsWith(`…${'c'.repeat(tail - 1)}`), `fim ${tail}: o par saiu inteiro`);
+      // O N conta as unidades retiradas, com o par incluído.
+      assert.match(cutTail, new RegExp(`…\\[cortado ${atTail.length - head - (tail - 1)} caracteres\\]…`));
+    }
   });
 });
 
@@ -785,16 +968,20 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
     assert.equal(server.requests.length, 0);
   });
 
-  it('teto do corpo com o servidor real: 12 MiB em strings e 50 000 arquivos chegam com 204, truncated e ids intactos, no prazo', async () => {
+  /**
+   * Teto do corpo e orçamento de tempo com o servidor real do T3 (com --debug-dump).
+   * Cada tentativa manda um `tool_use_id` próprio, para a deduplicação não esconder
+   * nada. Vale a regra de tempo dos outros testes (`assertFast`, até 2,2 s); a
+   * entrega é conferida pelas tentativas que terminaram antes do prazo de 2 s, e
+   * só pode faltar se o tempo foi marcado como não avaliável (máquina sobrecarregada).
+   * @param {any} t
+   * @param {string} label
+   * @param {(tag: string) => string} makeStdin   stdin com o `tool_use_id` da tentativa
+   * @param {{ agentId?: string, check?: (envelope: any) => void }} [expected]
+   */
+  async function assertDeliveredWithinDeadline(t, label, makeStdin, expected = {}) {
     const home = newHome();
     const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
-    const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
-    const s600 = (i) => `${i}-`.padEnd(600, 'x');
-    const cases = [
-      ['20 000 × 600 numa lista', { ...ids, tool_name: 'Bash', tool_response: { stdout: Array.from({ length: 20_000 }, (_, i) => s600(i)) } }],
-      ['20 000 × 600 em tool_input', { ...ids, tool_name: 'X', tool_input: Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, s600(i)])) }],
-      ['50 000 arquivos', { ...ids, tool_name: 'Glob', tool_response: { filenames: Array.from({ length: 50_000 }, (_, i) => `src/modulo${i}/arquivo-${i}.js`) } }],
-    ];
     const health = () =>
       new Promise((resolve, reject) => {
         http.get({ host: '127.0.0.1', port: running.port, path: '/api/health', agent: false }, (r) => {
@@ -802,30 +989,206 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
           r.setEncoding('utf8').on('data', (c) => (body += c)).on('end', () => resolve(JSON.parse(body).events));
         }).on('error', reject);
       });
+    // Até 5 tentativas espaçadas; para na primeira que entrega dentro do limite. Cada
+    // uma mede antes a referência (Node com os mesmos módulos), como no assertFast.
+    const attempts = [];
+    const references = [];
+    let passed = false;
     try {
-      for (const [label, payload] of cases) {
-        const stdin = JSON.stringify(payload);
+      for (let i = 0; i < 5 && !passed; i++) {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+        references.push((await spawnTimed([IMPORTS_ONLY], { env: minimalEnv({}) })).ownMs);
+        const tag = `toolu_${i}`;
         const before = await health();
-        const result = await runForwarder({ home, stdin });
-        assertSilentExit(result, label);
-        assert.ok(result.ownMs < STUCK_MS, `${label}: ${result.ownMs.toFixed(0)} ms`);
+        const run = await runForwarder({ home, stdin: makeStdin(tag) });
         const after = await health();
-        assert.equal(after.accepted - before.accepted, 1, `${label}: o servidor respondeu 204 e aceitou`);
-        assert.equal(after.rejected, before.rejected, `${label}: nenhum 413`);
+        assertSilentExit(run, `${label}, tentativa ${i + 1}`);
+        const attempt = { tag, run, accepted: after.accepted - before.accepted, rejected: after.rejected - before.rejected };
+        attempts.push(attempt);
+        passed = attempt.accepted === 1 && run.ownMs < STUCK_MS;
       }
     } finally {
       await running.close();
     }
-    const dumps = path.join(home, 'dumps');
-    const lines = readdirSync(dumps).flatMap((file) => readFileSync(path.join(dumps, file), 'utf8').trim().split('\n'));
-    assert.equal(lines.length, cases.length);
-    for (const line of lines) {
-      assert.ok(Buffer.byteLength(line, 'utf8') <= MAX_BODY_BYTES);
-      const envelope = JSON.parse(line);
-      assert.equal(envelope.truncated, true);
-      assert.equal(envelope.payload.session_id, ids.session_id);
-      assert.equal(envelope.payload.hook_event_name, ids.hook_event_name);
+
+    const detail = attempts
+      .map((a) => `${a.tag}: ${a.run.ownMs.toFixed(0)} ms, accepted +${a.accepted}, rejected +${a.rejected}`)
+      .join('; ');
+    t.diagnostic(`${label}: ${detail}`);
+    for (const attempt of attempts) assert.equal(attempt.rejected, 0, `${label}: nenhum 413 nem 400 (${detail})`);
+    for (const attempt of attempts) {
+      if (attempt.run.ownMs < DEADLINE_MS - 100) {
+        assert.equal(attempt.accepted, 1, `${label}: ${attempt.tag} terminou antes do prazo e não entregou (${detail})`);
+      }
     }
+    const delivered = attempts.filter((a) => a.accepted === 1);
+    if (!passed) {
+      // Nenhuma entrega dentro do limite: vale a mesma regra de carga do assertFast.
+      const ownMedian = median(attempts.map((a) => a.run.ownMs));
+      const referenceMedian = median(references);
+      const slowButFine = delivered.length > 0 && ownMedian - referenceMedian < STUCK_MS - NODE_STARTUP_ALLOWANCE_MS;
+      if (!slowButFine) {
+        if (referenceMedian > OVERLOADED_NODE_MS) {
+          t.skip(`entrega no prazo não avaliada, máquina sobrecarregada (mediana da referência ${referenceMedian.toFixed(0)} ms); ${detail}`);
+        } else {
+          assert.fail(`${label}: nenhuma tentativa entregou dentro de ${STUCK_MS} ms com a máquina normal (${detail})`);
+        }
+      }
+    }
+
+    const dumps = path.join(home, 'dumps');
+    const lines = delivered.length ? readdirSync(dumps).flatMap((file) => readFileSync(path.join(dumps, file), 'utf8').trim().split('\n')) : [];
+    assert.equal(lines.length, delivered.length, `${label}: um envelope gravado por entrega (${detail})`);
+    for (const line of lines) {
+      assert.ok(Buffer.byteLength(line, 'utf8') <= MAX_BODY_BYTES, `${label}: ${Buffer.byteLength(line, 'utf8')} bytes`);
+      const envelope = JSON.parse(line);
+      assert.equal(envelope.truncated, true, label);
+      assert.equal(envelope.payload.session_id, BIG_IDS.session_id, `${label}: session_id intacto`);
+      assert.equal(envelope.payload.hook_event_name, BIG_IDS.hook_event_name, `${label}: hook_event_name intacto`);
+      if (expected.agentId) assert.equal(envelope.payload.agent_id, expected.agentId, `${label}: agent_id intacto`);
+      expected.check?.(envelope);
+      assert.ok(delivered.some((a) => a.tag === envelope.payload.tool_use_id), `${label}: tool_use_id da tentativa`);
+    }
+  }
+
+  /** Payload em texto com `n` chaves `"kN":1` no primeiro nível (montado sem objeto intermediário). */
+  function manyKeysStdin(n) {
+    const head = `{"session_id":"${BIG_IDS.session_id}","hook_event_name":"${BIG_IDS.hook_event_name}","agent_id":"agente-1","tool_name":"X","tool_use_id":"`;
+    const parts = [];
+    for (let i = 0; i < n; i++) parts.push(`"k${i}":1`);
+    const tail = `",${parts.join(',')}}`;
+    return (tag) => `${head}${tag}${tail}`;
+  }
+
+  const s600 = (i) => `${i}-`.padEnd(600, 'x');
+
+  it('teto do corpo com o servidor real: 20 000 × 600 numa lista (cerca de 12 MiB) chega com 204, no prazo', async (t) => {
+    const stdout = Array.from({ length: 20_000 }, (_, i) => s600(i));
+    await assertDeliveredWithinDeadline(t, '20 000 × 600 numa lista', (tag) =>
+      JSON.stringify({ ...BIG_IDS, tool_name: 'Bash', tool_use_id: tag, tool_response: { stdout } }),
+    );
+  });
+
+  it('teto do corpo com o servidor real: 20 000 × 600 em tool_input chega com 204, no prazo', async (t) => {
+    const toolInput = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, s600(i)]));
+    await assertDeliveredWithinDeadline(
+      t,
+      '20 000 × 600 em tool_input',
+      (tag) => JSON.stringify({ ...BIG_IDS, agent_id: 'agente-1', tool_name: 'X', tool_use_id: tag, tool_input: toolInput }),
+      { agentId: 'agente-1' },
+    );
+  });
+
+  it('teto do corpo com o servidor real: 50 000 nomes de arquivo chegam com 204, no prazo', async (t) => {
+    const filenames = Array.from({ length: 50_000 }, (_, i) => `src/modulo${i}/arquivo-${i}.js`);
+    await assertDeliveredWithinDeadline(t, '50 000 arquivos', (tag) =>
+      JSON.stringify({ ...BIG_IDS, tool_name: 'Glob', tool_use_id: tag, tool_response: { filenames } }),
+    );
+  });
+
+  it('orçamento de tempo com o servidor real: 600 mil chaves no primeiro nível chegam com 204, no prazo', async (t) => {
+    await assertDeliveredWithinDeadline(t, '600 mil chaves', manyKeysStdin(600_000), { agentId: 'agente-1' });
+  });
+
+  it('orçamento de tempo com o servidor real: 1,15 milhão de chaves no primeiro nível chegam com 204, no prazo', async (t) => {
+    await assertDeliveredWithinDeadline(t, '1,15 milhão de chaves', manyKeysStdin(1_150_000), { agentId: 'agente-1' });
+  });
+
+  /** Só obrigatórios e prioritários: o envelope de emergência do atalho. */
+  const emergencyOnly = (envelope) => {
+    const allowed = new Set([...MINIMAL_REQUIRED_KEYS, ...MINIMAL_PRIORITY_KEYS]);
+    for (const key of Object.keys(envelope.payload)) assert.ok(allowed.has(key), `chave fora do envelope de emergência: ${key}`);
+  };
+
+  /** Stdin com tantas chaves quantas couberem em `bytes` (sem passar de 16 MiB). */
+  function stdinWithKeys(bytes) {
+    const head = `{"session_id":"${BIG_IDS.session_id}","hook_event_name":"${BIG_IDS.hook_event_name}","agent_id":"agente-1","tool_name":"X","tool_use_id":"`;
+    const parts = [];
+    let size = head.length + 40;
+    for (let i = 0; ; i++) {
+      const part = `"k${i}":1`;
+      if (size + part.length + 1 > bytes) break;
+      parts.push(part);
+      size += part.length + 1;
+    }
+    const tail = `",${parts.join(',')}}`;
+    return { keys: parts.length, make: (tag) => `${head}${tag}${tail}` };
+  }
+
+  it('atalho de 8 MiB com o servidor real: 9 MiB de chaves vão direto ao envelope de emergência, com 204, no prazo', async (t) => {
+    const { keys, make } = stdinWithKeys(9 * 1024 * 1024);
+    t.diagnostic(`${keys} chaves`);
+    assert.ok(Buffer.byteLength(make('toolu_0')) > SHORTCUT_STDIN_BYTES);
+    await assertDeliveredWithinDeadline(t, '9 MiB de chaves', make, { agentId: 'agente-1', check: emergencyOnly });
+  });
+
+  it('atalho de 8 MiB com o servidor real: 16 MiB numa string só chegam com 204, sem tool_response (perda aceita)', async (t) => {
+    const stdout = 'z'.repeat(16 * 1024 * 1024 - 400);
+    await assertDeliveredWithinDeadline(
+      t,
+      '16 MiB numa string',
+      (tag) => JSON.stringify({ ...BIG_IDS, agent_id: 'agente-1', tool_name: 'Bash', tool_use_id: tag, tool_response: { stdout } }),
+      {
+        agentId: 'agente-1',
+        check: (envelope) => {
+          assert.equal(envelope.payload.tool_response, undefined, 'sem tool_response');
+          assert.equal(envelope.payload.tool_name, 'Bash');
+          emergencyOnly(envelope);
+        },
+      },
+    );
+  });
+
+  it('atalho de 8 MiB com o servidor real: 16 MiB de chaves chegam com 204 e os obrigatórios; o tempo fica registrado', async (t) => {
+    // O JSON.parse de 16 MiB com ~1,4 milhão de chaves não pode ser interrompido (1,3 a 1,8 s
+    // medidos): o tempo é registrado, e a perda só é aceita com a máquina sobrecarregada.
+    const { keys, make } = stdinWithKeys(16 * 1024 * 1024);
+    assert.ok(Buffer.byteLength(make('toolu_0')) <= 16 * 1024 * 1024);
+    const home = newHome();
+    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
+    const health = () =>
+      new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port: running.port, path: '/api/health', agent: false }, (r) => {
+          let body = '';
+          r.setEncoding('utf8').on('data', (c) => (body += c)).on('end', () => resolve(JSON.parse(body).events));
+        }).on('error', reject);
+      });
+    const attempts = [];
+    const references = [];
+    try {
+      for (let i = 0; i < 5; i++) {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+        references.push((await spawnTimed([IMPORTS_ONLY], { env: minimalEnv({}) })).ownMs);
+        const tag = `toolu_${i}`;
+        const before = await health();
+        const run = await runForwarder({ home, stdin: make(tag) });
+        const after = await health();
+        assertSilentExit(run, `16 MiB de chaves, tentativa ${i + 1}`);
+        attempts.push({ tag, run, accepted: after.accepted - before.accepted, rejected: after.rejected - before.rejected });
+        if (after.accepted - before.accepted === 1) break;
+      }
+    } finally {
+      await running.close();
+    }
+    const detail = attempts.map((a) => `${a.tag}: ${a.run.ownMs.toFixed(0)} ms, accepted +${a.accepted}`).join('; ');
+    t.diagnostic(`16 MiB, ${keys} chaves: ${detail}`);
+    for (const attempt of attempts) assert.equal(attempt.rejected, 0, `nenhum 413 nem 400 (${detail})`);
+    const delivered = attempts.filter((a) => a.accepted === 1);
+    if (delivered.length === 0) {
+      if (median(references) > OVERLOADED_NODE_MS) {
+        t.skip(`entrega não avaliada, máquina sobrecarregada (mediana da referência ${median(references).toFixed(0)} ms); ${detail}`);
+        return;
+      }
+      assert.fail(`16 MiB de chaves: nenhuma entrega com a máquina normal (${detail})`);
+    }
+    const dumps = path.join(home, 'dumps');
+    const [line] = readdirSync(dumps).flatMap((file) => readFileSync(path.join(dumps, file), 'utf8').trim().split('\n'));
+    const envelope = JSON.parse(line);
+    assert.equal(envelope.truncated, true);
+    assert.equal(envelope.payload.session_id, BIG_IDS.session_id);
+    assert.equal(envelope.payload.hook_event_name, BIG_IDS.hook_event_name);
+    assert.equal(envelope.payload.agent_id, 'agente-1');
+    emergencyOnly(envelope);
   });
 
   it('com o servidor real (T3): o evento é aceito com o token do runtime.json', async () => {

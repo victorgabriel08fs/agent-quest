@@ -47,6 +47,28 @@ import { freePort, killTree, launchNpm, minimalEnv, waitFor } from './server-hel
 
 const isWindows = process.platform === 'win32';
 
+/** Obrigatórios e prioritários do passo 3, na ordem da seção 1 do modelo de eventos (oráculo próprio). */
+const REQUIRED_KEYS = ['hook_event_name', 'session_id', 'agent_id'];
+const PRIORITY_KEYS = ['agent_type', 'tool_name', 'tool_use_id', 'prompt_id', 'cwd', 'notification_type', 'source', 'reason', 'trigger'];
+const isSimpleValue = (v) => v === null || ['string', 'number', 'boolean'].includes(typeof v);
+
+/**
+ * Envelope de emergência (atalho de 8 MiB ou orçamento de tempo esgotado): só os
+ * obrigatórios e os prioritários que existem no original como valores simples,
+ * nessa ordem, com textos de até 512 unidades, `truncated: true` e nada mais.
+ */
+function assertEmergencyEnvelope(envelope, payload, label) {
+  assert.ok(envelope, `${label}: o envelope não chegou`);
+  assert.equal(envelope.truncated, true, `${label}: truncated`);
+  const expected = [...REQUIRED_KEYS, ...PRIORITY_KEYS].filter((k) => Object.hasOwn(payload, k) && isSimpleValue(payload[k]));
+  assert.deepEqual(Object.keys(envelope.payload), expected, `${label}: chaves do envelope de emergência`);
+  for (const key of expected) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.length > 512) assert.match(envelope.payload[key], /…\[cortado \d+ caracteres\]…/, `${label}: ${key} cortado`);
+    else assert.equal(envelope.payload[key], value, `${label}: ${key}`);
+  }
+}
+
 describe('T4 integração: matriz de falhas do encaminhador (servidor real do T3)', () => {
   let home;
   let server;
@@ -361,65 +383,42 @@ describe('T4 integração: matriz de falhas do encaminhador (servidor real do T3
     });
   });
 
-  it('stdin de 10 MiB: string única chega cortada; muitas strings curtas chegam reduzidas (teto do corpo) com 204; inválido não sai; em até 300 ms', async (t) => {
-    // a) uma string enorme (saída de comando, conteúdo de arquivo)
-    let before = await server.health();
-    const sent = [];
-    const timing = await assertWithinLimit(
-      t,
-      '10 MiB, string única',
-      async () => {
-        const payload = hookPayload({ hook_event_name: 'PostToolUse', tool_response: { stdout: 'z'.repeat(10 * 1024 * 1024) } });
-        const result = await runForwarder({ env: envFor(home), stdin: JSON.stringify(payload) });
-        sent.push({ id: payload.tool_use_id, result });
-        return result;
-      },
-      FAST_LIMIT_MS,
-    );
+  it('stdin de 10 MiB (acima do atalho de 8 MiB): string única ou muitas strings viram o envelope de emergência com 204; inválido não sai; em até 300 ms', async (t) => {
+    // Acima de 8 MiB, o encaminhador vai direto ao envelope de emergência depois
+    // do JSON.parse (modelo de eventos, seção 1, "atalho por tamanho"): só os
+    // obrigatórios e os prioritários; tool_response e tool_input ficam de fora.
     const find = (id) => server.dumped().find((e) => e.payload.tool_use_id === id);
-    await waitFor(() => sent.every((s) => find(s.id)), { timeoutMs: 3000, label: 'envelopes de 10 MiB' }).catch(() => {});
-    const runs = sent.map((s) => ({ ...s, delivered: Boolean(find(s.id)) }));
-    assertLossesOnlyByDeadline(t, '10 MiB, string única', runs, timing.references);
-    for (const run of runs.filter((r) => r.delivered)) {
-      const envelope = find(run.id);
-      assert.equal(envelope.truncated, true);
-      assert.ok(JSON.stringify(envelope).length < 16 * 1024);
+    const variants = {
+      // a) uma string enorme (saída de comando, conteúdo de arquivo)
+      '10 MiB, string única': () => hookPayload({ hook_event_name: 'PostToolUse', tool_response: { stdout: 'z'.repeat(10 * 1024 * 1024) } }),
+      // b) muitas strings abaixo de 4 KiB (por exemplo, um Glob enorme)
+      '10 MiB, muitas strings': () =>
+        hookPayload({ hook_event_name: 'PostToolUse', tool_response: { filenames: Array.from({ length: 2700 }, (_, i) => String(i).padEnd(4000, 'f')) } }),
+    };
+    for (const [label, make] of Object.entries(variants)) {
+      const before = await server.health();
+      const sent = [];
+      const timing = await assertWithinLimit(
+        t,
+        label,
+        async () => {
+          const payload = make();
+          const stdin = JSON.stringify(payload);
+          assert.ok(Buffer.byteLength(stdin) > 10 * 1024 * 1024);
+          const result = await runForwarder({ env: envFor(home), stdin });
+          assert.equal(result.stdinError, null);
+          sent.push({ payload, result });
+          return result;
+        },
+        FAST_LIMIT_MS,
+      );
+      await waitFor(() => sent.every((s) => find(s.payload.tool_use_id)), { timeoutMs: 3000, label }).catch(() => {});
+      const runs = sent.map((s) => ({ ...s, delivered: Boolean(find(s.payload.tool_use_id)) }));
+      assertLossesOnlyByDeadline(t, label, runs, timing.references);
+      for (const { payload } of runs.filter((r) => r.delivered)) assertEmergencyEnvelope(find(payload.tool_use_id), payload, label);
+      const events = await server.health();
+      assert.ok(events.rejected - before.rejected <= runs.filter((r) => !r.delivered).length, `${label}: recusa (413?) sem explicação`);
     }
-    let events = await server.health();
-    assert.ok(events.rejected - before.rejected <= runs.filter((r) => !r.delivered).length, 'recusa sem explicação');
-
-    // b) muitas strings abaixo de 4 KiB (por exemplo, um Glob enorme): o corte de
-    //    4 KiB não basta, e o teto do corpo (modelo de eventos, seção 1) reduz o
-    //    envelope até caber em 1 000 000 bytes. O servidor aceita com 204, sem 413.
-    before = events;
-    const manySent = [];
-    const manyTiming = await assertWithinLimit(
-      t,
-      '10 MiB, muitas strings',
-      async () => {
-        const payload = hookPayload({ hook_event_name: 'PostToolUse', tool_response: { filenames: Array.from({ length: 2700 }, (_, i) => String(i).padEnd(4000, 'f')) } });
-        const stdin = JSON.stringify(payload);
-        assert.ok(Buffer.byteLength(stdin) > 10 * 1024 * 1024);
-        const result = await runForwarder({ env: envFor(home), stdin });
-        assert.equal(result.stdinError, null);
-        manySent.push({ payload, result });
-        return result;
-      },
-      FAST_LIMIT_MS,
-    );
-    await waitFor(() => manySent.every((s) => find(s.payload.tool_use_id)), { timeoutMs: 3000, label: 'envelopes reduzidos' }).catch(() => {});
-    const manyRuns = manySent.map((s) => ({ ...s, delivered: Boolean(find(s.payload.tool_use_id)) }));
-    assertLossesOnlyByDeadline(t, '10 MiB, muitas strings', manyRuns, manyTiming.references);
-    for (const { payload } of manyRuns.filter((r) => r.delivered)) {
-      const envelope = find(payload.tool_use_id);
-      assert.ok(Buffer.byteLength(JSON.stringify(envelope)) <= 1_000_000, 'corpo acima do teto');
-      assert.equal(envelope.truncated, true);
-      assert.equal(envelope.payload.session_id, payload.session_id);
-      assert.equal(envelope.payload.hook_event_name, payload.hook_event_name);
-      assert.equal(envelope.payload.tool_response.filenames.length, 100, 'passo 2: listas com os 100 primeiros itens');
-    }
-    events = await server.health();
-    assert.ok(events.rejected - before.rejected <= manyRuns.filter((r) => !r.delivered).length, 'recusa (413?) sem explicação');
 
     // c) 10 MiB que não são JSON
     await assertNothingReaches(() =>
@@ -716,24 +715,73 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
 
   const keys = (n, value) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, value]));
 
-  // Casos do critério (plano, T4, ajuste de 18/10/2026), nas formas que acionam cada passo.
-  const criterionCases = {
-    '20 000 strings de 600 numa lista (passo 2)': () =>
-      hookPayload({ hook_event_name: 'PostToolUse', tool_response: { lines: Array.from({ length: 20_000 }, () => 'x'.repeat(600)) } }),
-    '20 000 strings de 600 como chaves do primeiro nível (passo 3)': () => ({ ...hookPayload({ hook_event_name: 'PostToolUse' }), ...keys(20_000, 'x'.repeat(600)) }),
-    '20 000 chaves simples em tool_input, com agent_id (passo 3)': () =>
-      hookPayload({ agent_id: 'a1b2c3d4e5f6a7b8c', agent_type: 'tester', tool_name: 'mcp__srv__x', tool_input: keys(20_000, 'x'.repeat(600)) }),
-    'lista de 50 000 nomes de arquivo (passo 2)': () =>
-      hookPayload({
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Glob',
-        tool_response: { filenames: Array.from({ length: 50_000 }, (_, i) => `C:\\Users\\usuario\\proj\\src\\modulo-${i}\\arquivo-${i}.ts`) },
-      }),
+  // Casos do critério (plano, T4: teto do corpo, orçamento de tempo e atalho de 8 MiB).
+  // O stdin é montado como texto, sem objetos gigantes no processo do teste.
+  const MiB = 1024 * 1024;
+  const headFields = (id) => ({
+    session_id: `sessao-teto-${id}`,
+    hook_event_name: 'PostToolUse',
+    agent_id: 'a1b2c3d4e5f6a7b8c',
+    agent_type: 'tester',
+    tool_name: 'X',
+    tool_use_id: id,
+    cwd: 'C:\\Users\\usuario\\Projetos\\teto',
+  });
+  const headText = (id) => JSON.stringify(headFields(id)).slice(0, -1); // sem o "}" final
+  /** `n` chaves simples "kN":0 (o prefixo k nunca coincide com um obrigatório ou prioritário). */
+  const manyKeys = (n) => {
+    const parts = new Array(n);
+    for (let i = 0; i < n; i++) parts[i] = `"k${i.toString(36)}":0`;
+    return parts.join(',');
+  };
+  /** Quantas chaves cabem em `limit` bytes depois de `prefixBytes` (o "}" final incluído). */
+  const keysFitting = (prefixBytes, limit) => {
+    let total = prefixBytes + 1;
+    let n = 0;
+    for (;;) {
+      const entry = `,"k${n.toString(36)}":0`.length;
+      if (total + entry > limit) return n;
+      total += entry;
+      n++;
+    }
+  };
+  const keysUpTo = (id, limit) => {
+    const head = headText(id);
+    return `${head},${manyKeys(keysFitting(Buffer.byteLength(head), limit))}}`;
+  };
+  /** Uma saída de comando enorme, com o resumo dos testes no fim, até `total` bytes exatos. */
+  const bigStdout = (id, total) => {
+    const pre = `${headText(id)},"tool_response":{"stdout":"`;
+    const post = 'ℹ tests 12\\nℹ pass 12"}}';
+    return pre + 'z'.repeat(total - Buffer.byteLength(pre + post)) + post;
   };
 
-  it('casos do critério com o servidor real: 204, truncated, ids intactos, corpo no teto e dentro do prazo de 2 s', async (t) => {
-    for (const [name, make] of Object.entries(criterionCases)) {
-      let payload;
+  const criterionCases = [
+    // [nome, (id) => stdin, caminho esperado]
+    ['600 mil chaves no primeiro nível (6,8 MiB: passos com orçamento)', (id) => `${headText(id)},${manyKeys(600_000)}}`, 'passos'],
+    ['1,15 milhão de chaves no primeiro nível (13 MiB: atalho)', (id) => `${headText(id)},${manyKeys(1_150_000)}}`, 'emergência'],
+    [
+      '20 000 × 600 em tool_input (11,7 MiB: atalho)',
+      (id) => `${headText(id)},"tool_input":{${Array.from({ length: 20_000 }, (_, i) => `"k${i}":"${'x'.repeat(600)}"`).join(',')}}}`,
+      'emergência',
+    ],
+    [
+      '50 000 nomes de arquivo (passo 2)',
+      (id) => `${headText(id)},"tool_response":{"filenames":[${Array.from({ length: 50_000 }, (_, i) => `"src/modulo-${i}/arquivo-${i}.ts"`).join(',')}]}}`,
+      'passo 2',
+    ],
+    ['9 MiB de chaves (atalho)', (id) => keysUpTo(id, 9 * MiB), 'emergência'],
+    ['16 MiB numa string só (atalho: sem tool_response, a perda aceita)', (id) => bigStdout(id, 16 * MiB), 'emergência'],
+    ['8 MiB exatos numa string (passos: tool_response cortado, com o fim preservado)', (id) => bigStdout(id, 8 * MiB), 'passo 1'],
+    ['8 MiB + 1 byte numa string (atalho)', (id) => bigStdout(id, 8 * MiB + 1), 'emergência'],
+    // Exceção registrada na seção 1: o JSON.parse de 16 MiB com o máximo de chaves não pode ser
+    // interrompido; numa máquina carregada o evento pode se perder (regra de carga dos helpers).
+    ['16 MiB com o máximo de chaves (atalho; JSON.parse no limite)', (id) => keysUpTo(id, 16 * MiB), 'emergência'],
+  ];
+
+  it('casos do critério com o servidor real: 204, obrigatórios intactos, caminho certo (passos ou atalho), corpo no teto e até 2,2 s', async (t) => {
+    for (const [name, makeStdin, path_] of criterionCases) {
+      let id;
       const results = [];
       const samples = [];
       const before = await server.health();
@@ -741,29 +789,58 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
         t,
         name,
         async () => {
-          payload = make();
-          const id = payload.tool_use_id;
-          const stdin = JSON.stringify(payload);
-          assert.ok(Buffer.byteLength(stdin) > 10 * 1024 * 1024 || name.startsWith('lista de 50'), `${name}: entrada pequena demais`);
+          id = hookPayload().tool_use_id;
+          const stdin = makeStdin(id);
+          const bytes = Buffer.byteLength(stdin);
+          if (path_ === 'emergência') assert.ok(bytes > 8 * MiB, `${name}: ${bytes} bytes não acionam o atalho`);
+          else assert.ok(bytes <= 8 * MiB, `${name}: ${bytes} bytes acionariam o atalho`);
           const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home }), stdin });
           results.push(result);
-          return { result, delivered: () => server.dumped().find((e) => e.payload.tool_use_id === id) };
+          const tag = id;
+          return { result, delivered: () => server.dumped().find((e) => e.payload.tool_use_id === tag) };
         },
         { samplesOut: samples },
       );
+      assertLifetimeWithin(t, name, results, samples, STUCK_LIMIT_MS);
       if (!envelope) continue;
       const bytes = Buffer.byteLength(JSON.stringify(envelope), 'utf8');
-      t.diagnostic(`${name}: ${bytes} bytes, ${results.at(-1).ownMs.toFixed(0)} ms de vida`);
+      t.diagnostic(`${name}: ${bytes} bytes, ${Object.keys(envelope.payload).length} chaves, ${results.at(-1).ownMs.toFixed(0)} ms de vida`);
       assert.ok(bytes <= MAX_BODY, `${name}: corpo de ${bytes} bytes`);
       assert.equal(envelope.truncated, true, name);
-      for (const key of ['hook_event_name', 'session_id', 'agent_id', 'tool_use_id']) {
-        if (Object.hasOwn(payload, key)) assert.equal(envelope.payload[key], payload[key], `${name}: ${key}`);
+      const head = headFields(id);
+      if (path_ === 'emergência') {
+        assertEmergencyEnvelope(envelope, head, name);
+      } else {
+        for (const key of REQUIRED_KEYS) assert.equal(envelope.payload[key], head[key], `${name}: ${key}`);
+        if (path_ === 'passo 2') assert.equal(envelope.payload.tool_response.filenames.length, 100, `${name}: 100 primeiros itens`);
+        if (path_ === 'passo 1') {
+          assert.match(envelope.payload.tool_response.stdout, /…\[cortado \d+ caracteres\]…/);
+          assert.ok(envelope.payload.tool_response.stdout.endsWith('ℹ tests 12\nℹ pass 12'), `${name}: o fim (resumo dos testes) é preservado`);
+        }
       }
       const events = await server.health();
       assert.ok(events.accepted > before.accepted, `${name}: não foi aceito (204)`);
       assert.equal(events.rejected, before.rejected, `${name}: recusado (413?)`);
-      assertLifetimeWithin(t, name, results, samples, 2000);
     }
+  });
+
+  it('obrigatórios longos no envelope de emergência: 128 + 384 sem surrogate solto nas duas bordas', async (t) => {
+    // Vetor nas duas bordas do corte de 512: um emoji começa na unidade 128 e outro termina na 385.ª do fim.
+    const sessionId = `${'a'.repeat(127)}😀${'b'.repeat(400)}😀${'c'.repeat(383)}`;
+    const expected = `${'a'.repeat(127)}…[cortado ${sessionId.length - 127 - 383} caracteres]…${'c'.repeat(383)}`;
+    let id;
+    const envelope = await assertDelivered(t, 'emergência com session_id longo', async () => {
+      id = hookPayload().tool_use_id;
+      const head = JSON.stringify({ session_id: sessionId, hook_event_name: 'PostToolUse', tool_use_id: id }).slice(0, -1);
+      const stdin = `${head},"tool_response":{"stdout":"${'z'.repeat(9 * MiB)}"}}`; // acima de 8 MiB: atalho
+      const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home }), stdin });
+      const tag = id;
+      return { result, delivered: () => server.dumped().find((e) => e.payload.tool_use_id === tag) };
+    });
+    if (!envelope) return;
+    assert.deepEqual(Object.keys(envelope.payload), ['hook_event_name', 'session_id', 'tool_use_id']);
+    assert.equal(envelope.payload.session_id, expected);
+    assert.ok(envelope.payload.session_id.isWellFormed());
   });
 
   it('limite exato: corpo de 1 000 000 bytes vai sem redução (truncated: false); com 1 byte a mais, cai para o passo 2', async (t) => {
@@ -804,14 +881,15 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
 
   it('Unicode e escapes: o teto conta os bytes UTF-8 do corpo de verdade, e nenhum corte parte surrogate', async (t) => {
     const BACKSLASH = String.fromCharCode(92);
-    // Cerca de 12 a 15 MiB no stdin cada (abaixo dos 16 MiB), em chaves do primeiro nível (passo 3).
+    // Em chaves do primeiro nível (passo 3), abaixo do atalho de 8 MiB.
     const cases = {
-      'CJK (3 bytes por unidade)': [1200, '中'.repeat(4096), true],
-      'emoji (4 bytes por par)': [1800, '😀'.repeat(2048), true],
-      'emoji desalinhado (par na borda dos cortes)': [1800, `a${'😀'.repeat(2047)}b`, true],
-      'surrogate solto (6 bytes no JSON)': [600, '\uD800'.repeat(4096), false],
-      'caracteres de controle (6 bytes no JSON)': [600, '\u0001'.repeat(4096), true],
-      'aspas e barras (2 bytes no JSON)': [1500, `"${BACKSLASH}`.repeat(2048), true],
+      // Cerca de 7,4 MB cada: abaixo do atalho de 8 MiB, e grandes demais para os passos 1 e 2.
+      'CJK (3 bytes por unidade)': [1200, '中'.repeat(2048), true],
+      'emoji (4 bytes por par)': [1800, '😀'.repeat(1024), true],
+      'emoji desalinhado (par na borda dos cortes)': [1800, `a${'😀'.repeat(1023)}b`, true],
+      'surrogate solto (6 bytes no JSON)': [600, '\uD800'.repeat(2048), false],
+      'caracteres de controle (6 bytes no JSON)': [600, '\u0001'.repeat(2048), true],
+      'aspas e barras (2 bytes no JSON)': [1800, `"${BACKSLASH}`.repeat(1024), true],
     };
     for (const [name, [count, value, wellFormed]] of Object.entries(cases)) {
       const results = [];
@@ -823,7 +901,7 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
         async () => {
           payload = { ...hookPayload({ hook_event_name: 'PostToolUse' }), ...keys(count, value) };
           const stdin = JSON.stringify(payload);
-          assert.ok(Buffer.byteLength(stdin) < 16 * 1024 * 1024, `${name}: stdin acima de 16 MiB`);
+          assert.ok(Buffer.byteLength(stdin) <= 8 * 1024 * 1024, `${name}: stdin acima de 8 MiB acionaria o atalho`);
           const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: recorderHome }), stdin });
           results.push(result);
           return { result, delivered: () => recorded(payload.tool_use_id) };
@@ -866,7 +944,7 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
           ...(withAgent ? { agent_id: 'a1b2c3d4e5f6a7b8c' } : {}),
           nulo: null,
           hook_event_name: 'PreToolUse',
-          tool_response: keys(20_000, 'y'.repeat(600)),
+          tool_response: keys(12_000, 'y'.repeat(600)), // cerca de 7 MiB: abaixo do atalho, acima dos passos 1 e 2
           tool_name: 'Bash',
           tool_use_id: n.tool_use_id,
           numero: 42,
@@ -894,6 +972,96 @@ describe('T4 integração: teto do corpo de 1 000 000 bytes (modelo de eventos, 
       assert.deepEqual(Object.keys(got.envelope.payload), expected.map(([k]) => k), `${label}: ordem das chaves`);
       assert.deepEqual(Object.keys(got.envelope.payload.tool_input), ['b', 'a'], `${label}: ordem em tool_input`);
       assert.deepEqual(Object.entries(got.envelope.payload), expected, `${label}: valores`);
+    }
+  });
+
+  it('surrogates nas duas bordas do corte de 512 (passos 2 e 3): o par inteiro sai, nenhum fica solto', async (t) => {
+    // Um emoji começa na unidade 128 (borda do início) e outro termina logo antes das 383 finais (borda do fim).
+    const vector = (n) => `${'a'.repeat(127)}😀${'b'.repeat(n)}😀${'c'.repeat(383)}`;
+    const cutOf = (s) => `${'a'.repeat(127)}…[cortado ${s.length - 127 - 383} caracteres]…${'c'.repeat(383)}`;
+    const cases = {
+      // ~7 MB: abaixo do atalho; a lista só cabe no passo 2 (100 itens, 128 + 384).
+      'passo 2 (lista)': (id) => ({
+        payload: hookPayload({ tool_use_id: id, hook_event_name: 'PostToolUse', tool_response: { lines: Array.from({ length: 2000 }, () => vector(3000)) } }),
+        check: (p) => {
+          assert.equal(p.tool_response.lines.length, 100);
+          for (const line of p.tool_response.lines) assert.equal(line, cutOf(vector(3000)));
+        },
+      }),
+      // ~6,3 MB: chaves do primeiro nível, que o passo 2 não reduz; cai no passo 3.
+      'passo 3 (chaves do primeiro nível)': (id) => ({
+        payload: { ...hookPayload({ tool_use_id: id, hook_event_name: 'PostToolUse' }), ...keys(2500, vector(2000)) },
+        check: (p) => {
+          const values = Object.entries(p).filter(([k]) => /^k\d+$/.test(k)).map(([, v]) => v);
+          assert.ok(values.length > 0, 'nenhum valor coube');
+          for (const value of values) assert.equal(value, cutOf(vector(2000)));
+        },
+      }),
+    };
+    for (const [name, make] of Object.entries(cases)) {
+      let check;
+      const got = await assertDelivered(t, name, async () => {
+        const id = hookPayload().tool_use_id;
+        const built = make(id);
+        check = built.check;
+        const stdin = JSON.stringify(built.payload);
+        assert.ok(Buffer.byteLength(stdin) <= 8 * MiB, `${name}: acima do atalho`);
+        const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: recorderHome }), stdin });
+        return { result, delivered: () => recorded(id) };
+      });
+      if (!got) continue;
+      assert.ok(got.bytes <= MAX_BODY);
+      assert.ok(got.text.isWellFormed(), `${name}: surrogate solto no corpo`);
+      check(got.envelope.payload);
+    }
+  });
+
+  it('partida lenta (máquina carregada simulada): payload pequeno sai completo enquanto houver prazo', async (t) => {
+    // O passo 1 nunca é interrompido pelo tempo (problema achado pelo tester do T5 às 22:04).
+    for (const slowMs of [1000, 1500, 1750]) {
+      const label = `partida +${slowMs} ms`;
+      let payload;
+      const { value: result, samples } = await withLoadSamples(() => {
+        payload = hookPayload({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'npm test', description: 'Roda os testes' },
+          tool_response: { stdout: `${'saída '.repeat(500)}ℹ pass 12`, stderr: '', interrupted: false },
+        });
+        return runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: recorderHome }), stdin: JSON.stringify(payload), slowMs });
+      });
+      assertSilentExit(result, label);
+      const got = await waitFor(() => recorded(payload.tool_use_id), { timeoutMs: 2000, label }).catch(() => null);
+      if (!got) {
+        // Sem envio, só se a partida lenta somada à carga real esgotou o prazo de 2 s de fato.
+        assert.ok(result.ownMs >= 1900, `${label}: saiu em ${result.ownMs.toFixed(0)} ms sem enviar`);
+        const load = loadFrom(samples);
+        assert.ok(!load.normal, `${label}: não enviou com a máquina normal (${load.text}), ${result.ownMs.toFixed(0)} ms`);
+        t.diagnostic(`${label}: não enviado, máquina sobrecarregada (${load.text}), ${result.ownMs.toFixed(0)} ms`);
+        continue;
+      }
+      t.diagnostic(`${label}: ${result.ownMs.toFixed(0)} ms de vida`);
+      assert.equal(got.envelope.truncated, false, `${label}: o passo 1 nunca é interrompido pelo tempo`);
+      assert.deepEqual(got.envelope.payload, payload, `${label}: payload completo`);
+    }
+  });
+
+  it('partida lenta com payload grande (600 mil chaves, abaixo do atalho): nunca sai cedo sem enviar; o que chega tem os obrigatórios', async (t) => {
+    for (const slowMs of [500, 1000, 1400]) {
+      const label = `partida +${slowMs} ms, 600 mil chaves`;
+      const id = hookPayload().tool_use_id;
+      const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: recorderHome }), stdin: `${headText(id)},${manyKeys(600_000)}}`, slowMs });
+      assertSilentExit(result, label);
+      const got = await waitFor(() => recorded(id), { timeoutMs: 2000, label }).catch(() => null);
+      t.diagnostic(`${label}: ${got ? `enviado com ${Object.keys(got.envelope.payload).length} chaves` : 'não enviado'}, ${result.ownMs.toFixed(0)} ms de vida`);
+      if (got) {
+        const head = headFields(id);
+        for (const key of REQUIRED_KEYS) assert.equal(got.envelope.payload[key], head[key], `${label}: ${key}`);
+        assert.ok(got.bytes <= MAX_BODY);
+      } else {
+        // A partida lenta é carga simulada: perder o evento só vale com o prazo esgotado.
+        assert.ok(result.ownMs >= 1900, `${label}: saiu em ${result.ownMs.toFixed(0)} ms sem enviar`);
+      }
     }
   });
 

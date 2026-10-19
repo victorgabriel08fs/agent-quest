@@ -16,8 +16,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 export const RUNTIME_FILE_NAME = 'runtime.json';
 
 /** No Windows, antivírus e indexadores seguram arquivos novos por instantes. */
-const RENAME_RETRIES = 10;
-const RENAME_RETRY_DELAY_MS = 20;
+// Um encaminhador lendo o runtime.json no mesmo instante também bloqueia o
+// rename (EPERM). Tenta por até ~2 s, com espera crescente (10, 20, 40... até 200 ms).
+export const RENAME_RETRY_WINDOW_MS = 2000;
+const RENAME_FIRST_DELAY_MS = 10;
+const RENAME_MAX_DELAY_MS = 200;
 const RETRYABLE_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 /**
@@ -137,14 +140,17 @@ export function isPidAlive(pid) {
  * @param {string} to
  */
 async function renameWithRetry(from, to) {
-  for (let attempt = 1; ; attempt++) {
+  const deadline = Date.now() + RENAME_RETRY_WINDOW_MS;
+  let delay = RENAME_FIRST_DELAY_MS;
+  for (;;) {
     try {
       await rename(from, to);
       return;
     } catch (err) {
       const code = /** @type {any} */ (err)?.code;
-      if (attempt >= RENAME_RETRIES || !RETRYABLE_RENAME_ERRORS.has(code)) throw err;
-      await sleep(RENAME_RETRY_DELAY_MS);
+      if (!RETRYABLE_RENAME_ERRORS.has(code) || Date.now() + delay > deadline) throw err;
+      await sleep(delay);
+      delay = Math.min(delay * 2, RENAME_MAX_DELAY_MS);
     }
   }
 }

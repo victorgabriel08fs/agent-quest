@@ -1,10 +1,11 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  RENAME_RETRY_WINDOW_MS,
   RUNTIME_FILE_NAME,
   createToken,
   isPidAlive,
@@ -58,6 +59,24 @@ describe('writeRuntimeFile e readRuntimeFile', () => {
     await writeRuntimeFile(tmp.dir, sample({ port: 50002 }));
     assert.equal(readRuntimeFile(tmp.dir).port, 50002);
     assert.deepEqual(readdirSync(tmp.dir).filter((name) => name.startsWith(RUNTIME_FILE_NAME)), [RUNTIME_FILE_NAME]);
+  });
+
+  it('com um leitor segurando o runtime.json aberto (no Windows, o rename falha com EPERM), grava quando ele solta', async () => {
+    await writeRuntimeFile(tmp.dir, sample({ port: 52000 }));
+    const fd = openSync(runtimeFilePath(tmp.dir), 'r');
+    const released = new Promise((resolve) =>
+      setTimeout(() => {
+        closeSync(fd);
+        resolve(undefined);
+      }, 300),
+    );
+    const begin = Date.now();
+    await writeRuntimeFile(tmp.dir, sample({ port: 52001 }));
+    await released;
+    assert.equal(readRuntimeFile(tmp.dir).port, 52001);
+    assert.ok(Date.now() - begin < RENAME_RETRY_WINDOW_MS + 500, 'dentro da janela de novas tentativas');
+    assert.deepEqual(readdirSync(tmp.dir).filter((name) => name.startsWith(RUNTIME_FILE_NAME)), [RUNTIME_FILE_NAME], 'sem temporário sobrando');
+    assert.equal(RENAME_RETRY_WINDOW_MS, 2000);
   });
 
   it('um leitor nunca vê o arquivo pela metade durante gravações seguidas', async () => {

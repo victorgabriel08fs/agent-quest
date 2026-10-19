@@ -70,6 +70,27 @@ writeFileSync(
 );
 const TIMER_URL = pathToFileURL(TIMER).href;
 
+/**
+ * Preload de partida lenta: ocupa a CPU por AQ_SLOW_MS antes do encaminhador
+ * (como uma máquina carregada, process.uptime() avança) e grava o tempo de vida
+ * como o preload acima.
+ */
+const SLOW_TIMER = path.join(TIMING_DIR, 'slow-start.mjs');
+writeFileSync(
+  SLOW_TIMER,
+  [
+    "import { writeFileSync } from 'node:fs';",
+    "import process from 'node:process';",
+    'const end = performance.now() + Number(process.env.AQ_SLOW_MS || 0);',
+    'while (performance.now() < end) {}',
+    "process.on('exit', () => {",
+    '  try { writeFileSync(process.env.AQ_TIMING_FILE, String(performance.now())); } catch {}',
+    '});',
+    '',
+  ].join('\n'),
+);
+const SLOW_TIMER_URL = pathToFileURL(SLOW_TIMER).href;
+
 /** Referência: só importa os mesmos módulos node:* do encaminhador e sai. */
 const REFERENCE = path.join(TIMING_DIR, 'reference.mjs');
 writeFileSync(
@@ -88,15 +109,15 @@ let timingSeq = 0;
  * @param {string} script
  * @param {{ env: Record<string,string>, stdin?: string|Buffer, keepStdinOpen?: boolean, cwd?: string, guardMs?: number, timed?: boolean }} options
  */
-export function runNode(script, { env, stdin = '', keepStdinOpen = false, cwd, guardMs = 10_000, timed = true }) {
+export function runNode(script, { env, stdin = '', keepStdinOpen = false, cwd, guardMs = 10_000, timed = true, slowMs = 0 }) {
   const timingFile = path.join(TIMING_DIR, `t${timingSeq++}.txt`);
-  const args = timed ? ['--import', TIMER_URL, script] : [script];
+  const args = slowMs > 0 ? ['--import', SLOW_TIMER_URL, script] : timed ? ['--import', TIMER_URL, script] : [script];
   return new Promise((resolve, reject) => {
     const begin = performance.now();
     const beginEpoch = Date.now();
     const child = spawn(process.execPath, args, {
       cwd,
-      env: timed ? { ...env, AQ_TIMING_FILE: timingFile } : env,
+      env: slowMs > 0 ? { ...env, AQ_TIMING_FILE: timingFile, AQ_SLOW_MS: String(slowMs) } : timed ? { ...env, AQ_TIMING_FILE: timingFile } : env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -136,8 +157,8 @@ export function forwarderEnv(extra = {}) {
 }
 
 /** `node forward.mjs` como o Claude Code roda. */
-export function runForwarder({ forwarder = FORWARDER, env, stdin = '', keepStdinOpen = false, cwd, guardMs, timed = true }) {
-  return runNode(forwarder, { env, stdin, keepStdinOpen, cwd, guardMs, timed });
+export function runForwarder({ forwarder = FORWARDER, env, stdin = '', keepStdinOpen = false, cwd, guardMs, timed = true, slowMs = 0 }) {
+  return runNode(forwarder, { env, stdin, keepStdinOpen, cwd, guardMs, timed, slowMs });
 }
 
 /** Código 0, sem sinal, sem guarda e nada em stdout nem em stderr. */

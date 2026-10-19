@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 const startedAt = Date.now();
 
 /** Versão do encaminhador (igual à do plugin.json; um teste confere). */
-export const FORWARDER_VERSION = '0.1.1';
+export const FORWARDER_VERSION = '0.1.2';
 
 /** Único destino possível (ADR 0006). */
 export const HOST = '127.0.0.1';
@@ -66,6 +66,30 @@ export const TAIL_CHARS = 3 * 1024;
 
 /** Teto do corpo enviado, em bytes UTF-8 (modelo de eventos, seção 1, "Teto do corpo"). */
 export const MAX_BODY_BYTES = 1_000_000;
+
+/**
+ * Orçamento de tempo da redução (modelo de eventos, seção 1): até 1 s desde o
+ * início da redução (stdin já lido e interpretado), só a partir do passo 2,
+ * conferido antes de cada passo e a cada 1 000 itens nos laços. Esgotado, sai
+ * o envelope de emergência. O prazo total de ~2 s fica com o timeout do POST.
+ */
+export const REDUCTION_BUDGET_MS = 1000;
+export const BUDGET_CHECK_EVERY = 1000;
+
+/**
+ * Tempo guardado para o POST antes do prazo de 2 s: o orçamento da redução nunca
+ * passa de `DEADLINE_MS - POST_RESERVE_MS` desde a partida do processo, para o
+ * envelope de emergência ainda ser enviado.
+ */
+export const POST_RESERVE_MS = 250;
+
+/**
+ * Atalho por tamanho (modelo de eventos, seção 1): com stdin acima de 8 MiB, vai
+ * direto ao envelope de emergência depois do `JSON.parse`, sem listar chaves (a
+ * listagem de um objeto gigante não pode ser interrompida). Limite provisório,
+ * revisto no G0b com os tamanhos reais do T0.
+ */
+export const SHORTCUT_STDIN_BYTES = 8 * 1024 * 1024;
 
 /** Passo 2 da redução: strings acima de 512 unidades viram 128 + 384; listas, 100 itens. */
 export const SHORT_STRING_CHARS = 512;
@@ -236,43 +260,94 @@ export const STEP2_RULES = Object.freeze({
  * Copia o valor aplicando as regras, em qualquer nível. Não altera o original,
  * para cada passo partir do payload como chegou (e o N do marcador contar as
  * unidades retiradas do texto original).
+ *
+ * Com `sizeLimit`, acompanha um piso do tamanho do JSON de saída, em unidades
+ * UTF-16 (que nunca passam dos bytes UTF-8): quando o piso passa do limite, o
+ * passo não vai caber de jeito nenhum e é abandonado na hora (`StepTooLarge`),
+ * sem copiar nem serializar o resto. Assim um passo visita no máximo cerca de
+ * `sizeLimit` nós, qualquer que seja o tamanho da entrada.
  * @param {unknown} root
  * @param {ReduceRules} rules
+ * @param {{ timeBudget?: TimeBudget|null, sizeLimit?: number, keysOf?: (object: object) => string[] }} [options]
  * @returns {{ value: unknown, truncated: boolean }}
  */
-export function reduceValue(root, rules) {
+export function reduceValue(root, rules, { timeBudget = null, sizeLimit = Infinity, keysOf = Object.keys } = {}) {
   let truncated = false;
+  let floor = 0;
+
+  /** @param {number} units */
+  function grow(units) {
+    floor += units;
+    if (floor > sizeLimit) throw new StepTooLarge();
+  }
 
   /**
    * @param {unknown} value
    * @returns {unknown}
    */
   function visit(value) {
+    timeBudget?.tick();
     if (typeof value === 'string') {
-      if (value.length <= rules.maxChars) return value;
-      truncated = true;
-      return cutString(value, rules.headChars, rules.tailChars);
+      const out = value.length <= rules.maxChars ? value : cutString(value, rules.headChars, rules.tailChars);
+      if (out !== value) truncated = true;
+      grow(out.length + 2);
+      return out;
     }
     if (Array.isArray(value)) {
       if (value.length > rules.maxItems) truncated = true;
       const count = Math.min(value.length, rules.maxItems);
+      grow(2);
       const copy = new Array(count);
-      for (let i = 0; i < count; i++) copy[i] = visit(value[i]);
+      for (let i = 0; i < count; i++) {
+        if (i > 0) grow(1);
+        copy[i] = visit(value[i]);
+      }
       return copy;
     }
     if (value !== null && typeof value === 'object') {
+      grow(2);
       /** @type {Record<string, unknown>} */
       const copy = {};
-      for (const key of Object.keys(value)) {
+      let first = true;
+      for (const key of keysOf(value)) {
+        grow(key.length + (first ? 3 : 4));
+        first = false;
         setOwn(copy, key, visit(/** @type {Record<string, unknown>} */ (value)[key]));
       }
       return copy;
     }
+    grow(value === null || typeof value === 'boolean' ? 4 : 1);
     return value;
   }
 
   const value = visit(root);
   return { value, truncated };
+}
+
+/**
+ * `Object.keys` com cache para objetos grandes (acima de 1 000 chaves): com
+ * centenas de milhares de chaves, listar as chaves custa centenas de ms, e os
+ * passos 1, 2 e 3 percorrem o mesmo objeto.
+ * @returns {(object: object) => string[]}
+ */
+export function createKeyCache() {
+  /** @type {WeakMap<object, string[]>} */
+  const cache = new WeakMap();
+  return (object) => {
+    const cached = cache.get(object);
+    if (cached) return cached;
+    const keys = Object.keys(object);
+    if (keys.length > 1000) cache.set(object, keys);
+    return keys;
+  };
+}
+
+/** O passo não cabe no teto de jeito nenhum (o piso do tamanho já passou). */
+export class StepTooLarge extends Error {
+  constructor() {
+    super('o passo não cabe no teto do corpo');
+    this.name = 'StepTooLarge';
+  }
 }
 
 /**
@@ -322,26 +397,151 @@ export function buildEnvelope(payload, options) {
  * 3. envelope mínimo (`minimalPayload`).
  * Além do primeiro passo, `truncated` é `true`. Devolve `null` se nem o
  * envelope mínimo couber (por exemplo, um `session_id` absurdo): aí não envia.
+ *
+ * Orçamento de tempo ("Orçamento de tempo da redução"): conta a partir do início
+ * da redução (o stdin já foi lido e interpretado), vale só a partir do passo 2 e
+ * é conferido antes de cada passo e a cada 1 000 itens; esgotado, sai o envelope
+ * de emergência (`emergencyPayload`). O passo 1 nunca é interrompido pelo tempo:
+ * um payload que cabe no teto depois dele sai sempre completo, mesmo com a
+ * máquina lenta. Os passos 1 e 2 são abandonados assim que se sabe que não cabem
+ * (`reduceValue` com `sizeLimit`), então não custam mais que o teto.
  * @param {Record<string, unknown>} payload
- * @param {{ sentAt: number, env: Record<string, string|undefined>, maxBytes?: number }} options
+ *
+ * Atalho: com `inputBytes` (tamanho do stdin) acima de 8 MiB, sai direto o
+ * envelope de emergência, sem passar pelos passos.
+ * @param {{ sentAt: number, env: Record<string, string|undefined>, maxBytes?: number, now?: () => number, budgetMs?: number, inputBytes?: number }} options
  * @returns {string|null}
  */
-export function buildBody(payload, { sentAt, env, maxBytes = MAX_BODY_BYTES }) {
+export function buildBody(
+  payload,
+  { sentAt, env, maxBytes = MAX_BODY_BYTES, now = elapsedSinceStart, budgetMs = REDUCTION_BUDGET_MS, inputBytes = 0 },
+) {
   const fits = (/** @type {string} */ body) => Buffer.byteLength(body, 'utf8') <= maxBytes;
+  const emergency = () => {
+    const body = JSON.stringify(envelopeOf(emergencyPayload(payload), true, { sentAt, env }));
+    return fits(body) ? body : null;
+  };
+  if (inputBytes > SHORTCUT_STDIN_BYTES) return emergency();
 
-  const first = reduceValue(payload, STEP1_RULES);
-  const body1 = JSON.stringify(envelopeOf(first.value, first.truncated, { sentAt, env }));
-  if (fits(body1)) return body1;
+  // O orçamento termina no que vier primeiro: 1 s depois do início da redução, ou
+  // a hora que ainda deixa a reserva do POST antes do prazo de 2 s do processo.
+  const timeBudget = createTimeBudget(now, Math.min(now() + budgetMs, DEADLINE_MS - POST_RESERVE_MS));
+  // Bytes do envelope sem o payload (com `truncated: false`, a forma mais longa).
+  const overhead = Buffer.byteLength(JSON.stringify(envelopeOf({}, false, { sentAt, env })), 'utf8') - 2;
+  const sizeLimit = maxBytes - overhead;
+  const keysOf = createKeyCache();
 
-  const second = reduceValue(payload, STEP2_RULES);
-  const body2 = JSON.stringify(envelopeOf(second.value, true, { sentAt, env }));
-  if (fits(body2)) return body2;
+  // Passo 1: sem orçamento de tempo; só é abandonado se certamente não couber.
+  try {
+    const first = reduceValue(payload, STEP1_RULES, { sizeLimit, keysOf });
+    const body1 = JSON.stringify(envelopeOf(first.value, first.truncated, { sentAt, env }));
+    if (fits(body1)) return body1;
+  } catch (err) {
+    if (!(err instanceof StepTooLarge)) throw err;
+  }
 
-  const base = JSON.stringify(envelopeOf({}, true, { sentAt, env }));
-  const minimal = minimalPayload(payload, maxBytes - Buffer.byteLength(base, 'utf8'));
-  if (!minimal) return null;
-  const body3 = JSON.stringify(envelopeOf(minimal, true, { sentAt, env }));
-  return fits(body3) ? body3 : null;
+  try {
+    timeBudget.check();
+    try {
+      const second = reduceValue(payload, STEP2_RULES, { timeBudget, sizeLimit, keysOf });
+      timeBudget.check();
+      const body2 = JSON.stringify(envelopeOf(second.value, true, { sentAt, env }));
+      if (fits(body2)) return body2;
+    } catch (err) {
+      if (!(err instanceof StepTooLarge)) throw err;
+    }
+
+    timeBudget.check();
+    const base = JSON.stringify(envelopeOf({}, true, { sentAt, env }));
+    const minimal = minimalPayload(payload, maxBytes - Buffer.byteLength(base, 'utf8'), timeBudget, keysOf);
+    if (!minimal) return null;
+    const body3 = JSON.stringify(envelopeOf(minimal, true, { sentAt, env }));
+    return fits(body3) ? body3 : null;
+  } catch (err) {
+    if (!(err instanceof ReductionTimeout)) throw err;
+    return emergency();
+  }
+}
+
+/**
+ * Tempo desde o início do processo, em ms (inclui a partida do Node, como o prazo de 2 s).
+ * @returns {number}
+ */
+export function elapsedSinceStart() {
+  return process.uptime() * 1000;
+}
+
+/** O orçamento de tempo da redução acabou (interrompe os passos em andamento). */
+export class ReductionTimeout extends Error {
+  constructor() {
+    super('orçamento de tempo da redução esgotado');
+    this.name = 'ReductionTimeout';
+  }
+}
+
+/**
+ * @typedef {object} TimeBudget
+ * @property {() => void} check          confere agora; lança `ReductionTimeout` se acabou
+ * @property {() => void} tick           conta um item; confere o relógio a cada 1 000
+ */
+
+/**
+ * @param {() => number} now             ms desde o início do processo
+ * @param {number} limitMs
+ * @returns {TimeBudget}
+ */
+export function createTimeBudget(now, limitMs) {
+  let items = 0;
+  const check = () => {
+    if (now() >= limitMs) throw new ReductionTimeout();
+  };
+  return {
+    check,
+    tick() {
+      items++;
+      if (items % BUDGET_CHECK_EVERY === 0) check();
+    },
+  };
+}
+
+/**
+ * Envelope de emergência (orçamento esgotado ou stdin acima de 8 MiB): só os
+ * obrigatórios e os prioritários do passo 3, lidos por acesso direto no primeiro
+ * nível (sem listar chaves), com textos de até 512 unidades. Custo constante,
+ * qualquer que seja o tamanho do payload.
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
+export function emergencyPayload(payload) {
+  /** @type {Record<string, unknown>} */
+  const result = {};
+  for (const key of [...MINIMAL_REQUIRED_KEYS, ...MINIMAL_PRIORITY_KEYS]) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    const value = payload[key];
+    if (!isSimpleValue(value)) continue;
+    setOwn(result, key, shortenText(value));
+  }
+  return result;
+}
+
+/**
+ * Valor simples do passo 3: texto, número, booleano ou `null`.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isSimpleValue(value) {
+  return value === null || typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string';
+}
+
+/**
+ * Texto acima de 512 unidades vira 128 + 384 (regra do passo 2 e do passo 3).
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function shortenText(value) {
+  return typeof value === 'string' && value.length > SHORT_STRING_CHARS
+    ? cutString(value, SHORT_HEAD_CHARS, SHORT_TAIL_CHARS)
+    : value;
 }
 
 /** Passo 3: entram sempre, se existirem no original (sem `agent_id`, um evento de subagente iria para o `main`). */
@@ -372,23 +572,18 @@ export const MINIMAL_PRIORITY_KEYS = Object.freeze([
  * Devolve `null` se os obrigatórios não couberem: aí não envia.
  * @param {Record<string, unknown>} payload
  * @param {number} budget                bytes disponíveis para o JSON do payload
+ * @param {TimeBudget|null} [timeBudget] orçamento de tempo, conferido a cada 1 000 chaves
+ * @param {(object: object) => string[]} [keysOf]  lista de chaves (com cache entre os passos)
  * @returns {Record<string, unknown>|null}
  */
-export function minimalPayload(payload, budget) {
+export function minimalPayload(payload, budget, timeBudget = null, keysOf = Object.keys) {
   /** @type {Record<string, unknown>} */
   const result = {};
   let size = 2; // {}
   /** Membros já gravados em cada objeto (para a vírgula), sem recontar as chaves. */
   const members = new Map([[result, 0]]);
-
-  /** @param {unknown} value */
-  const isSimple = (value) =>
-    value === null || typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string';
-  /** @param {unknown} value */
-  const shorten = (value) =>
-    typeof value === 'string' && value.length > SHORT_STRING_CHARS
-      ? cutString(value, SHORT_HEAD_CHARS, SHORT_TAIL_CHARS)
-      : value;
+  const isSimple = isSimpleValue;
+  const shorten = shortenText;
 
   /**
    * Acrescenta `"chave":valor` a `target` se couber no orçamento.
@@ -416,28 +611,42 @@ export function minimalPayload(payload, budget) {
     if (!add(result, key, shorten(payload[key]))) return null;
   }
 
-  // 2 e 3. Prioritários, depois os demais simples do primeiro nível, na ordem do original.
-  const rest = Object.keys(payload).filter((key) => !MINIMAL_PRIORITY_KEYS.includes(key));
-  for (const key of [...MINIMAL_PRIORITY_KEYS.filter(has), ...rest]) {
-    if (MINIMAL_REQUIRED_KEYS.includes(key) || key === 'tool_input') continue;
+  // 2. Prioritários, na ordem da decisão.
+  for (const key of MINIMAL_PRIORITY_KEYS) {
+    if (has(key) && isSimple(payload[key])) add(result, key, shorten(payload[key]));
+  }
+
+  // 3. Os demais simples do primeiro nível, na ordem do original, enquanto couberem:
+  //    o primeiro que não cabe encerra o passo (linear, limitado pelo teto).
+  let full = false;
+  for (const key of keysOf(payload)) {
+    timeBudget?.tick();
+    if (SKIP_IN_REST.has(key)) continue;
     const value = payload[key];
-    if (isSimple(value)) add(result, key, shorten(value));
+    if (isSimple(value) && !add(result, key, shorten(value))) {
+      full = true;
+      break;
+    }
   }
 
   // 4. Os simples de tool_input, na ordem do original.
   const input = payload.tool_input;
-  if (input !== null && typeof input === 'object' && !Array.isArray(input)) {
+  if (!full && input !== null && typeof input === 'object' && !Array.isArray(input)) {
     /** @type {Record<string, unknown>} */
     const inner = {};
     if (add(result, 'tool_input', inner)) {
-      for (const key of Object.keys(input)) {
+      for (const key of keysOf(input)) {
+        timeBudget?.tick();
         const value = /** @type {Record<string, unknown>} */ (input)[key];
-        if (isSimple(value)) add(inner, key, shorten(value));
+        if (isSimple(value) && !add(inner, key, shorten(value))) break;
       }
     }
   }
   return result;
 }
+
+/** Chaves que o passo 3 trata antes (obrigatórios e prioritários) ou à parte (`tool_input`). */
+const SKIP_IN_REST = new Set([...MINIMAL_REQUIRED_KEYS, ...MINIMAL_PRIORITY_KEYS, 'tool_input']);
 
 /**
  * Cria a chave como propriedade própria. `defineProperty`, e não atribuição,
@@ -506,10 +715,10 @@ export function postEnvelope(runtime, body, timeoutMs) {
 
 /**
  * Encaminha um evento. Nunca lança.
- * @param {{ stdin: any, env: Record<string, string|undefined>, platform: string, homedir: string, sentAt: number }} options
+ * @param {{ stdin: any, env: Record<string, string|undefined>, platform: string, homedir: string, sentAt: number, now?: () => number }} options
  * @returns {Promise<void>}
  */
-export async function forward({ stdin, env, platform, homedir, sentAt }) {
+export async function forward({ stdin, env, platform, homedir, sentAt, now = elapsedSinceStart }) {
   try {
     // O stdin é lido até o fim antes de tudo (ADR 0001), para quem escreve
     // nunca encontrar o pipe fechado. Interpretar e cortar o JSON só se houver servidor.
@@ -518,9 +727,12 @@ export async function forward({ stdin, env, platform, homedir, sentAt }) {
     if (!runtime || !isPidAlive(runtime.pid)) return;
     const payload = bytes && parsePayload(bytes);
     if (!payload) return;
-    const body = buildBody(payload, { sentAt, env });
+    const body = buildBody(payload, { sentAt, env, now, inputBytes: bytes.length });
     if (body === null) return;
-    await postEnvelope(runtime, body, POST_TIMEOUT_MS);
+    // O POST espera o que falta até o prazo de 2 s, no máximo 1 s.
+    const timeoutMs = Math.min(POST_TIMEOUT_MS, DEADLINE_MS - now());
+    if (timeoutMs <= 0) return;
+    await postEnvelope(runtime, body, timeoutMs);
   } catch {
     // Falha silenciosa: a captura nunca atrapalha o Claude Code.
   }
