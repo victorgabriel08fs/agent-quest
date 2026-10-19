@@ -128,3 +128,12 @@ Um limite absoluto (por exemplo, 10 ms para 4 KiB) depende da máquina e não di
   - `t(32 KiB)` abaixo de 100 ms;
   - `t(32 KiB) / max(t(4 KiB), 1 ms)` no máximo 32. Linear daria cerca de 8 e quadrático cerca de 64; o piso de 1 ms evita razão instável com tempos muito pequenos.
 - O teste roda no `npm test` normal. Se falhar por ruído da máquina, a regra é rodar de novo uma vez; falhar duas vezes seguidas é bug.
+
+## Complemento de 19/10/2026: testes de tempo estáveis
+
+Testes que medem tempo seguem estas regras:
+
+- **Contador antes de relógio.** Quando o que importa é quantas vezes algo roda ou se um caminho foi tomado (por exemplo, se o orçamento de tempo do encaminhador foi conferido), o teste usa um contador determinístico ou um relógio injetado, nunca o relógio real. É o caso do teste do encaminhador em `forward.test.js`.
+- **Relógio real só com referência do mesmo teste.** Para o custo de uma operação longa (`JSON.parse` de 1 MB no normalizador, 16 MiB no encaminhador), o teste mede no mesmo processo, logo antes, uma calibração da mesma operação sobre uma entrada de referência. Ele compara pela razão, com o melhor de N medições, e não por um número absoluto. Uma mediana medida em outro momento não capta a disputa de CPU durante um `JSON.parse` longo.
+- **Crescimento** segue o complemento "teste de tempo da redação": melhor de N, razão com piso de 1 ms e limite absoluto só como teto largo.
+- **Uma nova tentativa** é permitida em caso de ruído da máquina. Falhar duas vezes seguidas é bug.

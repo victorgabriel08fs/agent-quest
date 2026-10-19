@@ -63,16 +63,18 @@ export function charLength(text) {}          // → número de pontos de código
 export function plainText(text) {}           // → texto sem invisíveis, controles e ANSI (etapas 1 e 7), sem redigir
 
 // server/domain/state/index.js
-export function createState({ roleOverrides, readAgentNames, sequence }) {}   // → State; readAgentNames padrão () => [], sequence padrão contador local (modelo de eventos, seção 9)
-export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] já numerados pelo sequence, changed: string[] }
+export function createState({ roleOverrides, sequence }) {}   // → State; sequence padrão contador local (modelo de eventos, seção 9)
+export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] já numerados pelo sequence, changed: string[], newProjects: string[] }
+export function setAgentNames(state, projectDir, names) {}   // → { changed }; roster das sessões do projeto (seção 7)
 export function tick(state, now) {}          // → { events, changed, removed }; eventos já numerados pelo sequence
 export function getSessionState(state, sessionId) {}   // → SessionState com feed, ou null (snapshot e /api/state)
 export function getSessionStates(state) {}             // → SessionState[] com feed
 export function sessionCount(state) {}                 // → número de sessões em memória (/api/health)
 
 // server/agent-names.js (fora de server/domain/; ligado ao createState no T9a)
-export function createAgentNamesReader({ homeDir, list }) {}   // → readAgentNames(projectDir) → string[]; lê <projeto>/.claude/agents/ e ~/.claude/agents/
-                                                                //   uma vez por pasta (cache), ignora UNC e caminho relativo, [] em erro; list injetável nos testes
+export function createAgentNamesReader({ homeDir, list, timeoutMs }) {}   // → { read(projectDir) → Promise<string[]> }; lê <projeto>/.claude/agents/ e ~/.claude/agents/
+                                                                           //   assíncrono, prazo por pasta (500 ms), cache por pasta, ignora UNC e caminho relativo,
+                                                                           //   [] em erro ou prazo; filtra .md antes do limite de 200; list injetável nos testes
 
 // web/js/store.js
 export function createStore() {}
@@ -168,7 +170,7 @@ agents-quest/
 │       └── scripts/forward.mjs
 ├── server/
 │   ├── main.js, config.js, runtime-file.js
-│   ├── agent-names.js               nomes em .claude/agents/ (projeto e usuário), com cache por pasta; fora do domínio
+│   ├── agent-names.js               nomes em .claude/agents/ (projeto e usuário), assíncrono, com prazo e cache por pasta; fora do domínio
 │   ├── node-types.js                só typedefs de tipos do Node (ADR 0003)
 │   ├── http/        app.js, security.js, static.js, sse.js
 │   ├── ingest/      envelope.js, dedupe.js, queue.js, debug-dump.js (só com --debug-dump)

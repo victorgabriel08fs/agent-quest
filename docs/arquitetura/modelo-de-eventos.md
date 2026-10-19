@@ -30,7 +30,7 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 }
 ```
 
-- `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos.
+- `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos. Se o `sentAt` estiver a mais de 5 min da hora de chegada, para mais ou para menos, o normalizador usa a hora de chegada. Assim, um relógio errado ou um `sentAt` forjado não mantém a sessão viva além da limpeza (observação 5 do tester do T7; entra no T6).
 - `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado. O formato exato do marcador faz parte deste contrato: o normalizador o reconhece por `…\[cortado \d+ caracteres\]…` e descarta as palavras partidas encostadas nele (seção 2, "Marcador de corte do encaminhador"). Mudar o marcador exige mudar os dois lados.
 - **Unidades no encaminhador** (definidas em 18/10/2026):
@@ -242,7 +242,14 @@ Decisão em ADR 0007. Regras operacionais:
 - **Elo delegação → instância.** Cada sessão guarda os pedidos `Agent` pendentes por `toolUseId`: `{ from, toType, description, background, ts, agentKey }`.
   1. `tool.pre` de `Agent`: cria o pendente e emite `agent.delegated`.
   2. `subagent.start` (ou o primeiro evento com um `agent_id` novo): cria o agente e liga ao pendente mais antigo da sessão com o mesmo tipo e sem agente (provisório). `label` = `description`; `parentKey` = `from`.
-  3. `tool.post` de `Agent` com `linkedAgentId`: se o elo provisório apontava para outro agente, troca as descrições e corrige `parentKey`. Para subagente em segundo plano (`launch: async_launched`), esse fato chega logo no início.
+  2a. **Corrida inversa** (A4 do tester do T7, decidido em 19/10/2026): o SubagentStart, ou o primeiro evento do subagente, pode chegar dezenas de milissegundos **antes** do PreToolUse do `Agent`, porque cada hook é um processo. Então, ao chegar o `tool.pre` de `Agent`, a delegação se liga, provisoriamente, à instância mais antiga da sessão que atenda a todas estas condições:
+     - tem o mesmo tipo cru (`agentTypeKey` igual ao `subagentTypeKey`);
+     - ainda não tem elo e não está `finished`;
+     - não é quem delegou nem um ancestral dele;
+     - foi criada no máximo 2 s antes do `ts` desse Pre (`startedAt ≥ ts − 2000`). A janela é mais larga que a corrida típica porque o `ts` é a hora de partida do processo do encaminhador, que atrasa de forma desigual sob carga.
+
+     A instância recebe `label` igual à `description` e `parentKey` igual a quem delegou, num `update` sem evento. O `agent.delegated` sai normalmente nesse Pre. O `agent.started` já emitido não se repete nem muda, porque o estado da instância é que carrega o rótulo. Sem instância elegível, a delegação fica pendente, como no passo 1;
+  3. `tool.post` de `Agent` com `linkedAgentId`: se o elo provisório (passo 2 ou 2a) apontava para outro agente, troca as descrições e corrige `parentKey`. Para subagente em segundo plano (`launch: async_launched`), esse fato chega logo no início.
 - **Aninhados:** `from` é o `agentKey` de quem chamou `Agent`, seja a sessão principal ou outro subagente. O painel anima a delegação de quem delegou para quem recebeu.
 - **Agentes internos:** `subagent.stop` com `agentType` vazio e agente desconhecido é descartado.
 - **Várias instâncias do mesmo papel:** todas aparecem; o painel agrupa por papel. O rótulo de cada uma é a descrição da delegação; sem ela, o `agent_type`.
@@ -323,9 +330,27 @@ A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a
 - **Projeto:** `env.projectDir`; se faltar, o `cwd` do primeiro evento. `project.key` é o caminho normalizado (barras `/`, letra de unidade minúscula, sem barra no fim); `project.name` é a última parte do caminho. Sem nenhum dos dois, o projeto fica `{ key: '', name: '', dir: '' }`, porque o contrato não admite `project: null`. O painel mostra o texto de "projeto desconhecido" do tema e agrupa essas sessões juntas (T7, ponto 11).
 - **Rótulo:** `session_title`, senão o título do primeiro ticket (até 48 caracteres), senão `Sessão a1b2c3`.
 - **Status:** `waiting` (aprovação pendente) tem prioridade sobre `active` (algum agente trabalhando ou evento há menos de 2 min), que tem prioridade sobre `idle`. `ended` após SessionEnd.
-- **Equipe (`roster`):** sempre `orq`; mais os papéis do time cujos agentes existem em `<projeto>/.claude/agents/` ou `~/.claude/agents/` (o servidor lê só os nomes dos arquivos, uma vez por projeto, quando ele fica conhecido). A leitura do disco não fica no domínio (T7, ponto 10): o `createState` recebe `readAgentNames(projectDir) → string[]`, com padrão `() => []`, e a implementação em disco (ignora UNC e caminho relativo, devolve `[]` em erro, guarda em cache por pasta) fica em `server/agent-names.js` (`createAgentNamesReader({ homeDir, list })`), fora de `server/domain/`, e é ligada no T9a. O custo é a listagem de duas pastas pequenas, uma vez por projeto. Arquivos novos só aparecem depois de reiniciar o servidor, o que é aceito na v1; mais qualquer papel que aparecer na sessão; mais `aux` se houver convidado.
+- **Equipe (`roster`):** sempre `orq`; mais os papéis do time cujos agentes existem em `<projeto>/.claude/agents/` ou `~/.claude/agents/` (o servidor lê só os nomes dos arquivos, uma vez por projeto, quando ele fica conhecido). A leitura do disco não fica no domínio nem no caminho do `apply` (T7, ponto 10, revisto em 19/10/2026 pela observação 1 do tester). Uma listagem síncrona numa letra mapeada para pasta de rede (Z:) ou numa pasta só na nuvem do OneDrive travaria o servidor inteiro. Funciona assim:
+  - o `apply` devolve, além de `events` e `changed`, `newProjects`: as pastas de projeto vistas pela primeira vez;
+  - a ligação (T9a) chama `read(projectDir)` do leitor de `server/agent-names.js` (`createAgentNamesReader({ homeDir, list, timeoutMs })`), que é assíncrono e lê `<projeto>/.claude/agents/` e `~/.claude/agents/`;
+  - o leitor tem um prazo por pasta (padrão 500 ms), que cobre unidade de rede sem precisar detectá-la; ignora UNC e caminho relativo; devolve `[]` em erro ou prazo vencido; guarda o resultado em cache por pasta; filtra os `.md` **antes** de limitar a 200 nomes;
+  - com o resultado, a ligação chama `setAgentNames(state, projectDir, names) → { changed }`, e o `roster` das sessões desse projeto é atualizado com `update` sem evento;
+  - até a leitura terminar, o `roster` tem só `orq` e os papéis vistos;
+  - o `createState` deixa de receber `readAgentNames`.
+
+  O custo é a listagem de duas pastas pequenas, uma vez por projeto. Uma pasta só na nuvem do OneDrive pode baixar metadados uma vez, sem bloquear. Arquivos novos só aparecem depois de reiniciar o servidor, o que é aceito na v1. Completam o `roster` qualquer papel que aparecer na sessão e `aux`, se houver convidado.
 - **`/clear`, retomada e compactação:** se o `session_id` mudar, é outra sessão. A anterior encerra pelo SessionEnd ou pela limpeza.
 - **Limpeza:** sessão encerrada sai da memória após 30 min; sem eventos, após 6 h.
+- **Limite de agentes por sessão** (observação 3 do tester do T7, decidido em 19/10/2026). Cada agente ocupa cerca de 420 bytes no `SessionState`, e uma sessão longa de orquestração cria uma instância por delegação. Com cerca de 2 500 agentes, cada `update` passaria de 1 MiB, o limite do cliente lento do SSE. Regra:
+  - ficam todos os agentes não encerrados, com um teto defensivo de 100;
+  - ficam no máximo os 50 encerrados mais recentes, por `lastEventAt`;
+  - os mais antigos saem do `agents`, e o próximo `update` já vem sem eles;
+  - o `agent_id` removido vai para uma lista de lápides da sessão, com os últimos 1 000 ids, para que um evento atrasado dele seja ignorado em vez de recriar o agente como novo e "trabalhando";
+  - o `feed` pode citar um `agentKey` que não está mais em `agents`, e o painel usa os dados do próprio evento.
+- **Formas de borda do caminho do projeto** (observação 2 do tester do T7):
+  - `project.key` e `project.name` partem do caminho já na forma canônica da seção 2 ("Formas de caminho"), pela mesma função do normalizador. Assim `/c/Users/…` (MSYS) se junta com `c:/Users/…`;
+  - a raiz de unidade (`C:\`, `C:/` ou `D:`) tem `key` igual a `c:/` e `name` igual a `C:`.
+- **Profundidade máxima de aninhamento** (observação 4, só registro): a subida pelos pais para no 16º nível (`MAX_DEPTH`). Com mais níveis, descendentes de um agente em segundo plano podem ser liberados no Stop. O Claude Code limita a profundidade a 3 por padrão (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`), então o caso é irreal.
 - **No painel:** uma sessão por vez em equipe, cena, ticket e atividade. Seletor no topo, agrupado por projeto, com status e aprovações pendentes. O modo padrão "seguir atividade" troca para a sessão mais ativa quando a atual está parada há 30 s, no máximo uma vez a cada 10 s. Escolher uma sessão a fixa. Se outra sessão tiver aprovação pendente, um aviso aparece no topo.
 
 ## 8. Ordem, duplicatas e lacunas
