@@ -100,11 +100,12 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido,
   - `tool.fail`: as de `tool.pre`, mais `error`, `interrupted`, `durationMs` e `testResult`.
 
   Para `Agent` e `Task`, `category` é `null`, `target` é o `subagent_type` e `detail` é a `description`, como na atividade `delegate` da seção 9.
-- **`agent_id` presente mas inválido** (não é texto, é vazio ou passa de 128 caracteres): o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido.
+- **`agent_id` presente mas inválido**: o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Revisto em 18/10/2026: é válido só o texto que casa com `^[A-Za-z0-9_.:-]{1,128}$`, sem espaços nem controles. Isso inclui os formatos reais (UUID, `a…` hexadecimal) e recusa `'   '`, vazio, número e texto com espaço. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido, com o mesmo padrão. `tool_use_id` e `prompt_id` fora do padrão viram `null`, mas não descartam o evento.
 - **Identificadores** (`agent_type`, `subagent_type`, `tool_name`, nome de skill, modelo, servidor e ferramenta MCP), decididos em 18/10/2026:
   - não passam por `redact`. São nomes de configuração local, e a redação gerava falsos positivos: `auth:tester` virava `auth:•••` e caía em `aux`;
   - **valor cru:** primeiro saem os caracteres invisíveis e de controle da etapa 1 da redação; acima de 128 caracteres, vira `null`. O cru decide a categoria (no normalizador), o papel (`resolveRole`, no reducer) e as comparações de tipo, como o elo delegação → instância. Ele vai no fato como `agentTypeKey` e `subagentTypeKey` (e `agentTypeKey` em cada item de `backgroundTasks`), só para uso interno: **nunca** entra em `SessionState`, em evento canônico nem em log;
   - **valor exibido** (`agentType`, `subagentType`, `tool` e afins), revisto em 18/10/2026: fica igual ao cru só se casar com `^[A-Za-z0-9_.:@/-]{1,80}$` **e** for ponto fixo de `redact`; senão, vira `redactAndCut(valor, 80)`. Sem a segunda condição, valores como `https://u:p@h/`, `ghp_…` ou `AKIA…` (e `subagent_type` e `tool_name` são escritos pelo modelo) apareceriam crus no painel. Com ela, todo texto exibido é ponto fixo de `redact`, sem exceção. Efeito aceito: `auth:tester` aparece como `auth:•••`, mas o papel continua `tes`.
+  - **Ferramenta MCP** (18/10/2026): o `tool` exibido é remontado como `mcp__<servidor>__<ferramenta>`, com cada parte passando pela regra acima. Assim `mcp__ghp_…__x` aparece como `mcp__•••__x`, coerente com o `target` `•••/x`. O nome inteiro não serve: a etapa 3 da redação não reconhece token colado depois de `_`, porque a borda à esquerda exclui `_` para evitar falsos positivos. A categoria `mcp` continua vindo do nome cru. Lacuna aceita: em texto livre, um token colado depois de `_` também não é detectado; o modo discreto cobre a tela compartilhada.
 - **Marcador de corte do encaminhador** (B3 do tester do T5). O corte de 1 KiB + 3 KiB (e o de 128 + 384 do teto do corpo, seção 1) pode partir um token antes da redação, de modo que o começo ou o fim de um segredo apareça ao lado do marcador. Antes de redigir, o normalizador troca cada ocorrência de `<palavra>…[cortado N caracteres]…<palavra>` por `…`. "Palavra" aqui é a sequência máxima sem espaço em branco encostada no marcador, de cada lado. Sem espaço nenhum, some tudo daquele lado, que é o resultado seguro. A mudança é do normalizador (dev-backend, ajuste do T5). O encaminhador continua cortando por posição, que é barato e não precisa conhecer tokens.
 - **Formas de caminho** reconhecidas antes de comparar com o projeto e a pasta pessoal (decididas em 18/10/2026, sem esperar o T0, porque são transformações puras de texto):
   - prefixos `\\?\` e `\\.\` são removidos, e `\\?\UNC\servidor\pasta` vira `\\servidor\pasta`;
@@ -529,11 +530,13 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 
 1. **Caracteres invisíveis.** Remove tudo da classe `[\p{Default_Ignorable_Code_Point}\p{Cf}]` (expressão com a flag `u`). Ela cobre largura zero, hífen suave, controles de direção, U+2061 a U+2064, U+180E, U+034F, seletores de variação (U+FE00 a U+FE0F), preenchedores Hangul (U+115F, U+1160, U+3164, U+FFA0) e tags (U+E0000 a U+E0FFF). Conferido no Node 24.20 em 18/10/2026: todos esses saem, e letras, acentos, emoji, `•`, `…` e `«` ficam. Efeito colateral aceito: emojis compostos com U+200D ou U+FE0F podem aparecer separados.
 
-   **Controles**, acrescentados em 18/10/2026 (ponto 5 do tester do T5), também nesta etapa, para um controle no meio de uma chave não impedir a detecção:
-   - sequências de escape ANSI saem inteiras: CSI (`ESC [ … letra final`) e OSC (`ESC ] …` até BEL ou `ESC \`);
-   - os demais controles C0 (U+0000 a U+001F, exceto `\t`, `\n` e `\r`), o DEL (U+007F) e os controles C1 (U+0080 a U+009F) saem;
+   **Controles de um caractere**, acrescentados em 18/10/2026 (ponto 5 do tester do T5), também nesta etapa, para um controle no meio de uma chave não impedir a detecção:
+   - os controles C0 (U+0000 a U+001F, exceto `\t`, `\n`, `\r` e o ESC), o DEL (U+007F) e os controles C1 (U+0080 a U+009F) saem;
    - `\t` vira espaço;
-   - `\n` e `\r` ficam, porque a primeira linha e os blocos de chave dependem deles.
+   - `\n` e `\r` ficam, porque a primeira linha e os blocos de chave dependem deles;
+   - o ESC (U+001B) fica nesta etapa. As sequências ANSI só saem na etapa 7.
+
+   Revisto em 18/10/2026 (ponto 1 do segundo relatório do tester do T5). Remover as sequências ANSI aqui comia letras de tokens: em `ESC[ghp_…`, a gramática padrão de CSI (ECMA-48) toma o `g` como byte final, e sobra `hp_…`; `ESC[AKIA…` vira `KIA…`. Conferido no Node 24.20.
 
    O `parseTestSummary` do T6 lê a saída crua, não redigida, então também precisa ignorar ANSI.
 2. **Blocos de chave privada:** de `-----BEGIN <rótulo>-----`, em que o rótulo contém `PRIVATE KEY`, até o `-----END <mesmo rótulo>-----`, ou até o fim do texto se o END faltar. Cobre `RSA`, `EC`, `OPENSSH`, `ENCRYPTED` e `PGP PRIVATE KEY BLOCK`.
@@ -569,6 +572,15 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
    - **Sensíveis** (conferido em 18/10/2026): `PGPASSWORD`, `DBPassword`, `APITOKEN`, `GITHUBTOKEN`, `SECRETKEY`, `NPM_TOKEN`, `authToken`, `access_token`, `refresh_token`, `client_secret`, `db_password`, `my_token`, `apiKey`, `api-key`, `AWS_SECRET_ACCESS_KEY`, `passphrase`, `sig` (assinatura de URL SAS do Azure), `X-Amz-Signature`, `X-Amz-Credential`, `pwd`.
    - **Não sensíveis:** `tokenizer`, `tokens`, `max_tokens`, `oauth`, `author`, `key_file`, `keyboard`, `monkey`, `npm_config_cache`.
    - Falsos positivos como `sort_key=x` ou `secretary=x` são aceitos: escondem um valor inofensivo.
+
+7. **Sequências ANSI, depois da redação** (18/10/2026):
+   - saem as sequências CSI na gramática do ECMA-48: `ESC [`, parâmetros em 0x30–0x3F, intermediários em 0x20–0x2F e um byte final em 0x40–0x7E;
+   - saem as OSC: `ESC ]` até BEL ou `ESC \`;
+   - qualquer ESC que sobrar, de sequência incompleta, também sai.
+
+   Como o token já foi trocado nas etapas 2 a 6, `ESC[ghp_…` vira `[•••`.
+
+   Remover sequências pode juntar pedaços e formar um segredo: em `gh ESC[0m p_…`, sem os espaços, a remoção dá `ghp_…`. Por isso, **se a etapa 7 removeu alguma coisa, as etapas 2 a 6 rodam de novo** sobre o resultado. A segunda passada não encontra mais ESC, então o resultado é ponto fixo, com no máximo duas passadas.
 
 **Propriedades obrigatórias, com testes:**
 
