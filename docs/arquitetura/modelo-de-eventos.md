@@ -167,16 +167,16 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido,
 | `session.idle` | `null` | `{}` | não |
 | `quest.started` | `main` | `{ questId, n, title, implicit }` | sim |
 | `quest.finished` | `main` | `{ questId, n, outcome, error, durationMs, actions }`; `outcome`: `done`, `failed` ou `interrupted` | sim |
-| `quest.phase` | dono da etapa | `{ questId, phase, state }`; `phase`: `design`, `code`, `test`, `docs`; `state`: `active` ou `done` | só `done` |
+| `quest.phase` | dono da etapa | `{ questId, phase, state }`; `phase`: `design`, `code`, `test`, `docs`; `state`: `active` ou `done`. O `active` sai quando a instância começa, não na delegação (seção 6) | só `done` |
 | `agent.delegated` | quem delegou | `{ toolUseId, toType, toRole, description, background }` | sim |
 | `agent.started` | o novo agente | `{ agentType, role, label, parentKey }` | não |
 | `agent.finished` | o agente | `{ outcome }`; `done` ou `unknown` | sim |
 | `tool.started` | o agente | `{ toolUseId, tool, category, target, detail }` | sim |
 | `tool.finished` | o agente | `{ toolUseId, tool, category, durationMs }` | não |
 | `tool.failed` | o agente | `{ toolUseId, tool, category, target, error, interrupted }` | sim |
-| `test.finished` | o agente | `{ toolUseId, ok, passed, failed, total, framework }` | sim |
+| `test.finished` | o agente | `{ toolUseId, ok, passed, failed, total, framework }`. Não sai para teste interrompido pelo usuário nem para cadeia `&&` que falhou sem contagem reconhecida (seção 6) | sim |
 | `permission.requested` | o agente | `{ tool, category, target }` | sim |
-| `permission.resolved` | o agente | `{ outcome, by }`; `outcome`: `approved`, `denied` ou `unknown`; `by`: `user`, `auto` ou `inferred` | sim |
+| `permission.resolved` | o agente | `{ outcome, by }`; `outcome`: `approved`, `denied` ou `unknown`; `by`: `user`, `auto` ou `inferred`. O `denied` sai mesmo sem pedido pendente (PermissionDenied, seção 4) | sim |
 | `context.compacted` | o agente | `{ trigger }` | sim |
 | `context.usage` | o agente | `{ pct, usedTokens, windowTokens }` (opcional, T15) | não |
 
@@ -208,7 +208,7 @@ O normalizador gera o fato; o reducer aplica as regras da seção 6 e emite os e
 |---|---|---|
 | SessionStart | — | `session.started`. Com `source: compact`, também `context.compacted` se o PostCompact não tiver chegado. É o único que emite `session.started`: uma sessão criada sob demanda, pelo primeiro evento de um `session_id` desconhecido, aparece no painel por um `update` com `event: null` (T7, ponto 3) |
 | SessionEnd | — | Agentes ainda trabalhando ou aguardando são liberados: subagentes recebem `agent.finished(unknown)` e o `main` fica `idle` (já no T7, ponto 7). Depois, `quest.finished(interrupted)` se havia ticket aberto (T8) e `session.ended` |
-| UserPromptSubmit | origem do usuário | `quest.finished(interrupted)` se havia ticket aberto; `quest.started` |
+| UserPromptSubmit | origem do usuário | `quest.finished(interrupted)` se havia ticket aberto ou em `waiting_background` (o segundo plano continua); `quest.started`. Com `prompt_id` já conhecido, nada muda |
 | UserPromptSubmit | origem do sistema | reabre o ticket em espera, sem evento no feed |
 | PreToolUse | `Agent` ou `Task` | `agent.delegated` |
 | PreToolUse | outras ferramentas | `tool.started` |
@@ -217,9 +217,9 @@ O normalizador gera o fato; o reducer aplica as regras da seção 6 e emite os e
 | PostToolUseFailure | outras ferramentas | igual ao PostToolUse, com `tool.failed` no lugar de `tool.finished` |
 | PostToolUseFailure | `Agent` ou `Task` | sem `tool.failed`, porque delegação nunca tem `tool.started`. A atividade `delegate` de quem delegou vai para `failed`, e a delegação pendente, se ainda não tiver instância ligada, é descartada, para não se ligar a um SubagentStart posterior (T7, ponto 4) |
 | PermissionRequest | — | `permission.requested` |
-| PermissionDenied | — | `permission.resolved(denied, auto)` |
+| PermissionDenied | — | `permission.resolved(denied, auto)`, mesmo sem pedido pendente. A chamada negada termina: a atividade vai para `failed`, sem `tool.failed` e sem contar na saúde, e um PostToolUseFailure posterior da mesma chamada é ignorado (T8) |
 | Notification | `permission_prompt` | `permission.requested` só se não houver pedido pendente na sessão |
-| Notification | `idle_prompt` | `quest.finished(interrupted)` se havia ticket aberto; `session.idle` |
+| Notification | `idle_prompt` | `quest.finished(interrupted)` só se o ticket estava `open` (não em `waiting_background`). Compensa um Stop perdido: `main` fica `idle`, os agentes em primeiro plano são liberados e as aprovações pendentes do `main` viram `unknown`. `session.idle` sai sempre, menos em sessão `ended` (T8) |
 | SubagentStart | `agent_type` não vazio | `agent.started`; nada se o agente já existe (retomada ou criado antes sob demanda) |
 | (estado) | primeiro evento de um `agent_id` desconhecido (ferramenta, ou SubagentStop com tipo) | `agent.started` para o agente criado sob demanda (T7, ponto 2). No SubagentStop de desconhecido com tipo, sai `agent.started` e logo `agent.finished` |
 | SubagentStop | agente conhecido ou `agent_type` não vazio | `agent.finished`; `quest.phase(done)` se era o último agente do papel em execução |
@@ -272,7 +272,7 @@ Decisão em ADR 0007. Regras operacionais:
 ### Etapa
 
 - Papel → etapa: `arq` → `design`, `dev` → `code`, `tes` → `test`, `doc` → `docs`.
-- `active` quando um agente do papel começa no ticket; `done` quando termina o último agente desse papel em execução. Uma nova delegação reativa a etapa.
+- `active` quando uma instância do papel começa no ticket (SubagentStart, ou criação sob demanda), e não no `agent.delegated`: uma delegação que falha não deixa a etapa presa em `active`. `done` quando termina a última instância desse papel em execução. Uma nova instância reativa a etapa, inclusive um subagente que volta a trabalhar depois da inferência de 15 min (T8, confirmado em 19/10/2026).
 - O stepper só aparece quando alguma etapa sai de `pending`. Em sessões sem os papéis do time, o ticket mostra só título, ações e duração.
 
 ### Aguardando aprovação
@@ -285,14 +285,17 @@ Decisão em ADR 0007. Regras operacionais:
 - **Resolução:**
   - chegou PostToolUse ou PostToolUseFailure da chamada → `approved` (`by: user`);
   - `PermissionDenied` → `denied` (`by: auto`; só acontece no modo auto);
-  - outra ação do mesmo agente, fim do agente, fim do turno ou novo pedido → `unknown` (`by: inferred`), exibido como "negado ou cancelado". A documentação confirma que uma permissão negada dispara o PreToolUse e nada depois, nem PostToolUseFailure.
-- `Notification` do tipo `permission_prompt` sem pedido pendente marca `main` como `waiting`, para o aviso aparecer mesmo se o PermissionRequest se perder.
+  - outra ação do mesmo agente, fim do agente, fim do turno ou novo pedido **do usuário** → `unknown` (`by: inferred`), exibido como "negado ou cancelado". "Outra ação" só resolve se o `ts` da chamada nova for maior ou igual ao do pedido. Pedido de origem do sistema não resolve aprovações. Aprovação de agente removido pelo limite de agentes vira `unknown`. A documentação confirma que uma permissão negada dispara o PreToolUse e nada depois, nem PostToolUseFailure.
+- `Notification` do tipo `permission_prompt` sem pedido pendente marca `main` como `waiting`, para o aviso aparecer mesmo se o PermissionRequest se perder. Sem chamada aberta para descrever o pedido, `waitingFor` fica `{ tool: '', category: 'other', target: null }`, e o painel mostra o texto genérico de aprovação do tema.
+- Agente `waiting` não é encerrado pela regra dos 15 min: aprovar pode demorar.
+- **PermissionRequest repetido** (mesmo agente, mesma chamada e mesmo `inputHash`) é ignorado pelo reducer. Um pedido atrasado de um agente que não pode mais trabalhar (encerrado, ou `main` depois do Stop) também é ignorado.
 
 ### Bug na cena
 
 - **Comando de teste:** Bash ou PowerShell cujo `command`, depois de tirar prefixos como `cd <pasta> &&` e atribuições de variáveis, começa com um destes padrões: `npm|pnpm|yarn|bun [run ]test…`, `node --test`, `[npx ](vitest|jest|mocha|ava)`, `[npx ]playwright test`, `pytest`, `python -m (pytest|unittest)`, `php artisan test`, `[vendor/bin/](phpunit|pest)`, `go test`, `cargo test`, `dotnet test`, `mvn test`, `gradle[w] test`. A lista fica num único módulo com testes por tabela. Comando com `run_in_background` não conta, porque o resultado não vem no PostToolUse.
   - **Extensões confirmadas no T6** (19/10/2026): `python3 -m` e `py -m`; `php vendor/bin/phpunit`; prefixos `./` e `.\`; opções de `npx` e de `node` antes do `--test`; prefixos `pushd`, `Set-Location`, `set`, `$env:` e `export`.
   - **Cadeia com `&&`** (decidido em 19/10/2026): também conta como teste quando o **último** trecho de uma cadeia `&&` é um comando de teste, como em `npm run build && npm test` ou `composer install && php artisan test`. Como não dá para saber se a falha veio do teste ou de um trecho anterior, o fato marca `testResult.chained: true`, um campo interno do fato que não vai ao evento canônico. O T8 só abre bug numa cadeia que falhou se houver contagem reconhecida (`failed` não nulo). Cadeias com `;` ou `||`, ou com o teste no meio, não contam.
+  - **Quebra de linha vale como `;`** (decidido no T6): num comando de várias linhas, um teste seguido de outro comando na linha de baixo não conta como teste, porque o código de saída é o da última linha.
   - **Sem leitura de resumo:** mocha, ava, cargo, dotnet, mvn e gradle viram categoria `test` com os números `null`.
 - **Resultado:** PostToolUse → `ok: true`. PostToolUseFailure → `ok: false`; segundo a documentação, Bash que termina com código diferente de zero gera `error` começando com `Exit code N` **[T0]**. A decisão fica isolada em `testOk` (`server/domain/tests-detect.js`).
 - **Texto lido para o resumo** (T6, isolado em `testOutputs`, **[T0]**): no Post, o `stdout` e depois o `stderr` (o Jest escreve no `stderr`), ou o `tool_response` quando ele é texto; no Failure, o `error`. Lê só os últimos 8192 caracteres do `plainText` desse texto. Vale o framework cujo resumo aparece por último.
@@ -307,7 +310,7 @@ Decisão em ADR 0007. Regras operacionais:
   - a duração aparece só na linha `passed`, entre parênteses, no formato do `msToString`: `0ms`, `Nms`, `N.Ns`, `N.Nm`, `N.Nh`, `N.Nd`, ou `-` para valor inválido.
 
   Padrão: `^\s*\d+ (passed|failed|flaky|skipped|did not run|interrupted)( \((\d+(\.\d)?(ms|s|m|h|d)|-)\))?\s*$`. Ele não tem texto livre: só números, unidades e um vocabulário fechado.
-- **Estado da sessão:** run que falhou → `bugs.open = failed ?? 1`, exceto numa cadeia `&&` sem contagem reconhecida, que não muda `bugs`, e num teste interrompido, que não gera run; run que passou → `bugsCrushed += bugs.open` e `bugs.open = 0`. Os bugs pertencem à sessão e não zeram no ticket seguinte, porque refletem o último resultado real.
+- **Estado da sessão:** run que falhou → `bugs.open = failed ?? 1`, aplicado ao pé da letra: com `failed: 0` e `ok: false` (por exemplo, um limite de cobertura que reprovou), ficam 0 bugs. Exceções: numa cadeia `&&` sem contagem reconhecida, a falha não gera run nem `test.finished` (vale como comando comum, com `tool.failed` contando na saúde), e num teste interrompido, que também não gera run. Uma cadeia que passou gera `test.finished` aprovado, porque todos os trechos passaram; run que passou → `bugsCrushed += bugs.open` e `bugs.open = 0`. Os bugs pertencem à sessão e não zeram no ticket seguinte, porque refletem o último resultado real.
 - A cena mostra até 4 bugs na sala de testes e "+N" para o resto.
 
 ### Voltou para a copa
@@ -328,6 +331,11 @@ Decisão em ADR 0007. Regras operacionais:
 ### Saúde
 
 Janela das últimas 10 ações do agente: `tool.finished` conta como sucesso e `tool.failed` como falha, exceto o `tool.failed` com `interrupted: true`, que não conta: interrupção do usuário não é erro do agente (19/10/2026). Para comando de teste conta só o `test.finished`, para não contar duas vezes. Sem ações, 100%. O estado expõe `{ ok, total }` e o painel mostra a fração.
+
+### Compactação
+
+- PreCompact deixa a atividade do agente em "compactando". PostCompact, ou SessionStart com `source: compact`, emite `context.compacted`.
+- **Par e duplicata** (T8, confirmado em 19/10/2026): um sinal de fim de compactação até 60 s depois do anúncio, sem PreCompact novo no meio, é o par desse anúncio, ou uma duplicata se o par já chegou. Ele não gera um segundo `context.compacted`.
 
 ### Contexto (opcional, T15)
 
@@ -376,9 +384,10 @@ Hooks não têm número de sequência, e cada evento vem de um processo próprio
 2. PreToolUse que chega depois do Post da mesma chamada é ignorado.
 3. Evento de ferramenta com `agent_id` desconhecido cria o agente na hora (papel pelo `agentTypeKey`) e emite `agent.started` (T7, ponto 2). Se o tipo só chegar depois, por exemplo num SubagentStart ou num evento seguinte com `agent_type`, o papel e o `agentType` exibido são atualizados (de `aux` para `tes`, por exemplo) e o `roster` acompanha (T7, ponto 9). O SubagentStart que chegar depois só completa o elo.
 4. Depois do SubagentStop, eventos atrasados do agente atualizam saúde e feed, mas não o devolvem a "trabalhando". O mesmo vale para a sessão principal depois do Stop, até o próximo pedido.
-5. Fato com `promptId` de ticket encerrado não reabre o ticket.
+5. Fato com `promptId` de ticket encerrado não reabre o ticket. Pedido do usuário com `prompt_id` já conhecido não muda nada.
+6. Atividade sem `promptId` com `ts` menor ou igual ao fim do último ticket é atraso: não abre ticket implícito (T8).
 
-**Duplicatas:** o mesmo payload (hash) repetido em até 5 s é descartado. Cobre, por exemplo, o plugin carregado duas vezes.
+**Duplicatas:** o mesmo payload (hash) repetido em até 5 s é descartado. Cobre, por exemplo, o plugin carregado duas vezes. **Exceção: o PermissionRequest não passa pela deduplicação do servidor** (decidido em 19/10/2026). Ele não tem `tool_use_id`, então dois pedidos legítimos e idênticos, como um comando negado e tentado de novo, viravam um só, e o segundo "aguardando" sumia (o cenário da sonda tem isso a 500 ms). As duplicatas verdadeiras são descartadas pelo reducer (seção 6, "PermissionRequest repetido"), porque elas caem na mesma chamada, e a nova tentativa cai numa chamada nova.
 
 **Lacunas:** eventos perdidos (Esc sem Stop, processo encerrado) são compensados pelo próximo pedido, pelo `idle_prompt`, pelo SessionEnd e pela regra de 15 min dos agentes.
 
@@ -482,7 +491,7 @@ data: {"seq":1236,"sessionId":"…"}
  * @typedef {object} QuestState
  * @property {string} id
  * @property {number} n
- * @property {string} title
+ * @property {string} title             '' quando o pedido não é texto; o painel mostra o texto de "pedido sem título" do tema
  * @property {boolean} implicit
  * @property {'open'|'waiting_background'|'done'|'failed'|'interrupted'} status
  * @property {number} startedAt
