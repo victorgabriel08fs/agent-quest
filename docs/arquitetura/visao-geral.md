@@ -72,7 +72,8 @@ export function canonicalPath(path, { homeDir }) {}   // → forma canônica (se
 
 // server/pipeline.js (ligação de ponta a ponta, T9a; fora do domínio e do hub)
 export function createPipeline({ /* state, hub, reader, sequence, relógio */ }) {}   // ingestão → normalize → apply → hub; tick periódico; leitura de agentes
-// startServer({ …, pipeline }) aceita um pipeline pronto só para testes e devolve o pipeline; createApp({ …, sessionCount }) para o /api/health
+// startServer({ …, pipeline }) aceita um pipeline pronto só para testes e devolve o pipeline; createApp({ …, sessionCount, getSeq }) para o /api/health e o hub
+// createSseHub({ …, getSeq }): getSeq ligado a pipeline.currentSeq(), para o hello e a retomada (T9b)
 export function tick(state, now) {}          // → { events, changed, removed }; eventos já numerados pelo sequence
 export function getSessionState(state, sessionId) {}   // → SessionState com feed, ou null (snapshot e /api/state)
 export function getSessionStates(state) {}             // → SessionState[] com feed
@@ -153,9 +154,9 @@ export function removeSession(store, sessionId) {}        // → true se a sess�
 | Fila de ingestão | 10 000 itens; cheia, descarta o mais antigo e conta `dropped`, sem recusar a requisição |
 | Deduplicação | 5 s |
 | Feed por sessão | 200 eventos |
-| Buffer de retomada SSE | 1000 atualizações |
+| Buffer de retomada SSE | até 1 000 mensagens e até 1 MiB, o que vier primeiro; falta maior que isso recebe `snapshot` (modelo de eventos, seção 9) |
 | Heartbeat SSE | 15 s |
-| Clientes SSE | 8; cliente com mais de 1 MiB acumulado é desconectado e volta com snapshot |
+| Clientes SSE | 8; cliente com mais de 1 MiB acumulado é desconectado e volta com snapshot. O envio inicial só conta depois do primeiro `drain` |
 | Limpeza | sessão encerrada: 30 min; sem eventos: 6 h; agente "trabalhando" sem ferramenta rodando e sem eventos: 15 min |
 | Saúde | últimas 10 ações do agente |
 | Sonda de contexto (opcional) | até 1 leitura por agente a cada 5 s; últimos 64 KiB do arquivo |

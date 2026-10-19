@@ -81,7 +81,7 @@ Os cenários de `test/fixtures/hooks/` são a base comum do T5, do T7, do T9 e d
 - `dt`: milissegundos desde o evento anterior do cenário, medidos pela hora de gravação da sonda (equivale à chegada no servidor). É 0 no primeiro evento e nunca negativo.
 - `env`: o mesmo `env` do envelope v1 (modelo de eventos, seção 1). `projectDir` vem de `CLAUDE_PROJECT_DIR`. `entrypoint` vem de `CLAUDE_CODE_ENTRYPOINT`, a variável candidata do V11; se o T0 indicar outra, o G0b atualiza este ponto. Fica `null` quando não há valor.
 - `payload`: o JSON do hook, sanitizado como abaixo.
-- O injetor (T9b) monta, para cada evento, um envelope v1 com `sentAt` igual à hora do envio, `env` e `payload` do cenário, e respeita `dt` (ou não, com `--fast`).
+- O injetor (T9b) monta, para cada evento, um envelope v1 com `sentAt` igual à hora do envio, sempre crescente (+1 ms quando dois envios caem no mesmo milissegundo, para empates de `ts` não mudarem o estado em relação ao cenário; confirmado em 19/10/2026), `env` e `payload` do cenário, e respeita `dt` (ou não, com `--fast`).
 
 **Sanitização** (`tools/probe/sanitize.mjs`). O repositório é público, e os cenários não podem ter conteúdo real nem dados pessoais:
 

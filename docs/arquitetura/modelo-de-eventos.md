@@ -397,6 +397,11 @@ data: {"seq":1236,"sessionId":"…"}
 ```
 
 - Na conexão: `hello`, depois as atualizações que faltaram (se `Last-Event-ID` for desta execução e estiver no buffer de 1000) ou um `snapshot`.
+- **Retomada** (T9b, confirmada em 19/10/2026):
+  - o buffer guarda as últimas mensagens formatadas, até 1 000 e até 1 MiB no total, o que vier primeiro. O teto em bytes é o mesmo da retomada: o que faltar e não couber nele não poderia ser reenviado de qualquer jeito. Assim a memória fica perto de 1 MiB, e não em dezenas de MB como no pior caso só por contagem;
+  - se o que falta passa de 1 MiB, ou não está mais no buffer, vai `snapshot`. Isso evita que a própria retomada derrube de novo um cliente lento, num laço;
+  - `Last-Event-ID` igual ao `seq` atual recebe só o `hello` e segue ao vivo, porque não falta nada;
+  - o envio inicial (snapshot ou retomada) não conta como acumulado do cliente lento até o primeiro `drain`. Sem isso, um snapshot grande desconectaria o cliente na hora.
 - `update` com `event: null` carrega só mudança de estado (por exemplo, a correção de um elo de delegação ou uma mudança feita pelo `tick`).
 - **Numeração** (explicitada em 18/10/2026):
   - Cada mensagem que muda estado, ou seja `update` (com ou sem evento) e `session-removed`, recebe exatamente o `seq` anterior + 1 dentro do mesmo `runId`.
