@@ -483,13 +483,21 @@ Isso compensa eventos que se perdem, como um Esc sem fim de turno ou uma sessão
 A equipe de cada sessão mostra o orquestrador, os papéis do time que têm arquivo em `.claude/agents/` (na pasta do projeto ou em `~/.claude/agents/`), os papéis que aparecerem na sessão e o convidado, se houver.
 
 - O servidor lê só os nomes dos arquivos `.md`, nunca o conteúdo, e até 200 por pasta.
-- A leitura acontece uma vez, em segundo plano, quando o projeto aparece pela primeira vez. Até ela terminar, a equipe mostra o orquestrador e os papéis já vistos na sessão; depois, os demais papéis entram sozinhos no painel.
+- A pasta pessoal (`~/.claude/agents/`) é lida logo no início do servidor, antes de qualquer projeto. A pasta de cada projeto é lida uma vez, em segundo plano, quando ele aparece pela primeira vez. Até a leitura terminar, a equipe mostra o orquestrador e os papéis já vistos na sessão; depois, os demais papéis entram sozinhos no painel.
 - Cada pasta tem um prazo de 500 ms, e as pastas são lidas uma por vez, para uma unidade de rede ou uma pasta só na nuvem do OneDrive não travar o servidor. Se uma pasta passar do prazo, a equipe segue sem ela, e os nomes entram quando a leitura terminar.
 - Pastas de rede (`\\servidor\pasta`) e caminhos relativos não são lidos. Uma pasta que não existe ou dá erro conta como vazia.
 - **Cada pasta é lida uma vez por execução.** Criou um agente novo em `.claude/agents/`? Ele só entra na equipe depois de reiniciar o servidor, ou antes, se for chamado na sessão.
 - Agentes com outros nomes ganham papel pela chave [`roles`](#papéis-de-outros-agentes-roles) do `config.json`.
 
-Limite conhecido nesta fase: uma pasta que nunca responde (por exemplo, numa unidade de rede desconectada) prende a leitura das pastas seguintes até responder ou até o servidor reiniciar. Os projetos que aparecerem depois dela ficam com a equipe só dos papéis vistos na sessão. O ajuste está em andamento ([modelo de eventos, seção 7](../arquitetura/modelo-de-eventos.md#7-sessões-e-projetos)).
+#### Pasta que não responde
+
+Uma pasta de projeto pode nunca responder, por exemplo numa unidade de rede desconectada. O servidor nunca trava por isso:
+
+- **A equipe da sessão não espera.** Ela fica com os papéis vistos na sessão e os da pasta pessoal, que já foi lida no início.
+- **A pasta é abandonada.** Depois de 10 segundos sem resposta, a leitura dela é dada como perdida, e o servidor passa para a próxima pasta da fila. Até o servidor reiniciar, a pasta conta como vazia, sem nova tentativa. Se a leitura presa terminar sozinha mais tarde, os nomes entram na equipe nessa hora.
+- **No máximo duas leituras presas ao mesmo tempo.** Com duas pastas assim, nenhuma leitura nova começa até uma delas terminar. Enquanto isso, os projetos novos ficam também com os papéis vistos e os da pasta pessoal. O resto do servidor (painel, captura e `runtime.json`) segue funcionando.
+
+Para tentar ler a pasta de novo, depois de reconectar a unidade, reinicie o servidor. Os detalhes estão na [seção 7 do modelo de eventos](../arquitetura/modelo-de-eventos.md#7-sessões-e-projetos).
 
 ## Solução de problemas
 

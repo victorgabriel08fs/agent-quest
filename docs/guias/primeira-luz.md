@@ -201,6 +201,7 @@ A variável existe para isolar testes e desenvolvimento, com uma pasta temporár
 | Os eventos chegam, mas a sessão não aparece no painel | [Os eventos chegam, mas a sessão não aparece](servidor.md#os-eventos-chegam-mas-a-sessão-não-aparece-no-painel) |
 | O terminal do servidor mostra `Erro ao processar um evento` | [Erros enquanto o servidor roda](servidor.md#erros-enquanto-o-servidor-roda) |
 | Um papel do time não aparece na equipe | [A equipe e o `.claude/agents/`](servidor.md#a-equipe-e-o-claudeagents) |
+| O projeto fica numa unidade de rede que não responde, e a equipe só tem os papéis vistos na sessão e os da pasta pessoal | O servidor não trava: abandona a pasta depois de 10 segundos e só tenta de novo quando reiniciar. Reconecte a unidade e reinicie o servidor ([Pasta que não responde](servidor.md#pasta-que-não-responde)) |
 | Apareceu aviso `hook error` ou uma janela piscando | Pause a captura e veja [o guia da captura](captura.md#apareceu-aviso-hook-error-ou-uma-janela-piscando) |
 
 ## Para saber mais
