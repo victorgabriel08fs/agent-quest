@@ -93,7 +93,8 @@ describe('correções do relatório do tester (B1, B2, B4, B5, B6)', () => {
     const fake = '2 passing CONTEUDO\n--- FAIL: x CONTEUDO\nTests: CONTEUDO 3 total\n  Test Files  CONTEUDO (2)\n1 failed CONTEUDO in 0.1s\nTests: 3, Assertions: 5, CONTEUDO.\nok  pkg CONTEUDO 1.2s';
     assert.equal(s.sanitizePayload({ tool_response: { stdout: fake } }).tool_response.stdout, '«7 linhas omitidas»');
     const real = '  2 passing (15ms)\n  1 failing\n--- FAIL: TestSoma (0.00s)\nok  \tpkg/x\t(cached)\nTests:       1 failed, 2 passed, 3 total\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\nPassed!  - Failed:     0, Passed:     3, Skipped:     0, Total:     3, Duration: 12 ms';
-    assert.equal(s.sanitizePayload({ tool_response: { stdout: real } }).tool_response.stdout, real);
+    // A redação troca \t por espaço (modelo de eventos, seção 10, etapa 1).
+    assert.equal(s.sanitizePayload({ tool_response: { stdout: real } }).tool_response.stdout, real.replace(/\t/g, ' '));
   });
 
   it('B5: nome do usuário em caminho codificado para URL é trocado e a conferência o acha', () => {
@@ -237,7 +238,7 @@ describe('sanitizePayload', () => {
       ' Test Files  1 failed | 1 passed (2)\n      Tests  1 failed | 3 passed (4)': ' Test Files  1 failed | 1 passed (2)\n      Tests  1 failed | 3 passed (4)',
       'x\n==== 1 failed, 2 passed in 0.12s ====': '«1 linha omitida»\n==== 1 failed, 2 passed in 0.12s ====',
       'FAILURES!\nTests: 3, Assertions: 5, Failures: 1.': 'FAILURES!\nTests: 3, Assertions: 5, Failures: 1.',
-      '--- FAIL: TestSoma (0.00s)\nFAIL\tpkg/x\t0.01s': '--- FAIL: TestSoma (0.00s)\nFAIL\tpkg/x\t0.01s',
+      '--- FAIL: TestSoma (0.00s)\nFAIL\tpkg/x\t0.01s': '--- FAIL: TestSoma (0.00s)\nFAIL pkg/x 0.01s', // \t vira espaço (seção 10, etapa 1)
       'saída comum\nsem resumo': '«2 linhas omitidas»',
     };
     for (const [stdout, expected] of Object.entries(outputs)) {

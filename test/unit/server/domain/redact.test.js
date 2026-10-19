@@ -19,12 +19,76 @@ const INVISIBLES = [
   '\uFEFF', '\uFFA0', '\u{E0001}', '\u{E0041}', '\u{E0FFF}',
 ];
 
+// Metades de surrogate soltas (montadas por código, para o arquivo continuar UTF-8 válido).
+const HIGH = String.fromCharCode(0xdb40);
+const LOW = String.fromCharCode(0xdc41);
+const FFFD = String.fromCharCode(0xfffd);
+
 /** [entrada, saída esperada] */
 const POSITIVES = {
   'caracteres invisíveis': [
     ...INVISIBLES.map((c) => [`ghp_abcdefgh${c}ijklmnop1234`, R]),
     ['access\u200C_token=abc', `access_token=${R}`],
     ['oi\u202Eolleh\u202C \u00ADtexto\uFEFF\u2060\u200E\u200F\u2066\u2069', 'oiolleh texto'],
+  ],
+  // Etapa 1, controles (seção 10, acrescentados em 18/10/2026).
+  'controles': [
+    // B5: surrogates soltos viram U+FFFD antes do resto, e nenhuma remoção junta metades.
+    ...['\x00', '\x7F', '\x85', '\x1B[0m', String.fromCharCode(0x200b)].map((gap) => [`a${HIGH}${gap}${LOW}b`, `a${FFFD}${FFFD}b`]),
+    [`fim solto ${HIGH}`, `fim solto ${FFFD}`],
+    [`${LOW}começo solto`, `${FFFD}começo solto`],
+    ['\x1B[31mvermelho\x1B[0m e \x1B[1;4mnegrito\x1B[m', 'vermelho e negrito'],
+    // OSC terminada por BEL fica inteira na etapa 1 (o BEL faz parte da sequência) e sai na etapa 7.
+    ['\x1B]0;título da janela\x07texto', 'texto'],
+    // B6: controles do corpo da OSC saem na etapa 1; se a redação engolir o BEL, nada fica para trás.
+    ['\x1B]0;\x00 password=abc\x07 resto', `]0; password=${R} resto`],
+    ['\x1B]2;\x9B token=abc\x07', `]2; token=${R}`],
+    ['Authorization: "x\x1B]0;y"\x07 resto', `Authorization: ${R} resto`],
+    ['\x1B]0;título\x1B\\texto', 'texto'],
+    ['BEL solto\x07 sai', 'BEL solto sai'],
+    // Etapa 7 depois da redação (18/10/2026): não come letras de tokens.
+    [`echo \x1B[ghp_${'A'.repeat(36)}`, `echo [${R}`],
+    [`\x1B[AKIA${'B'.repeat(16)}`, `[${R}`],
+    // Token formado ao remover a sequência: as etapas 2 a 6 rodam de novo.
+    [`gh\x1B[0mp_${'A'.repeat(36)}`, R],
+    [`ghp_AAA\x1B${'A'.repeat(33)}`, R],
+    [`AKIA\x1B[1;31m${'B'.repeat(16)}`, R],
+    ['\x1B[1 qtexto', 'texto'],
+    ['\x1B[ \x1B[1 q texto', '[  texto'],
+    ['fim incompleto \x1B[12', 'fim incompleto [12'],
+    ['\x1B]8;;https://exemplo.com\x1B\\link\x1B]8;;\x1B\\', 'link'],
+    ['\x1B]sem terminador', ']sem terminador'],
+    ['a\x00b\x01c\x08d\x0Be\x0Cf\x1Fg\x7Fh\x80i\x9Bj\x9Fk', 'abcdefghijk'],
+    ['coluna\tcoluna\t\tfim', 'coluna coluna  fim'],
+    ['linhas\nficam\r\ncom\rquebra', 'linhas\nficam\r\ncom\rquebra'],
+    ...['\x00', '\x07', '\x1B', '\x7F', '\x85', '\x9B', '\x1B[0m', '\x1B]x\x07'].map((c) => [`ghp_abcdefgh${c}ijklmnop1234`, R]),
+    ['to\x00ken=segredo', `token=${R}`],
+    ['Bearer\tabc.def.ghi', `Bearer ${R}`],
+    ['curl -H "Authorization:\tBasic abc"', `curl -H "Authorization: ${R}"`],
+  ],
+  // B8: sequências ANSI dentro de valores (seção 10, etapa 6). Nenhum caractere do segredo sobra.
+  'sequências ANSI dentro de valores': [
+    ['API_KEY=\x1B[32mabc123segredo\x1B[0m', `API_KEY=${R}`],
+    ['password: \x1B[32mabc123segredo\x1B[0m', `password: ${R}`],
+    ['export SECRET=\x1B[32mabc123segredo\x1B[0m', `export SECRET=${R}`],
+    ['setx API_KEY \x1B[32mabc123segredo\x1B[0m', `setx API_KEY ${R}`],
+    ['"api_key":\x1B[32mabc123segredo\x1B[0m', `"api_key":${R}`],
+    ['DB_PASSWORD=\x1B[1;31mabc123segredo', `DB_PASSWORD=${R}`],
+    [`token=\x1B[32mghp_${'A'.repeat(36)}\x1B[0m`, `token=${R}`],
+    ['-u \x1B[32madmin:abc123segredo\x1B[0m', `-u ${R}`],
+    ['--password \x1B[32mabc123segredo\x1B[0m', `--password ${R}`],
+    // Cor no meio do valor, ESC solto no meio, OSC de hyperlink com espaço dentro.
+    ['API_KEY=abc\x1B[1mdef', `API_KEY=${R}`],
+    ['API_KEY=abc\x1Bdef', `API_KEY=${R}`],
+    ['API_KEY=abc\x1B]8;;https://x y\x1B\\def', `API_KEY=${R}`],
+    // Cor dentro de cor e dos dois lados.
+    ['API_KEY=\x1B[1m\x1B[32mabc\x1B[0mdef\x1B[0m', `API_KEY=${R}`],
+    ['Bearer \x1B[32mabcdef123\x1B[0m', `Bearer ${R}`],
+    [`ghp_AAAAAAAAAA\x1B[1m${'A'.repeat(26)}`, R],
+    // Resíduo: o que vem depois do espaço não é o valor, mas a cor sai.
+    ['token=abc \x1B[31m def', `token=${R}  def`],
+    ['https://\x1B[32muser\x1B[0m:\x1B[32msenha\x1B[0m@h/', `https://${R}@h/`],
+    ['X-Api-Key: \x1B[32mabc\x1B[0m', `X-Api-Key: ${R}`],
   ],
   'chave privada': [
     ['antes -----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY----- depois', `antes ${R} depois`],
@@ -225,6 +289,28 @@ describe('redact: propriedades', () => {
     }
   });
 
+  it('é idempotente com OSC e CSI misturadas a controles e pares sensíveis (B6, semente fixa)', () => {
+    let seed = 2026;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const pieces = [
+      '\x1B]', '\x1B]0;', '\x1B]8;;', '\x1B[', '\x1B[0m', '\x1B\\', '\x07', '\x00', '\x01', '\x9B', '\x7F', '\t', '\n',
+      ' ', '"', "'", '=', ': ', 'password=', 'token=', 'Authorization: ', 'Bearer ', 'abc', 'x', 'https://u:p@h/',
+      `ghp_${'A'.repeat(36)}`, 'gh', 'p_', 'A'.repeat(36), R, '…',
+    ];
+    for (let i = 0; i < 20_000; i++) {
+      const parts = Array.from({ length: 1 + Math.floor(random() * 8) }, () => pieces[Math.floor(random() * pieces.length)]);
+      const text = parts.join('');
+      const once = redact(text);
+      assert.equal(redact(once), once, JSON.stringify(text));
+      assert.doesNotMatch(once, /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/, `controle no resultado: ${JSON.stringify(text)}`);
+      const cut = redactAndCut(text, 20);
+      assert.equal(redact(cut), cut, `redactAndCut ${JSON.stringify(text)}`);
+    }
+  });
+
   it('é idempotente em combinações aleatórias dos vetores (semente fixa)', () => {
     let seed = 42;
     const random = () => {
@@ -264,6 +350,17 @@ describe('redact: propriedades', () => {
       'invisível entre letras': (size) => fill('a\u200B', size),
       'token=': (size) => fill('token=', size),
       'Authorization: ': (size) => fill('Authorization: ', size),
+      'ESC [ sem letra final': (size) => fill('\x1B[0;1', size),
+      'ESC ] sem fim': (size) => fill('\x1B]x', size),
+      'controle entre letras': (size) => fill('a\x00', size),
+      // B8: milhares de sequências dentro de um valor, e casos que falham depois do laço.
+      'valor com cores': (size) => `API_KEY=${fill('a\x1B[0m', size - 8)}`,
+      'valor com OSC sem terminador': (size) => `API_KEY=${fill('\x1B]a', size - 8)}`,
+      'valor com ESC solto': (size) => `token=${fill('a\x1B', size - 6)}`,
+      'URL sem @ com cores': (size) => `://${fill('\x1B[0m', size - 3)}`,
+      '-u sem : com cores': (size) => `-u ${fill('a\x1B[0m', size - 3)}`,
+      'token com cores': (size) => `ghp_${fill('\x1B[0mA', size - 4)}`,
+      'Bearer com cores': (size) => `Bearer ${fill('\x1B[1ma', size - 7)}`,
     };
     const best = (fn, text) => {
       fn(text);

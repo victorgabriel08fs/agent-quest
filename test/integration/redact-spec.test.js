@@ -231,6 +231,27 @@ const TESTER_INPUTS = {
   "'a' => repetido": (n) => fill("'a' => ", n), 'setx a repetido': (n) => fill('setx a ', n), '-u a: repetido': (n) => fill('-u a:', n),
   'password repetido': (n) => fill('password', n),
 };
+// B8 (sequências ANSI dentro de valores, commit 3cde65c): classes (?:SEQ|X)+ com o
+// laço seguido de algo que falha, OSC sem terminador, ESC repetido e misturas.
+const E = '\u001b';
+const colored = (text) => text.split('').map((ch) => `${E}[0m${ch}`).join('');
+const ANSI_INPUTS = {
+  'URL sem @: a + CSI': (n) => `://${fill(`a${E}[0m`, n - 3)}`,
+  'URL sem @: ESC[ repetido': (n) => `://${fill(`${E}[`, n - 3)}`,
+  'URL sem @: ESC] sem terminador': (n) => `://${E}]${fill('x', n - 5)}`,
+  'URL sem @: ESC[ + CSI': (n) => `://${fill(`${E}[${E}[0m:`, n - 3)}`,
+  '-u sem :: CSI + x': (n) => `-u ${fill(`${E}[1mx`, n - 3)}`,
+  '-u sem :: ESC[ + parâmetros sem final': (n) => `-u ${fill(`${E}[111`, n - 3)}`,
+  'Bearer no fim: ESC repetido': (n) => `Bearer ${fill(E, n - 7)}`,
+  'ghp_ curto colorido + espaço': (n) => fill(`ghp_${colored('A'.repeat(15))} `, n),
+  'AKIA com 17 coloridos': (n) => fill(` AKIA${colored('A'.repeat(17))}`, n),
+  'JWT colorido sem segundo ponto': (n) => fill(` eyJ${colored('a'.repeat(50))}.${colored('b'.repeat(50))}`, n),
+  'ghp_ + ESC[ repetido': (n) => `ghp_${fill(`${E}[`, n - 4)}`,
+  'password= + (ESC]0;a)': (n) => `password=${fill(`${E}]0;a`, n - 9)}`,
+  'password= + (ESC[1; ESC)': (n) => `password=${fill(`${E}[1;${E}`, n - 9)}`,
+  'token= com CSI repetido': (n) => fill(`token=${E}[0m `, n),
+  'Authorization: + (ESC]0;a b)': (n) => `Authorization: ${fill(`${E}]0;a b`, n - 15)}`,
+};
 
 function bestOf7(fn) {
   fn(); // aquecimento
@@ -265,6 +286,11 @@ describe('tempo linear (formato do ADR 0010)', () => {
     assert.deepEqual(growthFailures({ ...ADR_INPUTS, ...TESTER_INPUTS }, (text) => redact(text)), []);
   });
 
+  it('redact e redactAndCut: entradas com sequências ANSI dentro de valores (B8)', () => {
+    assert.deepEqual(growthFailures(ANSI_INPUTS, (text) => redact(text)), []);
+    assert.deepEqual(growthFailures(ANSI_INPUTS, (text) => redactAndCut(text, 120)), []);
+  });
+
   it('redactAndCut com o limite de comando (160) e com corte perto do fim do texto', () => {
     assert.deepEqual(growthFailures({ ...ADR_INPUTS, ...TESTER_INPUTS }, (text) => redactAndCut(text, 160)), []);
     assert.deepEqual(growthFailures(ADR_INPUTS, (text) => redactAndCut(text, charLength(text) - 5)), []);
@@ -280,5 +306,51 @@ describe('tempo linear (formato do ADR 0010)', () => {
       assert.ok(charLength(out) <= charLength(text) - 6, 'limite');
     };
     assert.deepEqual(growthFailures({ 'palavra longa + token= cortado': longWord, 'muitas palavras + token= cortado': manyWords }, run), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B8 (commit 3cde65c): segredo com sequências ANSI completas (CSI, OSC com BEL
+// ou ST) e ESC solto inseridos em posições aleatórias, nas formas de valor das
+// etapas 3 a 6. Nenhum pedaço de 4 caracteres do segredo pode sobrar visível.
+// Sequências incompletas (`ESC[` ou `ESC]` sem fim) ficam fora: o `[` e o `]`
+// encerram um valor sem aspas, como no texto sem ESC (ver relatório do tester).
+
+describe('B8: segredo com cores ANSI no meio não aparece (fuzz determinístico)', () => {
+  it('nas formas de valor das etapas 3 a 6, com sequências completas e ESC solto', () => {
+    let seed = 4242;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const pick = (list) => list[Math.floor(random() * list.length)];
+    const BEL = '\u0007';
+    const ST = `${E}\\`;
+    const SEQS = [`${E}[0m`, `${E}[1;31m`, `${E}[ q`, `${E}]0;t${BEL}`, `${E}]8;;h x${ST}`, E];
+    const SECRET = 'Zq7Wx3Rt9Lm2Pv8K';
+    const PIECES = Array.from({ length: SECRET.length - 3 }, (_, i) => SECRET.slice(i, i + 4));
+    const sprinkle = () => {
+      let out = '';
+      for (const ch of SECRET) {
+        if (random() < 0.25) out += pick(SEQS);
+        out += ch;
+      }
+      return random() < 0.3 ? out + pick(SEQS) : out;
+    };
+    const FORMS = [
+      (s) => `API_KEY=${s}`, (s) => `password: ${s}`, (s) => `export DB_PASSWORD=${s}`, (s) => `$env:API_TOKEN = ${s}`,
+      (s) => `setx API_KEY ${s}`, (s) => `--password ${s}`, (s) => `--token=${s}`, (s) => `-u admin:${s}`, (s) => `--user=admin:${s}`,
+      (s) => `Bearer ${s}`, (s) => `Authorization: ${s}`, (s) => `X-Api-Key: ${s}`, (s) => `https://admin:${s}@h/x`,
+      (s) => `"client_secret": ${s}`, (s) => `ghp_${s}${s}`, (s) => `sk-ant-${s}`, (s) => `glpat-${s}${s}`,
+    ];
+    const leaks = [];
+    for (let i = 0; i < 6000; i++) {
+      const text = `${pick(['', 'echo ', 'x ', `${E}[1m`, '"', 'cmd && '])}${random() < 0.2 ? pick(SEQS) : ''}${pick(FORMS)(sprinkle())}${pick(['', ' fim', `${E}[0m`, '"', ';'])}`;
+      const out = redact(text);
+      assert.equal(redact(out), out, JSON.stringify(text));
+      const visible = out.replace(/[^A-Za-z0-9]/g, '');
+      if (PIECES.some((piece) => visible.includes(piece))) leaks.push(`${JSON.stringify(text)} → ${JSON.stringify(out)}`);
+    }
+    assert.deepEqual(leaks.slice(0, 5), []);
   });
 });

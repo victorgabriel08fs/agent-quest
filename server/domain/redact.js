@@ -5,18 +5,24 @@
 // (tools/probe/sanitize.mjs) usam este módulo. Puro: não importa node:* nem
 // nada do servidor, e roda também no navegador.
 //
-// Contrato público: redact, redactAndCut e charLength. isSensitiveName é
+// Contrato público: redact, redactAndCut e charLength; stripInvisible (a etapa
+// 1 sozinha) limpa os identificadores no normalizador. isSensitiveName é
 // exportada só para os testes.
 //
 // Etapas de redact, nesta ordem (toda troca vira "•••"):
-//   1. remove caracteres invisíveis ([\p{Default_Ignorable_Code_Point}\p{Cf}]);
+//   1. troca surrogates soltos por U+FFFD e remove caracteres invisíveis
+//      ([\p{Default_Ignorable_Code_Point}\p{Cf}]) e controles de um caractere
+//      (C0 menos \t, \n, \r e ESC; DEL; C1); \t vira espaço;
 //   2. blocos de chave privada (rótulo com PRIVATE KEY);
 //   3. tokens com prefixo conhecido (colados uns nos outros viram um só);
 //   4. credenciais embutidas: usuário e senha em URL e em -u/--user;
 //   5. cabeçalhos de credencial e `Bearer <valor>` solto;
 //   6. pares nome-valor com nome sensível (separadores :=, ?=, +=, =>, =, :;
 //      `"nome": "valor"`, `'nome' => 'valor'`, `setx NOME valor`,
-//      `--nome valor`, `--nome=valor`).
+//      `--nome valor`, `--nome=valor`);
+//   7. sequências ANSI (CSI do ECMA-48 e OSC) e qualquer ESC que sobrar, depois
+//      da redação, para não comer letras de tokens (`ESC[ghp_…` vira `[•••`);
+//      se saiu algo, as etapas 2 a 6 rodam de novo (no máximo duas passadas).
 //
 // Propriedades: idempotente; nunca lança exceção; tempo linear. As expressões
 // só começam no início de uma sequência de caracteres de nome (lookbehind),
@@ -29,26 +35,65 @@ export const REDACTED = '•••';
 // 1. Invisíveis: largura zero, hífen suave, direção, U+2061 a U+2064, U+180E,
 // U+034F, seletores de variação, preenchedores Hangul e tags.
 const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+// 1. Controles de um caractere (18/10/2026): C0 menos \t, \n, \r e ESC; DEL; C1.
+// O ESC fica: as sequências ANSI só saem na etapa 7, depois da redação. Uma OSC
+// terminada por BEL fica inteira: ali o BEL faz parte da sequência (não é um
+// controle de um caractere), e a etapa 7 a remove junto.
+const CONTROLS = /(\x1B\][^\x07\x1B]*\x07)|[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F-\x9F]/g;
+// Controles de um caractere dentro do corpo de uma OSC mantida (B6 do tester):
+// saem também, e só o BEL que a fecha fica para a etapa 7.
+const OSC_BODY_CONTROLS = /[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F-\x9F]/g;
+const TAB = /\t/g;
+
+// 7. Sequências ANSI (18/10/2026), depois da redação: CSI na gramática do
+// ECMA-48 (parâmetros 0x30–0x3F, intermediários 0x20–0x2F, final 0x40–0x7E) e
+// OSC (até BEL ou ESC \); depois, qualquer ESC que sobrar. Cada tentativa para
+// no próximo ESC, então o tempo é linear. Exportada para o normalizador saber
+// quais espaços em branco a redação remove (fronteiras de leitura).
+export const ESCAPE_SEQUENCES = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g;
+// ESC de sequência incompleta e BEL que sobrar. O BEL só chega aqui se fechava
+// uma OSC (etapa 1) e a redação quebrou a sequência, por exemplo engolindo o ESC
+// dentro de um valor redigido; ele sai com o resto da OSC (B6 do tester).
+const LEFTOVER = /[\x07\x1B]/g;
+
+// Sequências ANSI dentro de valores (B8 do tester; seção 10, etapa 6): como o
+// ESC só sai na etapa 7, as classes de valor sem aspas das etapas 3 a 6 aceitam
+// uma sequência como parte do valor: `(?:SEQ|X)+`, em que X é a classe sem o ESC.
+// SEQ é uma CSI completa, uma OSC completa ou um ESC solto. O ESC solto só casa
+// quando não começa uma CSI ou OSC completa: sem isso, `ESC[32m` teria duas
+// leituras (a CSI inteira, ou ESC solto + `[32m` em X), e uma expressão que
+// falha depois do laço (credencial em URL, `-u`) testaria todas as combinações,
+// em tempo exponencial. Com a restrição, cada texto tem uma decomposição só, e o
+// casamento continua linear; o valor casado é o mesmo.
+const CSI = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/.source;
+const OSC = /\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/.source;
+const ESC = /\x1B/.source;
+const SEQ = `${CSI}|${OSC}|${ESC}(?!${CSI.slice(ESC.length)}|${OSC.slice(ESC.length)})`;
+/** Um elemento de valor: uma sequência ANSI ou um caractere da classe `x` (sem ESC). */
+const unit = (/** @type {string} */ x) => `(?:${SEQ}|${x})`;
 
 // 2. Blocos de chave privada: o rótulo precisa conter PRIVATE KEY.
 const PEM_BEGIN = /-----BEGIN ([A-Z0-9 ]{0,60}PRIVATE KEY[A-Z0-9 ]{0,60})-----/g;
 
-// 3. Tokens com prefixo conhecido, com tamanho mínimo depois do prefixo.
+// 3. Tokens com prefixo conhecido, com tamanho mínimo depois do prefixo. Os
+// corpos aceitam sequências ANSI entre os caracteres (cor no meio do token).
+const ALNUM = unit('[A-Za-z0-9]');
+const ALNUM_DASH = unit('[A-Za-z0-9_-]');
 const TOKEN_FORMS = [
-  'sk-ant-[A-Za-z0-9_-]{8,}',
-  'sk-[A-Za-z0-9_-]{16,}',
-  '(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}',
-  'gh[pousr]_[A-Za-z0-9]{16,}',
-  'github_pat_[A-Za-z0-9_]{20,}',
-  'glpat-[A-Za-z0-9_-]{20,}',
-  'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])',
-  'pypi-[A-Za-z0-9_-]{32,}',
-  'hf_[A-Za-z0-9]{16,}',
-  'AKIA[0-9A-Z]{16}(?![0-9A-Z])',
-  'AIza[0-9A-Za-z_-]{20,}',
-  'xox[abprs]-[A-Za-z0-9-]{10,}',
-  'xapp-[A-Za-z0-9-]{10,}',
-  'eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+', // JWT
+  `sk-ant-${ALNUM_DASH}{8,}`,
+  `sk-${ALNUM_DASH}{16,}`,
+  `(?:sk|rk)_(?:live|test)_${ALNUM}{10,}`,
+  `gh[pousr]_${ALNUM}{16,}`,
+  `github_pat_${unit('[A-Za-z0-9_]')}{20,}`,
+  `glpat-${ALNUM_DASH}{20,}`,
+  `npm_${ALNUM}{36}(?![A-Za-z0-9])`,
+  `pypi-${ALNUM_DASH}{32,}`,
+  `hf_${ALNUM}{16,}`,
+  `AKIA${unit('[0-9A-Z]')}{16}(?![0-9A-Z])`,
+  `AIza${ALNUM_DASH}{20,}`,
+  `xox[abprs]-${unit('[A-Za-z0-9-]')}{10,}`,
+  `xapp-${unit('[A-Za-z0-9-]')}{10,}`,
+  `eyJ${ALNUM_DASH}+\\.${ALNUM_DASH}+\\.${ALNUM_DASH}+`, // JWT
 ];
 const TOKENS = new RegExp(`(?<![A-Za-z0-9_-])(?:${TOKEN_FORMS.join('|')})`, 'g');
 // O mesmo, ancorado numa posição: acha um token colado logo depois de outro
@@ -56,29 +101,36 @@ const TOKENS = new RegExp(`(?<![A-Za-z0-9_-])(?:${TOKEN_FORMS.join('|')})`, 'g')
 const TOKEN_AT = new RegExp(`(?:${TOKEN_FORMS.join('|')})`, 'y');
 
 // Valores entre aspas: até a aspa de fechamento não escapada; sem fechamento,
-// até o fim da linha. Valor sem aspas: até um espaço ou delimitador.
+// até o fim da linha (sem mudança com o B8). Valor sem aspas: até um espaço ou
+// delimitador, com as sequências ANSI como parte do valor; um valor que começa
+// com ESC casa e absorve a sequência.
 const DOUBLE_QUOTED = /"(?:\\[^\n]|[^"\\\n])*(?:"|\\?(?=\n|$))/.source;
 const SINGLE_QUOTED = /'(?:\\[^\n]|[^'\\\n])*(?:'|\\?(?=\n|$))/.source;
-const BARE_VALUE = /[^\s&;,"'{}()[\]<>|]+/.source;
+const BARE_VALUE = `${unit(/[^\s&;,"'{}()[\]<>|\x1B]/.source)}+`;
 const ANY_VALUE = `•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|${BARE_VALUE}`;
 
 // 4. Credenciais embutidas.
-const URL_CREDENTIALS = /(:\/\/)[^/\s:@]+:[^/\s@]+@/g;
-const USER_VALUE = /"[^"\n]*:[^"\n]*"|'[^'\n]*:[^'\n]*'|[^\s"':]+:[^\s"']*/.source;
+const URL_CREDENTIALS = new RegExp(`(:\\/\\/)${unit(/[^/\s:@\x1B]/.source)}+:${unit(/[^/\s@\x1B]/.source)}+@`, 'g');
+const USER_QUOTED = /"[^"\n]*:[^"\n]*"|'[^'\n]*:[^'\n]*'/.source;
+const USER_VALUE = `${USER_QUOTED}|${unit(/[^\s"':\x1B]/.source)}+:${unit(/[^\s"'\x1B]/.source)}*`;
 const USER_OPTION = new RegExp(`(?<![A-Za-z0-9_-])(?:(-u)([ \\t]*)|(--user)([ \\t]+|=))(?:${USER_VALUE})`, 'g');
 
 // 5. Cabeçalhos (em qualquer caixa, também dentro de aspas) e Bearer solto.
 // Um valor que já começa com "•••" é reconhecido só por isso (idempotência).
-const HEADER_VALUE = /•••|"(?:\\[^\r\n]|[^"\\\r\n])*"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|(?:\\[^\r\n]|[^\r\n"'\\])+/.source;
+const HEADER_QUOTED = /•••|"(?:\\[^\r\n]|[^"\\\r\n])*"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?/.source;
+const HEADER_VALUE = `${HEADER_QUOTED}|${unit(/\\[^\r\n]|[^\r\n"'\\\x1B]/.source)}+`;
 const HEADER = new RegExp(`(?<![A-Za-z0-9-])((?:proxy-)?authorization|set-cookie|cookie|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-(?:key|token|secret))(["']?[ \\t]*:[ \\t]*)(?:${HEADER_VALUE})`, 'gi');
-const BEARER = /(?<![A-Za-z0-9_-])(bearer)[ \t]+[A-Za-z0-9._~+/-]+=*/gi;
+const BEARER = new RegExp(`(?<![A-Za-z0-9_-])(bearer)[ \\t]+${unit('[A-Za-z0-9._~+/-]')}+=*`, 'gi');
 
 // 6. Pares nome-valor. Separadores: o mais longo vale.
 const SEPARATOR = /[ \t]*(?::=|\?=|\+=|=>|=|:)[ \t]*/.source;
 const PAIR_NAME = new RegExp(`(?<![A-Za-z0-9_.-])([A-Za-z_][A-Za-z0-9_.-]*)(["']?${SEPARATOR})`, 'g');
 const PAIR_VALUE = new RegExp(`(?:${ANY_VALUE})`, 'y');
 const SETX = new RegExp(`(?<![A-Za-z0-9_.-])(setx[ \\t]+)([A-Za-z_][A-Za-z0-9_.-]*)([ \\t]+)(${ANY_VALUE})`, 'gi');
-const LONG_OPTION = new RegExp(`(?<![A-Za-z0-9_-])--([A-Za-z][A-Za-z0-9-]*)(=|[ \\t]+)(•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|[^\\s"'-][^\\s"']*)`, 'g');
+const LONG_OPTION = new RegExp(
+  `(?<![A-Za-z0-9_-])--([A-Za-z][A-Za-z0-9-]*)(=|[ \\t]+)(•••|${DOUBLE_QUOTED}|${SINGLE_QUOTED}|${unit(/[^\s"'\x1B-]/.source)}${unit(/[^\s"'\x1B]/.source)}*)`,
+  'g',
+);
 
 const CONTAINED_WORDS = ['password', 'passwd', 'passphrase', 'secret', 'credential', 'apikey', 'accesskey', 'privatekey'];
 const SENSITIVE_PARTS = new Set(['token', 'pwd', 'auth', 'sig', 'signature']);
@@ -126,6 +178,26 @@ export function charLength(text) {
 }
 
 /**
+ * Etapa 1 da redação: troca surrogates soltos por U+FFFD, depois tira os
+ * caracteres invisíveis e os controles de um caractere (C0 menos \t, \n, \r e
+ * ESC; DEL; C1); \t vira espaço. O ESC fica, e a OSC terminada por BEL fica
+ * inteira: as sequências ANSI saem na etapa 7. Também limpa os identificadores
+ * no normalizador (seção 2).
+ * Idempotente: sem surrogates soltos, nenhuma remoção junta duas metades num
+ * caractere novo (invisível ou não), e nada que ela remove pode ser recriado.
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function stripInvisible(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .toWellFormed()
+    .replace(INVISIBLE, '')
+    .replace(CONTROLS, (control, osc) => (osc === undefined ? '' : `${osc.slice(0, -1).replace(OSC_BODY_CONTROLS, '')}\x07`))
+    .replace(TAB, ' ');
+}
+
+/**
  * Troca segredos por "•••". Nunca lança: entrada que não é texto vira '', e
  * qualquer falha interna devolve só "•••".
  * @param {unknown} text
@@ -134,26 +206,50 @@ export function charLength(text) {
 export function redact(text) {
   if (typeof text !== 'string' || text === '') return '';
   try {
-    let out = text.replace(INVISIBLE, '');
-    out = redactPrivateKeys(out);
-    out = redactTokens(out);
-    out = out.replace(URL_CREDENTIALS, `$1${REDACTED}@`);
-    out = out.replace(USER_OPTION, (whole, short, shortSep, long, longSep) => (
-      short !== undefined ? `${short}${shortSep}${REDACTED}` : `${long}${longSep}${REDACTED}`
-    ));
-    out = out.replace(HEADER, `$1$2${REDACTED}`);
-    out = out.replace(BEARER, `$1 ${REDACTED}`);
-    out = redactPairs(out);
-    out = out.replace(SETX, (whole, command, name, gap, value) => (
-      value !== REDACTED && isSensitiveName(name) ? `${command}${name}${gap}${REDACTED}` : whole
-    ));
-    out = out.replace(LONG_OPTION, (whole, name, separator, value) => (
-      value !== REDACTED && isSensitiveName(name) ? `--${name}${separator}${REDACTED}` : whole
-    ));
+    let out = redactSecrets(stripInvisible(text));
+    // Etapa 7: tirar as sequências pode juntar pedaços de um segredo
+    // (`gh ESC[0m p_…` sem os espaços); se saiu algo, as etapas 2 a 6 rodam de
+    // novo. A segunda passada não acha mais ESC: no máximo duas passadas.
+    const withoutEscapes = removeEscapes(out);
+    if (withoutEscapes !== out) out = redactSecrets(withoutEscapes);
     return out;
   } catch {
     return REDACTED;
   }
+}
+
+/**
+ * Etapas 2 a 6 da redação.
+ * @param {string} text
+ * @returns {string}
+ */
+function redactSecrets(text) {
+  let out = redactPrivateKeys(text);
+  out = redactTokens(out);
+  out = out.replace(URL_CREDENTIALS, `$1${REDACTED}@`);
+  out = out.replace(USER_OPTION, (whole, short, shortSep, long, longSep) => (
+    short !== undefined ? `${short}${shortSep}${REDACTED}` : `${long}${longSep}${REDACTED}`
+  ));
+  out = out.replace(HEADER, `$1$2${REDACTED}`);
+  out = out.replace(BEARER, `$1 ${REDACTED}`);
+  out = redactPairs(out);
+  out = out.replace(SETX, (whole, command, name, gap, value) => (
+    value !== REDACTED && isSensitiveName(name) ? `${command}${name}${gap}${REDACTED}` : whole
+  ));
+  out = out.replace(LONG_OPTION, (whole, name, separator, value) => (
+    value !== REDACTED && isSensitiveName(name) ? `--${name}${separator}${REDACTED}` : whole
+  ));
+  return out;
+}
+
+/**
+ * Etapa 7: sequências CSI e OSC inteiras e qualquer ESC ou BEL que sobrar.
+ * @param {string} text
+ * @returns {string}
+ */
+function removeEscapes(text) {
+  if (!text.includes('\x1B') && !text.includes('\x07')) return text;
+  return text.replace(ESCAPE_SEQUENCES, '').replace(LEFTOVER, '');
 }
 
 /**
