@@ -6,8 +6,9 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 
 | Guia | O que cobre |
 |---|---|
-| [Iniciar e parar o servidor](guias/servidor.md) | Requisitos, `npm start` e `npm run dev`, porta, diretório de dados e `AGENT_QUEST_HOME`, `runtime.json`, `--debug-dump`, como parar em cada terminal, mensagens comuns, `/api/health`, `/events` e `/api/state`, solução de problemas e segurança |
-| [O painel](guias/painel.md) | Como abrir, equipe, ticket e etapas, cena, atividade, indicadores, temas e atalhos, selo de conexão, seletor de sessão, estado sem sessões, o que ainda não está ligado e os testes de ponta a ponta |
+| [Primeira luz: ligar o painel e a captura](guias/primeira-luz.md) | Comece por aqui: quando o marco pode acontecer, iniciar e parar o servidor (`npm start` e `npm run dev`), copiar, testar e instalar a captura, `/reload-plugins`, abrir o painel e escolher a sessão, o que o painel ainda não mostra, pausar e remover a captura e por que não definir `AGENT_QUEST_HOME` |
+| [Iniciar e parar o servidor](guias/servidor.md) | Requisitos, `npm start` e `npm run dev`, porta, `config.json` e a chave `roles`, diretório de dados e `AGENT_QUEST_HOME`, `runtime.json`, `--debug-dump`, como parar em cada terminal, mensagens comuns e erros no terminal, `/api/health`, `/events` e `/api/state`, sessões em memória, o relógio do estado e a equipe de `.claude/agents/`, solução de problemas e segurança |
+| [O painel](guias/painel.md) | Como abrir, o que aparece ao vivo, equipe, ticket e etapas, cena, atividade, indicadores, temas e atalhos, selo de conexão, seletor de sessão, estado sem sessões, o que ainda não está ligado e os testes de ponta a ponta |
 | [Ligar, pausar e remover a captura](guias/captura.md) | O que a captura faz e nunca faz, eventos enormes resumidos e o orçamento de tempo, `npm run capture:deploy`, teste sem instalar, instalação, `/reload-plugins`, confiança da pasta, pausar, remover, atualizar e versão da captura, `AGENT_QUEST_HOME` dos dois lados e solução de problemas |
 
 ## Arquitetura

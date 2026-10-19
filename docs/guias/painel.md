@@ -2,9 +2,9 @@
 
 O painel é a página do Agent Quest no navegador. Ele mostra, ao vivo, o que cada agente de uma sessão do Claude Code está fazendo: quem está na equipe, o pedido em andamento, onde cada agente está na cena e o que acabou de acontecer. Tudo roda na sua máquina, sem nada carregado da internet.
 
-Este guia é a primeira versão: explica como abrir o painel, o que cada área mostra, como trocar de tema e de sessão, e o que ainda não está ligado.
+Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, e o que ainda não está ligado.
 
-> **Situação nesta fase.** O painel já está pronto e conectado ao vivo ao servidor, mas o servidor ainda não transforma os eventos recebidos em sessões. Por isso, mesmo com a captura ligada, o painel mostra o estado sem sessões. Equipe, cena e atividade passam a mostrar eventos reais com a ligação de ponta a ponta do T9a, que liga à recepção dos eventos o estado das sessões e dos agentes preparado no T7; o ticket vem com o T8 (veja o [plano da v1](../plano/v1.md)). Até lá, o que você vê com dados vem dos testes, que usam estados de exemplo escritos à mão.
+> **Situação nesta fase.** Com a captura ligada, o painel mostra as sessões reais ao vivo: seletor de sessão, equipe, cena e atividade acompanham cada evento do Claude Code. O ticket e as etapas ainda ficam vazios, e os indicadores de bugs, entregas e aprovações ficam em zero: chegam com o T6 e o T8 (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
 
 ## Resumo rápido
 
@@ -19,9 +19,21 @@ Este guia é a primeira versão: explica como abrir o painel, o que cada área m
 
 1. Inicie o servidor com `npm start` (veja [Iniciar e parar o servidor](servidor.md)).
 2. Abra no navegador o endereço que o servidor imprime, `http://127.0.0.1:47821/` (ou a porta que você escolheu). O projeto é testado no Microsoft Edge; outro navegador moderno também serve. O painel precisa de JavaScript ligado.
+3. Com a captura ligada, a sessão aparece na primeira ação do Claude Code. Escolha a que quer acompanhar no [seletor de sessão](#seletor-de-sessão).
 
 - Pode abrir o painel em mais de uma aba. O servidor aceita até 8 conexões ao vivo ao mesmo tempo; veja o [selo de conexão](#selo-de-conexão).
 - Mudou algum arquivo em `web/`? Aperte F5. Os arquivos do painel saem do servidor com `Cache-Control: no-cache`, então o navegador busca a versão nova.
+
+## O que aparece ao vivo
+
+- **Seletor de sessão:** as sessões do Claude Code que o servidor conhece, de todos os projetos, porque a captura vale para todos. Cada sessão aparece com o primeiro evento dela, mesmo que o servidor tenha sido iniciado no meio da sessão.
+- **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", e a barra de saúde.
+- **Cena:** um token por agente na sala do seu papel, com o balão da ação atual, e a copa para quem terminou.
+- **Atividade:** delegações, ferramentas, falhas e fim de subagentes, em ordem, com comandos e caminhos já redigidos e relativos ao projeto.
+- **Topo:** a duração da sessão e o selo de conexão. Os outros indicadores ficam em zero até o T8.
+- Os dois temas, com alternância a qualquer momento, sem reabrir a conexão.
+
+Nos testes, um evento leva menos de meio segundo da captura até a conexão ao vivo do painel.
 
 ## O que tem na tela
 
@@ -47,11 +59,11 @@ Aparecem quando há uma sessão escolhida. Os valores vêm do servidor ([ADR 000
 | Entregas | tickets entregues | quests concluídas | Pedidos encerrados com sucesso na sessão |
 | Aprovações | aprovações pendentes | pedidos de permissão | Pedidos de aprovação esperando por você; o indicador pisca quando há algum |
 
-Nesta fase, bugs, entregas e aprovações ficam em zero: esses valores chegam com o T8.
+A duração já vem da sessão real. Nesta fase, bugs, entregas e aprovações ficam em zero: esses valores chegam com o T8.
 
 ### Equipe
 
-Um bloco por papel, com o nome do papel no tema e o papel real embaixo. Aparecem o orquestrador, os papéis que têm agente definido em `.claude/agents/` do projeto, os que surgirem na sessão e, se algum agente fora do time for chamado, o convidado:
+Um bloco por papel, com o nome do papel no tema e o papel real embaixo. Aparecem o orquestrador, os papéis que têm agente definido em `.claude/agents/` (na pasta do projeto ou em `~/.claude/agents/`), os que surgirem na sessão e, se algum agente fora do time for chamado, o convidado:
 
 | Papel real | Agente do Claude Code | Escritório | Guilda |
 |---|---|---|---|
@@ -62,13 +74,16 @@ Um bloco por papel, com o nome do papel no tema e o papel real embaixo. Aparecem
 | Documentação | `documentador` | Tech Writer | Escriba |
 | Convidado | qualquer outro tipo de agente (por exemplo, `general-purpose`, `Explore`, `Plan`) | Consultor Externo | Aventureiro Convidado |
 
+- **Papéis de `.claude/agents/`** entram um instante depois de a sessão aparecer, quando o servidor termina de ler as pastas. Um agente criado depois só entra com o servidor reiniciado, ou quando for chamado na sessão (veja [A equipe e o `.claude/agents/`](servidor.md#a-equipe-e-o-claudeagents)).
+- **Agentes com outros nomes** ganham papel pela chave `roles` do `config.json` (veja [Papéis de outros agentes](servidor.md#papéis-de-outros-agentes-roles)).
+
 Em cada bloco:
 
-- **Uma linha por instância.** Cada subagente chamado é uma instância, com a descrição da delegação como rótulo. Convidados mostram também o tipo real do agente.
-- **"×N"** aparece quando há mais de uma instância do papel em andamento ao mesmo tempo, e conta só as que não terminaram.
-- **Linha de ação:** o que a instância está fazendo agora, na voz do tema. Por exemplo, "Editando `server/http/app.js`" no Escritório ou "Conjurando `git status`" na Guilda. Também mostra "Aguardando sua aprovação", "Delegando: ..." ou, quando parada, "Tomando café na copa" (na Guilda, "Descansando na taverna"). A sessão principal parada mostra "Aguardando o próximo pedido".
+- **Uma linha por instância.** Cada subagente chamado é uma instância, com a descrição da delegação como rótulo, que aparece já no momento da delegação. Sem descrição, o rótulo é o tipo do agente. Convidados mostram também o tipo real do agente.
+- **"×N"** aparece quando há mais de uma instância do papel em andamento ao mesmo tempo, e conta só as que não terminaram. Dois subagentes em paralelo aparecem como duas instâncias, cada uma com as próprias ações.
+- **Linha de ação:** o que a instância está fazendo agora, na voz do tema. Por exemplo, "Editando `server/http/app.js`" no Escritório ou "Conjurando `git status`" na Guilda. Também mostra "Delegando: ..." ou, quando parada, "Tomando café na copa" (na Guilda, "Descansando na taverna"). A sessão principal parada mostra "Aguardando o próximo pedido". "Aguardando sua aprovação" chega com o T8. Até o T6, um comando de teste aparece como comando de terminal, por exemplo "Terminal: `npm test`".
 - **Barra de saúde** (Humor no Escritório, Vida na Guilda): ≈ a fração das últimas 10 ações sem erro. Passe o mouse para ver, por exemplo, "Humor ≈ 8 de 10 ações sem erro (últimas 10)".
-- **Instâncias encerradas** do pedido atual continuam visíveis, até 3 por papel. As demais viram "+N instâncias encerradas". As de pedidos anteriores saem do cartão.
+- **Instâncias encerradas** do pedido atual continuam visíveis, até 3 por papel. As demais viram "+N instâncias encerradas". As de pedidos anteriores saem do cartão. Até o T8 não há pedidos (tickets), então todas as encerradas contam como do pedido atual: aparecem as 3 mais recentes de cada papel, e as outras entram no "+N". O servidor guarda os 50 subagentes encerrados mais recentes de cada sessão; os mais antigos somem também do "+N".
 
 O cabeçalho mostra quantos agentes estão ativos entre os presentes, como "2/3 ativos".
 
@@ -99,7 +114,7 @@ Abaixo do ticket, a cena mostra as seis salas do tema, com um token para cada ag
 - Cada agente fica na sala do seu papel e, quando termina, vai para a copa (taverna). A sessão principal não sai da sala dela, mesmo parada.
 - Cabem até 3 tokens por sala; além disso, aparece "+N".
 - Quem está trabalhando ou aguardando aprovação mostra um balão com a ação atual. A sala fica em destaque enquanto alguém trabalha nela.
-- Os agentes encerrados em pedidos anteriores saem da cena.
+- Os agentes encerrados em pedidos anteriores saem da cena. Até o T8, sem pedidos, os encerrados continuam na copa (até 3 tokens e "+N").
 
 Nesta fase, a cena é estática: os tokens mudam de sala sem animação.
 
@@ -113,7 +128,9 @@ A coluna da direita (Atividade, ou Crônica na Guilda) mostra uma linha por even
 - uso de ferramentas (ler, editar, rodar um comando, buscar...) e falhas;
 - resultado de testes, pedidos de aprovação e compactação do contexto.
 
-Falhas aparecem em vermelho, interrupções e pedidos de aprovação em amarelo, e sucessos em verde. O cabeçalho mostra quantos eventos estão na lista. O navegador guarda até 200 eventos por sessão.
+Nesta fase, com os eventos reais, aparecem a sessão iniciada e encerrada, as delegações, o fim dos subagentes, as ferramentas e as falhas. Cada ferramenta ganha uma linha quando começa, e uma falha ganha a sua. "Sessão iniciada" só aparece quando o servidor recebe o início da sessão: uma sessão que já estava aberta quando o servidor subiu, ou quando a captura foi ligada, entra direto, sem essa linha. Pedidos, etapas, resultado de testes, aprovações e compactação chegam com o T8.
+
+Falhas aparecem em vermelho, interrupções e pedidos de aprovação em amarelo, e sucessos em verde. O cabeçalho mostra quantos eventos estão na lista. O navegador guarda até 200 eventos por sessão, e o servidor manda os 200 mais recentes a cada conexão.
 
 Comandos, caminhos e títulos aparecem como chegam do servidor, que corta e redige o que pode ser segredo antes de enviar ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)). Mesmo assim, cuidado ao compartilhar a tela: o modo discreto, que esconde esses textos, chega numa próxima entrega.
 
@@ -144,10 +161,12 @@ Quando o servidor volta, o selo volta para "ao vivo" e o painel recebe o estado 
 
 ## Seletor de sessão
 
-O painel mostra uma sessão por vez. O seletor no topo lista as sessões que o servidor conhece, da que teve evento mais recente para a mais antiga. Cada opção traz o nome da sessão e o do projeto, como "Sessão 5f1c0a · agents-quest", e "encerrada" quando a sessão terminou. Passe o mouse sobre o seletor para ver a pasta do projeto.
+O painel mostra uma sessão por vez. O seletor no topo lista as sessões que o servidor conhece, da que teve evento mais recente para a mais antiga. Cada opção traz o nome da sessão e o do projeto, como "Sessão 5f1c0a · meu-app", e "encerrada" quando a sessão terminou. Passe o mouse sobre o seletor para ver a pasta do projeto.
 
+- O nome da sessão é o título dela no Claude Code ou, sem ele, "Sessão" com os 6 primeiros caracteres do id. Sem projeto conhecido, a opção traz só o nome da sessão.
+- Aparecem as sessões de todos os projetos, porque a captura vale para todos. Os subagentes ficam dentro da sessão de quem os chamou.
 - Ao abrir, o painel mostra a sessão mais recente.
-- A sessão que você escolher continua escolhida enquanto existir. Se ela sumir (o servidor limpa sessões antigas), o painel volta para a mais recente.
+- A sessão que você escolher continua escolhida enquanto existir. Se ela sumir, o painel volta para a mais recente. O servidor tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas.
 - A escolha não é guardada entre recarregamentos da página.
 - Sem sessões, o seletor fica escondido.
 
@@ -168,7 +187,7 @@ Abaixo dos passos, uma linha diz se o servidor está recebendo eventos. Ela é a
 
 | Linha | O que significa |
 |---|---|
-| "Último evento recebido às HH:MM:SS." | A captura está enviando eventos. Nesta fase, as sessões ainda não aparecem: isso confirma que a captura funciona. |
+| "Último evento recebido às HH:MM:SS." | A captura está enviando eventos, mas nenhuma sessão está em memória. Ou as sessões já foram limpas (encerradas há 30 minutos ou sem eventos há 6 horas), ou os eventos foram descartados: veja o `ignored` do `/api/health` e [Os eventos chegam, mas a sessão não aparece](servidor.md#os-eventos-chegam-mas-a-sessão-não-aparece-no-painel). |
 | "Nenhum evento recebido desde HH:MM (início do servidor)." | Nada chegou desde que o servidor iniciou. Confira a captura ([solução de problemas](captura.md#solução-de-problemas)). |
 | "Não foi possível consultar o servidor (/api/health)." | O painel não alcançou o servidor. Confira se ele está rodando. |
 
@@ -178,8 +197,8 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 
 | O que | Quando chega |
 |---|---|
-| Equipe, cena e atividade com eventos reais | Ligação de ponta a ponta do T9a, com o estado do T7 |
-| Tickets, etapas, "aguardando aprovação", bugs e resultado de testes; indicadores do topo com valores reais | T6 e T8 |
+| Tickets e etapas, "aguardando aprovação", bugs e resultado de testes, compactação do contexto; indicadores de bugs, entregas e aprovações com valores reais | T8 (com o T6 para os testes) |
+| Comandos de teste reconhecidos como teste ("Rodando os testes"), em vez de comando de terminal | T6 |
 | Cena animada: o agente caminhando até a copa, o pergaminho da delegação, o impacto de uma falha, os bugs no Lab de QA e o selo "!" de aprovação | T12b |
 | Filtros da atividade por papel e por agente, e animação de entrada das linhas | T11b |
 | Retomada da conexão sem baixar o estado inteiro de novo | T9b |
@@ -211,6 +230,7 @@ npm run test:e2e
 
 ## Para saber mais
 
+- [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Iniciar e parar o servidor](servidor.md) e [Ligar, pausar e remover a captura](captura.md).
 - [ADR 0004](../adr/0004-tempo-real-com-sse.md): tempo real com Server-Sent Events.
 - [ADR 0008](../adr/0008-fontes-dos-indicadores.md): de onde vem cada indicador, e o que é real ou aproximado.

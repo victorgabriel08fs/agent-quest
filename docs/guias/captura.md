@@ -25,7 +25,7 @@ Quem roda esses comandos é sempre você. O `npm run capture:deploy` só copia a
 - Instalada em escopo de usuário, vale em todas as sessões de todos os projetos, no terminal e na extensão do VS Code, inclusive dentro dos subagentes.
 - A cada evento, o Claude Code inicia em segundo plano `node forward.mjs`, o encaminhador. Ele lê o evento, procura o `runtime.json` no diretório de dados para saber se o servidor está no ar, em que porta e com qual token, envia o evento ao servidor e termina.
 - O que vai para o servidor: o JSON que o Claude Code entrega ao hook (que pode conter trechos de código, comandos, saídas e o seu pedido), com toda string acima de 4 KiB cortada em 1 KiB do início e 3 KiB do fim, mais o caminho do projeto (`CLAUDE_PROJECT_DIR`). Cada envio tem no máximo 1 000 000 bytes: eventos enormes chegam resumidos (veja [Eventos enormes chegam resumidos](#eventos-enormes-chegam-resumidos)). A forma exata está na seção 1 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
-- O servidor guarda tudo só em memória, sem gravar eventos em disco (a exceção é o `--debug-dump`; veja o [guia do servidor](servidor.md)). Nesta fase, ele só conta os eventos e os descarta.
+- O servidor guarda tudo só em memória, sem gravar eventos em disco (a exceção é o `--debug-dump`; veja o [guia do servidor](servidor.md)). Ele transforma cada evento no estado das sessões que o painel mostra ao vivo, sem conteúdo de arquivo, saída de comando nem o pedido completo, e descarta o evento bruto.
 
 ## O que a captura nunca faz
 
@@ -47,7 +47,7 @@ Alguns eventos são enormes: um Glob com milhares de arquivos ou um comando com 
    - os demais valores simples do primeiro nível do evento;
    - os valores simples de `tool_input`.
 
-No lugar do trecho retirado de uma string fica a marca `…[cortado N caracteres]…`, e um corte nunca parte um caractere ao meio (um emoji, por exemplo). Todo evento que perdeu alguma parte, em qualquer passo, vai marcado com `truncated: true`. Nesta fase, o servidor ainda só conta os eventos; com o [`--debug-dump`](servidor.md#gravar-os-eventos-recebidos---debug-dump), dá para ver o campo em cada evento gravado.
+No lugar do trecho retirado de uma string fica a marca `…[cortado N caracteres]…`, e um corte nunca parte um caractere ao meio (um emoji, por exemplo). Todo evento que perdeu alguma parte, em qualquer passo, vai marcado com `truncated: true`. O painel não mostra essa marca; com o [`--debug-dump`](servidor.md#gravar-os-eventos-recebidos---debug-dump), dá para ver o campo em cada evento gravado.
 
 ### Orçamento de tempo
 
@@ -282,10 +282,11 @@ Não deveria acontecer: a captura foi feita para não mostrar nada. Se acontecer
 
 ### Eventos faltando no fim de sessões com `claude -p`
 
-No modo não interativo (`claude -p`), o Claude Code encerra os hooks assíncronos que ainda estão rodando quando termina. Os últimos eventos dessas sessões podem se perder. Pelo design, o painel fecha por inatividade as sessões que ficarem paradas, então isso não deve deixar nada travado; esse acompanhamento de sessões chega nas próximas entregas.
+No modo não interativo (`claude -p`), o Claude Code encerra os hooks assíncronos que ainda estão rodando quando termina. Os últimos eventos dessas sessões podem se perder. O servidor compensa boa parte disso com o [relógio do estado](servidor.md#o-relógio-do-estado): um agente que ainda constava como trabalhando, sem ferramenta em execução, é liberado depois de 15 minutos sem eventos, e a sessão sai da memória depois de 6 horas sem eventos.
 
 ## Para saber mais
 
+- [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Iniciar e parar o servidor](servidor.md): porta, diretório de dados, `runtime.json` e `/api/health`.
 - [ADR 0001](../adr/0001-captura-por-hooks-command-assincronos.md): por que hooks `command` assíncronos e quais eventos, com os complementos sobre o teto do corpo e o prazo de 2 s na prática.
 - [ADR 0002](../adr/0002-captura-instalada-como-plugin-local.md): por que um plugin de marketplace local, as fontes da documentação do Claude Code e a política de versão da captura.

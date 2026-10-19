@@ -2,7 +2,7 @@
 
 O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a captura envia do Claude Code e serve o painel no navegador, sempre em `http://127.0.0.1`. Este guia mostra como iniciar, configurar e parar o servidor, e o que fazer com as mensagens mais comuns.
 
-> Este guia descreve o servidor como ele está agora, na fundação da v1. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar a captura no Claude Code, veja [Ligar, pausar e remover a captura](captura.md); para ler o painel, veja [O painel](painel.md).
+> Este guia descreve o servidor como ele está agora, no recorte da "Primeira luz" da v1: ele recebe os eventos da captura, monta as sessões em memória e as envia ao painel ao vivo. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md); para a captura em detalhe, veja [Ligar, pausar e remover a captura](captura.md); para ler o painel, veja [O painel](painel.md).
 
 ## Resumo rápido
 
@@ -13,6 +13,7 @@ O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a capt
 | Usar outra porta | `npm start -- --port 47900` |
 | Parar | Ctrl+C na janela do servidor |
 | Conferir se está no ar | abrir `http://127.0.0.1:47821/api/health` |
+| Ver o estado das sessões, de uma vez | abrir `http://127.0.0.1:47821/api/state` |
 
 ## Antes de começar
 
@@ -38,7 +39,7 @@ Ctrl+C para parar.
 
 Abra o endereço no navegador para ver o [painel](painel.md). O servidor fica no ar enquanto esse terminal estiver aberto: deixe-o aberto (pode minimizar) e use outro terminal para o resto.
 
-Nesta fase, o painel ainda não mostra sessões ao vivo. A ligação entre captura, servidor e painel chega nas próximas tarefas do [plano da v1](../plano/v1.md).
+Com a captura ligada, o painel mostra as sessões do Claude Code ao vivo (veja [Sessões em memória](#sessões-em-memória)). Para ligar tudo na primeira vez, siga [Primeira luz](primeira-luz.md).
 
 Se houver algum aviso (linha que começa com "Aviso:"), ele aparece antes dessas três linhas. Aviso não impede o servidor de subir; veja [Mensagens comuns](#mensagens-comuns).
 
@@ -54,7 +55,7 @@ Bom saber:
 
 - **Arquivos do painel** (`web/`) não reiniciam o servidor, e nem precisam: eles são lidos do disco a cada pedido e saem com `Cache-Control: no-cache`. Basta apertar F5 no navegador.
 - **O `config.json` e as variáveis de ambiente** são lidos só no início. Mudou algum deles? Pare e inicie de novo.
-- **Cada reinício começa do zero.** O que o servidor sabe fica só na memória, então os contadores do [`/api/health`](#conferir-o-servidor-com-apihealth) voltam a zero ([ADR 0005](../adr/0005-estado-em-memoria.md)).
+- **Cada reinício começa do zero.** O que o servidor sabe fica só na memória: as sessões somem do painel e reaparecem com os próximos eventos, e os contadores do [`/api/health`](#conferir-o-servidor-com-apihealth) voltam a zero ([ADR 0005](../adr/0005-estado-em-memoria.md)). O painel aberto reconecta sozinho.
 - **Quando o servidor sai sozinho** (porta ocupada, porta inválida, "já está rodando"), o `node --watch` não devolve o prompt: ele fica esperando alguma mudança de arquivo. Aperte Ctrl+C para sair.
 - **No Windows, parar o `npm run dev` pode deixar um `runtime.json` para trás.** É inofensivo; veja [Exceção do `npm run dev` no Windows](#exceção-do-npm-run-dev-no-windows).
 
@@ -83,7 +84,7 @@ A porta precisa ser um número inteiro de 1024 a 65535, que é a faixa em que a 
 
 ### O arquivo `config.json`
 
-É opcional. Fica no diretório de dados (`%LOCALAPPDATA%\agent-quest\config.json`) e serve para deixar a porta definida de vez:
+É opcional. Fica no diretório de dados (`%LOCALAPPDATA%\agent-quest\config.json`) e serve para deixar a porta definida de vez e para dar papéis a agentes com outros nomes ([`roles`](#papéis-de-outros-agentes-roles)):
 
 ```json
 { "port": 47900 }
@@ -95,9 +96,25 @@ Para criá-lo pelo PowerShell (a pasta já existe depois do primeiro `npm start`
 Set-Content -Path "$env:LOCALAPPDATA\agent-quest\config.json" -Value '{ "port": 47900 }'
 ```
 
-- Nesta fase, só a chave `port` tem efeito.
-- O arquivo é lido só no início do servidor.
+- Valem as chaves `port` e `roles`. Outras chaves são ignoradas.
+- O arquivo é lido só no início do servidor. Mudou? Pare e inicie de novo.
 - Se o arquivo não puder ser lido ou não for um objeto JSON válido, o servidor avisa no terminal, ignora o arquivo e segue com o padrão. Se a porta dentro dele for inválida, o servidor não sobe e mostra o erro com o caminho do arquivo.
+
+#### Papéis de outros agentes (`roles`)
+
+O papel de cada subagente sai do tipo dele: `arquiteto` é System Design; `dev-backend` e `dev-frontend`, Dev; `tester`, Tester; `documentador`, Documentação. Qualquer outro tipo é convidado. Se o seu time usa outros nomes, a chave `roles` diz o papel de cada um:
+
+```json
+{ "roles": { "backend": "dev", "revisor": "tes" } }
+```
+
+Com a porta também definida, as duas chaves ficam no mesmo objeto: `{ "port": 47900, "roles": { "backend": "dev" } }`.
+
+- **Papéis aceitos:** `arq` (System Design), `dev` (Dev), `tes` (Tester), `doc` (Documentação) e `aux` (convidado). Um valor diferente é ignorado, e o nome segue a tabela padrão. O papel do orquestrador (`orq`) é só da sessão principal e não pode ser dado por aqui.
+- **Onde vale:** nos subagentes, nas delegações e na equipe montada a partir de `.claude/agents/`. Por exemplo, um `backend.md` em `.claude/agents/` passa a pôr o papel Dev na equipe.
+- **Também troca a tabela padrão:** `{ "roles": { "tester": "aux" } }` faz o `tester` aparecer como convidado.
+- **`plugin:agente`:** vale primeiro o nome inteiro e depois a parte depois do último `:`.
+- **Formato errado:** se `roles` não for um objeto, o servidor avisa no início ("roles" no config.json não é um objeto; foi ignorado) e segue com a tabela padrão.
 
 ### Gravar os eventos recebidos (`--debug-dump`)
 
@@ -110,7 +127,7 @@ npm start -- --debug-dump
 - Os eventos vão para `%LOCALAPPDATA%\agent-quest\dumps\AAAA-MM-DD.jsonl`: um arquivo por dia (data local) e um evento por linha. Só entram os eventos aceitos, ou seja, válidos e não repetidos.
 - No início, o servidor mostra um aviso com o caminho da pasta.
 - Sem a opção, nada é gravado e a pasta `dumps` nem é criada. Essa é a única exceção à regra de não guardar eventos em disco ([ADR 0005](../adr/0005-estado-em-memoria.md)).
-- Se a gravação falhar (disco cheio, por exemplo), o terminal mostra "Erro ao gravar o --debug-dump; a gravação parou", e o servidor continua recebendo os eventos normalmente.
+- Se a gravação falhar (disco cheio, por exemplo), o terminal mostra "Erro ao gravar o --debug-dump; a gravação parou", seguido do tipo do erro, e o servidor continua recebendo os eventos normalmente.
 - Para apagar os arquivos, com o servidor parado:
 
   ```powershell
@@ -130,11 +147,11 @@ Em Linux e macOS, a pasta é `$XDG_STATE_HOME/agent-quest` ou, sem essa variáve
 | Item | O que é | Quem cria |
 |---|---|---|
 | `runtime.json` | Como a captura encontra o servidor (veja abaixo) | O servidor, a cada início; é apagado ao parar |
-| `config.json` | Configuração opcional (porta) | Você |
+| `config.json` | Configuração opcional (porta e papéis) | Você |
 | `marketplace\` | Cópia do plugin de captura, pronta para instalar ([guia da captura](captura.md)) | `npm run capture:deploy` |
 | `dumps\` | Eventos gravados com `--debug-dump` | O servidor, só com a opção |
 
-O estado das sessões fica só na memória do servidor. Fora o `--debug-dump`, nenhum evento vai para o disco.
+O estado das sessões fica só na memória do servidor (veja [Sessões em memória](#sessões-em-memória)). Fora o `--debug-dump`, nenhum evento vai para o disco.
 
 ### O `runtime.json`
 
@@ -191,7 +208,9 @@ Se o diretório de dados ficar dentro do OneDrive, o servidor avisa no início e
 
 ### Ctrl+C
 
-Na janela onde o servidor está rodando, aperte **Ctrl+C**. O terminal mostra `Encerrando o Agent Quest...`, o servidor apaga o `runtime.json` e sai. A partir daí, a captura deixa de enviar eventos, em silêncio, sem atrapalhar o Claude Code.
+Na janela onde o servidor está rodando, aperte **Ctrl+C**. O terminal mostra `Encerrando o Agent Quest...`, o servidor para o [relógio do estado](#o-relógio-do-estado), apaga o `runtime.json` e sai. A partir daí, a captura deixa de enviar eventos, em silêncio, sem atrapalhar o Claude Code, e o painel aberto mostra o selo "reconectando" até o servidor voltar.
+
+Se outro programa estiver com o `runtime.json` aberto bem nessa hora (um encaminhador lendo, o antivírus ou o indexador do Windows), o servidor tenta apagá-lo de novo algumas vezes antes de sair. Nesse caso, a saída demora um pouco mais, menos de 1 segundo. Se mesmo assim não der, o arquivo fica para trás, o que é inofensivo (veja [Sobrou um `runtime.json`?](#sobrou-um-runtimejson)).
 
 Se você apertar Ctrl+C de novo enquanto ele encerra, o processo sai na hora.
 
@@ -306,9 +325,24 @@ O aviso aparece quando o caminho fica dentro da pasta indicada pelas variáveis 
 
 - **"Argumentos inválidos: ..."**, seguida da linha de uso: opção desconhecida. O servidor aceita só `--port <número>` e `--debug-dump`. Sai com código 1.
 - **"Aviso: ... config.json não é um objeto JSON válido; o arquivo foi ignorado."** (ou "não foi possível ler"): corrija o arquivo. Até lá, vale o padrão.
-- **"Aviso: "roles" no config.json não é um objeto; foi ignorado."**: a chave `roles` está com formato errado. Ela ainda não tem efeito nesta fase; corrija ou remova a chave.
+- **"Aviso: "roles" no config.json não é um objeto; foi ignorado."**: a chave `roles` está com formato errado e vale a tabela padrão de papéis. Corrija (veja [Papéis de outros agentes](#papéis-de-outros-agentes-roles)) ou remova a chave.
 - **"Não foi possível gravar o runtime.json em ... (código do erro)."**: o diretório de dados não pôde ser criado ou gravado, por exemplo com `AGENT_QUEST_HOME` apontando para um lugar sem permissão. Sai com código 1. Se a pasta tem permissão e o código é `EPERM`, `EACCES` ou `EBUSY`, o mais provável é que algum programa tenha segurado o `runtime.json` por mais tempo que as novas tentativas, de cerca de 2 segundos. Espere um instante e inicie de novo.
 - **O PowerShell recusa o `npm`** dizendo que a execução de scripts está desabilitada: use `npm.cmd` no lugar de `npm` (por exemplo, `npm.cmd start`). Nesse caso, o Ctrl+C também mostra a pergunta do cmd, `Deseja finalizar o arquivo em lotes (S/N)?`.
+
+### Erros enquanto o servidor roda
+
+Se algo dá errado com o servidor no ar, ele escreve uma linha no terminal e continua rodando. A linha traz só o tipo do erro (como `TypeError` ou `EBUSY`), nunca o conteúdo do evento, o corpo ou o caminho do pedido, porque os eventos podem ter código, comandos e segredos.
+
+| Mensagem | O que aconteceu |
+|---|---|
+| `Erro ao processar um evento: <tipo>` | Um evento recebido deu erro no normalizador ou no estado das sessões. Ele conta como `ignored` no [`/api/health`](#conferir-o-servidor-com-apihealth), e os próximos eventos seguem normalmente. Se o erro foi no estado, o painel recebe de novo a sessão afetada, como ela ficou, para se acertar. |
+| `Erro no tick do estado: <tipo>` | A passada de 5 em 5 segundos do [relógio do estado](#o-relógio-do-estado) deu erro. A próxima passada tenta de novo. |
+| `Erro ao aplicar .claude/agents/: <tipo>` | Os nomes lidos de `.claude/agents/` não puderam ser aplicados. A equipe dessas sessões fica só com os papéis vistos nelas. |
+| `Erro ao responder uma requisição: <tipo>` | Um pedido ao painel ou à API deu erro e recebeu 500 ("Erro interno."). |
+| `Erro no servidor: <código>` | Erro do próprio servidor HTTP, depois de iniciado. |
+| `Erro ao gravar o --debug-dump; a gravação parou: <tipo>` | Só com `--debug-dump`; veja [Gravar os eventos recebidos](#gravar-os-eventos-recebidos---debug-dump). |
+
+Uma linha isolada não exige nada. Se `Erro ao processar um evento` se repetir, anote o tipo do erro e os números do `/api/health` e reporte o problema.
 
 ### Códigos de saída do servidor
 
@@ -341,8 +375,8 @@ Exemplo de resposta:
   "startedAt": 1760731234567,
   "events": { "received": 42, "accepted": 40, "rejected": 0, "deduped": 2, "dropped": 0, "ignored": 0 },
   "lastEventAt": 1760731299000,
-  "sessions": 0,
-  "clients": 0
+  "sessions": 2,
+  "clients": 1
 }
 ```
 
@@ -358,9 +392,9 @@ A resposta nunca traz conteúdo de evento: só contagens e horários.
 | `events.deduped` | Eventos repetidos: o mesmo conteúdo chegou de novo em até 5 segundos (por exemplo, com o plugin carregado duas vezes). Recebem resposta de sucesso, mas são descartados. |
 | `events.rejected` | Envios recusados: sem o token certo, vindos de um navegador, com tipo de conteúdo diferente de JSON, acima de 1 MiB, com envelope inválido ou com a conexão interrompida no meio. |
 | `events.dropped` | Eventos aceitos e depois descartados porque a fila passou de 10 000 itens (sai sempre o mais antigo). |
-| `events.ignored` | Eventos aceitos que não geraram nada no processamento ou deram erro nele. |
+| `events.ignored` | Eventos aceitos que o normalizador descartou (tipo de hook desconhecido, sem `session_id` ou com id fora do padrão) ou que deram erro no processamento (veja [Erros enquanto o servidor roda](#erros-enquanto-o-servidor-roda)). |
 | `lastEventAt` | Hora do último envio respondido com sucesso, repetido ou não, em milissegundos desde 1970; `null` se nada chegou desde o início. |
-| `sessions` | Sessões guardadas em memória. Nesta fase, fica em 0. |
+| `sessions` | Sessões em memória, inclusive as encerradas que ainda não foram limpas (veja [Sessões em memória](#sessões-em-memória)). É o número de sessões que o seletor do painel lista. |
 | `clients` | Conexões ao vivo abertas em `/events`: cada aba do painel conectada conta uma. São no máximo 8. |
 
 As contas sempre fecham assim:
@@ -370,10 +404,10 @@ As contas sempre fecham assim:
 
 Como ler os números:
 
-- **Captura funcionando:** `received` e `lastEventAt` mudam a cada ação no Claude Code.
+- **Captura funcionando:** `received` e `lastEventAt` mudam a cada ação no Claude Code, e `sessions` passa de 0 com o primeiro evento de uma sessão.
 - **`rejected` subindo:** algo está mandando pedidos que o servidor recusa. A captura normal quase nunca gera recusas.
 - **`dropped` acima de 0:** chegou uma rajada maior do que a fila aguenta, e os eventos mais antigos dela se perderam.
-- **`ignored`:** nesta fase, fica em 0, porque o servidor ainda só conta os eventos; o processamento chega nas próximas entregas.
+- **`ignored` subindo junto com `accepted`:** os eventos chegam, mas são descartados ou dão erro, e não aparecem no painel. Com a captura normal, ele fica em 0 ou perto disso. Veja o terminal do servidor ([Erros enquanto o servidor roda](#erros-enquanto-o-servidor-roda)).
 
 A forma completa dessa resposta está na seção 9 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
 
@@ -381,8 +415,81 @@ A forma completa dessa resposta está na seção 9 do [modelo de eventos](../arq
 
 O painel recebe o estado ao vivo por `GET /events` (Server-Sent Events) e pode buscá-lo de uma vez em `GET /api/state`. As duas rotas seguem as mesmas regras de segurança do resto do painel e saem com `Cache-Control: no-store`.
 
-- Nesta fase, as duas ficam vazias (`{ "seq": 0, "sessions": [] }`): a ligação entre os eventos recebidos e o estado das sessões chega nas próximas entregas.
+- **`/events`:** a cada conexão, o servidor manda um `hello` e o estado completo (`snapshot`), com todas as sessões em memória e a atividade recente de cada uma, até 200 eventos por sessão. Depois, manda uma atualização (`update`) por evento, com o estado novo da sessão, e um aviso (`session-removed`) quando uma sessão sai da memória. Sem novidades, vai um sinal de vida a cada 15 segundos. Nesta fase, toda conexão recebe o estado completo, inclusive depois de uma queda; a retomada só do que faltou chega no T9b.
+- **`/api/state`:** o mesmo conteúdo do `snapshot`, de uma vez. O painel o busca quando percebe que perdeu alguma atualização.
 - São no máximo 8 conexões ao vivo ao mesmo tempo. A nona recebe 503, com a mensagem "Muitos painéis conectados. Feche uma aba do painel e tente de novo."
+
+Para ver o estado pelo terminal:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:47821/api/state | ConvertTo-Json -Depth 8
+```
+
+```bash
+# Git Bash
+curl -s http://127.0.0.1:47821/api/state
+```
+
+Exemplo abreviado de resposta (os `…` marcam o que foi omitido):
+
+```json
+{
+  "seq": 128,
+  "sessions": [
+    {
+      "id": "5f1c0a…",
+      "project": { "key": "c:/Projetos/meu-app", "name": "meu-app", "dir": "C:\\Projetos\\meu-app" },
+      "label": "Sessão 5f1c0a",
+      "status": "active",
+      "agents": [{ "key": "main", "role": "orq", "status": "working", "…": "…" }],
+      "roster": ["orq", "dev", "tes"],
+      "quest": null,
+      "counters": { "questsDone": 0, "bugsCrushed": 0, "pendingApprovals": 0 },
+      "…": "…",
+      "feed": [{ "seq": 127, "kind": "tool.started", "…": "…" }]
+    }
+  ]
+}
+```
+
+O estado traz os comandos, caminhos e títulos que o painel mostra, já cortados e redigidos, e nunca conteúdo de arquivo, saída de comando, texto do assistente nem o pedido completo. Mesmo assim, cuidado ao compartilhar. A forma completa está na seção 9 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
+
+## Sessões em memória
+
+Cada evento aceito passa pelo normalizador, que tira o conteúdo e redige segredos, e depois pelo estado das sessões. Isso roda depois de o servidor responder à captura, então nunca atrasa o Claude Code. Cada mudança vai na hora para os painéis abertos.
+
+- **Uma sessão por `session_id`.** Ela aparece com o primeiro evento que chegar, mesmo que o servidor tenha sido iniciado no meio da sessão. Os subagentes ficam dentro da sessão de quem os chamou.
+- **Projeto:** a pasta do projeto do evento ou, sem ela, a pasta de trabalho (`cwd`). O nome é a última parte do caminho. Formas diferentes do mesmo caminho (`C:\Projetos\meu-app`, `c:/Projetos/meu-app` ou, no Git Bash, `/c/Projetos/meu-app`) contam como o mesmo projeto.
+- **Rótulo:** o título da sessão no Claude Code ou, sem ele, "Sessão" com os 6 primeiros caracteres do id.
+- **Status:** `active` com algum agente trabalhando ou com evento nos últimos 2 minutos; `idle` fora disso; `ended` depois do fim da sessão.
+- **Agentes:** cada sessão guarda até 100 agentes em andamento e os 50 encerrados mais recentes. Os mais antigos saem do estado, e eventos atrasados deles são ignorados.
+- **Atividade:** os 200 eventos mais recentes de cada sessão.
+- **Reiniciar o servidor apaga tudo** ([ADR 0005](../adr/0005-estado-em-memoria.md)). As sessões voltam com os próximos eventos.
+
+Nesta fase, o estado não tem tickets, etapas, aprovações nem bugs: chegam com o T8. Até lá, `quest` vem `null` e os contadores vêm zerados.
+
+### O relógio do estado
+
+A cada 5 segundos, o servidor revisa as sessões em memória:
+
+- recalcula o status: uma sessão sem ninguém trabalhando e sem eventos há 2 minutos passa de `active` para `idle`;
+- um subagente que consta como trabalhando, sem ferramenta em execução e sem eventos há 15 minutos, é dado como encerrado e vai para a copa. Se ele chamar uma ferramenta nova depois, volta a trabalhar. A sessão principal, nesse caso, só fica parada;
+- tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas. O painel recebe a remoção e tira a sessão do seletor.
+
+Isso compensa eventos que se perdem, como um Esc sem fim de turno ou uma sessão fechada à força. O relógio para quando o servidor encerra.
+
+### A equipe e o `.claude/agents/`
+
+A equipe de cada sessão mostra o orquestrador, os papéis do time que têm arquivo em `.claude/agents/` (na pasta do projeto ou em `~/.claude/agents/`), os papéis que aparecerem na sessão e o convidado, se houver.
+
+- O servidor lê só os nomes dos arquivos `.md`, nunca o conteúdo, e até 200 por pasta.
+- A leitura acontece uma vez, em segundo plano, quando o projeto aparece pela primeira vez. Até ela terminar, a equipe mostra o orquestrador e os papéis já vistos na sessão; depois, os demais papéis entram sozinhos no painel.
+- Cada pasta tem um prazo de 500 ms, e as pastas são lidas uma por vez, para uma unidade de rede ou uma pasta só na nuvem do OneDrive não travar o servidor. Se uma pasta passar do prazo, a equipe segue sem ela, e os nomes entram quando a leitura terminar.
+- Pastas de rede (`\\servidor\pasta`) e caminhos relativos não são lidos. Uma pasta que não existe ou dá erro conta como vazia.
+- **Cada pasta é lida uma vez por execução.** Criou um agente novo em `.claude/agents/`? Ele só entra na equipe depois de reiniciar o servidor, ou antes, se for chamado na sessão.
+- Agentes com outros nomes ganham papel pela chave [`roles`](#papéis-de-outros-agentes-roles) do `config.json`.
+
+Limite conhecido nesta fase: uma pasta que nunca responde (por exemplo, numa unidade de rede desconectada) prende a leitura das pastas seguintes até responder ou até o servidor reiniciar. Os projetos que aparecerem depois dela ficam com a equipe só dos papéis vistos na sessão. O ajuste está em andamento ([modelo de eventos, seção 7](../arquitetura/modelo-de-eventos.md#7-sessões-e-projetos)).
 
 ## Solução de problemas
 
@@ -406,6 +513,14 @@ Você usa o Claude Code, mas o `received` do `/api/health` não sobe e o `lastEv
 3. **A captura está ligada no Claude Code?** Ela precisa estar instalada, ativa e carregada na sessão. Siga a [solução de problemas do guia da captura](captura.md#solução-de-problemas), que também cobre a confiança da pasta e o `node` fora do PATH do VS Code.
 4. **`received` sobe, mas `rejected` sobe junto?** Os envios chegam e são recusados. Anote os números do `/api/health` e reporte o problema.
 
+### Os eventos chegam, mas a sessão não aparece no painel
+
+O `received` do `/api/health` sobe, mas o painel continua sem a sessão que você espera.
+
+1. **`sessions` acima de 0?** Então a sessão está no servidor. O painel mostra uma sessão por vez: escolha a sua no seletor do topo. Se o seletor não mostrar nada, aperte F5.
+2. **`sessions` em 0 e `ignored` subindo?** Os eventos estão sendo descartados ou dando erro. Veja se o terminal do servidor mostra `Erro ao processar um evento` ([Erros enquanto o servidor roda](#erros-enquanto-o-servidor-roda)) e reporte o problema, com o tipo do erro e os números do `/api/health`.
+3. **O selo do painel está "desconectado"?** Já há 8 painéis abertos. Feche alguma aba; o painel tenta de novo sozinho.
+
 ## Segurança em resumo
 
 Os eventos podem conter código, comandos e segredos. Por isso, o servidor só atende o seu navegador e a captura, na sua máquina ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)):
@@ -415,14 +530,17 @@ Os eventos podem conter código, comandos e segredos. Por isso, o servidor só a
 - **Outras origens recebem 403.** Se uma página qualquer aberta no navegador tentar ler o painel ou a API, o navegador marca o pedido com a origem dela (cabeçalhos `Origin` e `Sec-Fetch-Site`), e o servidor recusa. No navegador, só são aceitos os pedidos do próprio painel e o endereço digitado na barra. Também não há CORS: nenhuma resposta libera acesso para outros sites, e pedidos `OPTIONS` recebem 405.
 - **Só a captura envia eventos.** O `POST /hooks` exige o token do `runtime.json`, que muda a cada início, e recusa qualquer pedido vindo de navegador.
 - **Nada da internet.** A página só carrega scripts e estilos do próprio servidor (política de segurança de conteúdo restrita), e o servidor só entrega arquivos das pastas `web/` e `shared/`.
-- **Logs sem conteúdo.** O terminal do servidor nunca mostra o corpo, os cabeçalhos nem o caminho dos pedidos.
+- **Logs sem conteúdo.** O terminal do servidor nunca mostra o corpo, os cabeçalhos nem o caminho dos pedidos, nem o conteúdo dos eventos. Nos erros, aparece só o tipo do erro.
 
 Risco aceito: programas que rodam com o seu usuário do Windows conseguem ler o token e abrir o painel, do mesmo jeito que já conseguem ler os seus arquivos.
 
 ## Para saber mais
 
+- [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Visão geral da arquitetura](../arquitetura/visao-geral.md): seções "Como rodar localmente", "Rotas e mapeamento de URL", "Limites e valores padrão" e "Falhas e como o sistema reage".
-- [Modelo de eventos](../arquitetura/modelo-de-eventos.md), seção 9: a resposta do `/api/health`.
+- [Modelo de eventos](../arquitetura/modelo-de-eventos.md): seção 7 (sessões, projetos, equipe e limpeza) e seção 9 (`/events`, `/api/state` e `/api/health`).
+- [ADR 0004](../adr/0004-tempo-real-com-sse.md): tempo real com Server-Sent Events.
 - [ADR 0005](../adr/0005-estado-em-memoria.md): estado só em memória e diretório de dados fora do OneDrive.
 - [ADR 0006](../adr/0006-seguranca-do-servidor-local.md): segurança do servidor local.
-- [Plano da v1](../plano/v1.md): tarefa T2, com os critérios de aceite do servidor.
+- [ADR 0007](../adr/0007-identidade-dos-agentes.md): identidade dos agentes e papéis do time.
+- [Plano da v1](../plano/v1.md): tarefas T2 (servidor), T7 (estado) e T9a (tempo real e ligação de ponta a ponta), com os critérios de aceite.
