@@ -4,7 +4,7 @@ O painel é a página do Agent Quest no navegador. Ele mostra, ao vivo, o que ca
 
 Este guia é a primeira versão: explica como abrir o painel, o que cada área mostra, como trocar de tema e de sessão, e o que ainda não está ligado.
 
-> **Situação nesta fase.** O painel já está pronto e conectado ao vivo ao servidor, mas o servidor ainda não transforma os eventos recebidos em sessões. Por isso, mesmo com a captura ligada, o painel mostra o estado sem sessões. Equipe, ticket, cena e atividade passam a mostrar eventos reais com as próximas entregas do servidor (T7 e a ligação de ponta a ponta do T9a, no [plano da v1](../plano/v1.md)). Até lá, o que você vê com dados vem dos testes, que usam estados de exemplo escritos à mão.
+> **Situação nesta fase.** O painel já está pronto e conectado ao vivo ao servidor, mas o servidor ainda não transforma os eventos recebidos em sessões. Por isso, mesmo com a captura ligada, o painel mostra o estado sem sessões. Equipe, cena e atividade passam a mostrar eventos reais com a ligação de ponta a ponta do T9a, que liga à recepção dos eventos o estado das sessões e dos agentes preparado no T7; o ticket vem com o T8 (veja o [plano da v1](../plano/v1.md)). Até lá, o que você vê com dados vem dos testes, que usam estados de exemplo escritos à mão.
 
 ## Resumo rápido
 
@@ -178,7 +178,7 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 
 | O que | Quando chega |
 |---|---|
-| Equipe, ticket, cena e atividade com eventos reais | T7 e a ligação de ponta a ponta do T9a |
+| Equipe, cena e atividade com eventos reais | Ligação de ponta a ponta do T9a, com o estado do T7 |
 | Tickets, etapas, "aguardando aprovação", bugs e resultado de testes; indicadores do topo com valores reais | T6 e T8 |
 | Cena animada: o agente caminhando até a copa, o pergaminho da delegação, o impacto de uma falha, os bugs no Lab de QA e o selo "!" de aprovação | T12b |
 | Filtros da atividade por papel e por agente, e animação de entrada das linhas | T11b |

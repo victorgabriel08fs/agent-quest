@@ -5,7 +5,10 @@ Ferramenta descartável para validar na prática os itens V1 a V14 de `docs/arqu
 - `plugin/`: plugin `agent-quest-probe`. Registra 18 hooks (`command`, forma exec, `async: true`, sem `matcher`) que chamam `scripts/dump.mjs`, e o subagente `probe-worker`.
 - `plugin/scripts/dump.mjs`: grava cada payload bruto em `%LOCALAPPDATA%\agent-quest\probe\events.jsonl` (ou em `<AGENT_QUEST_HOME>\probe\`). Nunca imprime nada e sempre sai com código 0.
 - `report.mjs`: dá o veredito de V1 a V14 e mede tamanhos, ordem e tempos, sem mostrar conteúdo nem a pasta pessoal.
-- `sanitize.mjs`: gera os cenários de `test/fixtures/hooks/*.json` a partir do JSONL bruto (formato e regras no ADR 0010). A redação de segredos é a de `server/domain/redact.js`, a mesma do normalizador. Nos textos mantidos, ela troca segredos por `•••` e tira caracteres invisíveis, caracteres de controle (a quebra de linha fica, e o tab vira espaço) e sequências ANSI de terminal (cores, títulos e links). Um segredo colorido é redigido inteiro.
+- `sanitize.mjs`: gera os cenários de `test/fixtures/hooks/*.json` a partir do JSONL bruto (formato e regras no ADR 0010). A redação de segredos é a de `server/domain/redact.js`, a mesma do normalizador.
+  - Nos textos mantidos, ela troca segredos por `•••` e tira caracteres invisíveis, caracteres de controle (a quebra de linha fica, e o tab vira espaço) e sequências ANSI de terminal (cores, títulos e links). Um segredo colorido é redigido inteiro.
+  - Como no normalizador, cada texto mantido é redigido só nos primeiros 8192 caracteres, para um texto enorme não custar segundos. O resto não entra no cenário.
+  - Das saídas, ficam só as linhas de resumo dos testes; dos erros, a primeira linha e as linhas de resumo. O resumo é reconhecido no texto sem cores, então os resumos coloridos do `node --test`, do Playwright, do Jest e do Vitest também ficam, já sem as cores.
 
 > **Atenção:** o `events.jsonl` guarda os payloads completos (conteúdo de arquivos, saídas, pedidos). Ele fica só em `%LOCALAPPDATA%\agent-quest\probe\`, fora do repositório e do OneDrive, e é apagado depois de gerar os cenários.
 
