@@ -150,7 +150,6 @@ Chegam depois do marco, enquanto o resto da v1 é construído:
 | Comandos de teste mostrados como teste; até lá, aparecem como comando de terminal | T6 |
 | Cena animada | T12b |
 | Filtros da atividade | T11b |
-| Retomada da conexão sem baixar o estado inteiro | T9b |
 | Seletor agrupado por projeto e "seguir atividade" entre sessões | T13 |
 | Modo discreto, que esconde comandos, caminhos e títulos para compartilhar a tela | T14 |
 

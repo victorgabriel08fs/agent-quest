@@ -14,6 +14,7 @@ O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a capt
 | Parar | Ctrl+C na janela do servidor |
 | Conferir se está no ar | abrir `http://127.0.0.1:47821/api/health` |
 | Ver o estado das sessões, de uma vez | abrir `http://127.0.0.1:47821/api/state` |
+| Ver o painel ao vivo sem a captura (desenvolvimento) | `npm run inject -- <arquivo.json>` ([detalhes](#injetar-um-cenário-npm-run-inject)) |
 
 ## Antes de começar
 
@@ -415,9 +416,15 @@ A forma completa dessa resposta está na seção 9 do [modelo de eventos](../arq
 
 O painel recebe o estado ao vivo por `GET /events` (Server-Sent Events) e pode buscá-lo de uma vez em `GET /api/state`. As duas rotas seguem as mesmas regras de segurança do resto do painel e saem com `Cache-Control: no-store`.
 
-- **`/events`:** a cada conexão, o servidor manda um `hello` e o estado completo (`snapshot`), com todas as sessões em memória e a atividade recente de cada uma, até 200 eventos por sessão. Depois, manda uma atualização (`update`) por evento, com o estado novo da sessão, e um aviso (`session-removed`) quando uma sessão sai da memória. Sem novidades, vai um sinal de vida a cada 15 segundos. Nesta fase, toda conexão recebe o estado completo, inclusive depois de uma queda; a retomada só do que faltou chega no T9b.
+- **`/events`:** ao conectar, o painel recebe um `hello` e o estado completo (`snapshot`), com todas as sessões em memória e a atividade recente de cada uma, até 200 eventos por sessão. Depois, recebe uma atualização (`update`) por evento, com o estado novo da sessão, e um aviso (`session-removed`) quando uma sessão sai da memória. Sem novidades, vai um sinal de vida a cada 15 segundos.
 - **`/api/state`:** o mesmo conteúdo do `snapshot`, de uma vez. O painel o busca quando percebe que perdeu alguma atualização.
 - São no máximo 8 conexões ao vivo ao mesmo tempo. A nona recebe 503, com a mensagem "Muitos painéis conectados. Feche uma aba do painel e tente de novo."
+
+#### Reconexão e painéis lentos
+
+- **Reconexão sem baixar tudo de novo.** O servidor guarda as últimas 1 000 atualizações, até 1 MiB no total. Se a conexão cai com o servidor no ar (o computador suspenso, uma aba congelada pelo navegador), o navegador reconecta sozinho, informa a última atualização que recebeu e recebe só as que perdeu. Se não perdeu nada, segue ao vivo.
+- **Quando vem o estado completo.** O painel recebe o `snapshot` de novo quando o servidor reiniciou, quando o que falta já saiu do que o servidor guarda ou passa de 1 MiB, ou quando a aba abre uma conexão nova (por exemplo, depois do selo "desconectado" ou de um F5).
+- **Painel lento.** Uma conexão que acumula mais de 1 MiB sem ler (uma aba travada, por exemplo) é desconectada para não pesar no servidor. Ela volta sozinha e recebe o estado completo. O envio inicial não conta nesse limite, então um estado grande não derruba o painel ao conectar.
 
 Para ver o estado pelo terminal:
 
@@ -499,6 +506,52 @@ Uma pasta de projeto pode nunca responder, por exemplo numa unidade de rede desc
 
 Para tentar ler a pasta de novo, depois de reconectar a unidade, reinicie o servidor. Os detalhes estão na [seção 7 do modelo de eventos](../arquitetura/modelo-de-eventos.md#7-sessões-e-projetos).
 
+## Injetar um cenário (`npm run inject`)
+
+Ferramenta de desenvolvimento: envia ao servidor um cenário de eventos de hooks, pelo mesmo caminho da captura, para ver o painel ao vivo sem o Claude Code.
+
+```powershell
+npm run inject -- <arquivo.json>              # no ritmo do cenário
+npm run inject -- <arquivo.json> --fast       # sem esperar os intervalos
+npm run inject -- <arquivo.json> --speed 4    # 4 vezes mais rápido
+```
+
+- **Precisa do servidor no ar.** O injetor lê a porta e o token do `runtime.json` do diretório de dados e só envia para `127.0.0.1`. Sem servidor, ele avisa "O Agent Quest não está rodando" e não envia nada.
+- **O que ele mostra:** "Injetando N eventos de ... em http://127.0.0.1:<porta>/" e, no fim, "Pronto: N eventos aceitos.". Se algum envio for recusado, mostra quantos e quais, e sai com código 1.
+- **Repetir o mesmo cenário:** o servidor descarta o mesmo evento repetido em até 5 segundos (conta em `deduped` no `/api/health`), mesmo que o injetor o mostre como aceito. Depois disso, o evento chega, mas chamadas que o estado já viu, com o mesmo id, não geram atividade nova. Para ver o cenário do zero, reinicie o servidor.
+- **Sem misturar com as suas sessões.** O injetor manda para o servidor do diretório de dados em uso. Para não misturar o cenário com as sessões reais do painel, use um servidor isolado, com a mesma `AGENT_QUEST_HOME` temporária no terminal do servidor e no do injetor (veja [Usar outra pasta](#usar-outra-pasta-agent_quest_home)), e abra o endereço que esse servidor imprimir.
+
+### De onde vem um cenário
+
+Um cenário é um arquivo JSON no formato do [ADR 0010](../adr/0010-estrategia-de-testes.md) (complemento "formato e sanitização dos cenários de hooks"): um `name`, uma `description` e a lista `events`, em que cada evento tem o intervalo desde o anterior (`dt`, em ms), o `env` com a pasta do projeto e o `payload`, que é o JSON que o Claude Code entrega ao hook.
+
+- **Cenários reais:** saem da sessão de teste do T0, gravados com a [sonda](../../tools/probe/README.md) e sanitizados pelo `tools/probe/sanitize.mjs`, e vão para `test/fixtures/hooks/`. Essa pasta ainda está vazia: eles chegam com o T0.
+- **Cenário sintético:** os testes usam um cenário montado em código (`test/unit/tools/probe-synthetic.js`) e o injetam direto, sem arquivo.
+- **Um cenário seu:** dá para escrever um pequeno, à mão, e salvar fora do repositório. Por exemplo, um pedido e a leitura de um arquivo, num projeto fictício:
+
+  ```json
+  {
+    "name": "exemplo-minimo",
+    "description": "Um pedido e a leitura de um arquivo",
+    "events": [
+      { "dt": 0, "env": { "projectDir": "C:\\Projetos\\meu-app" },
+        "payload": { "hook_event_name": "UserPromptSubmit", "session_id": "sessao-exemplo-1", "prompt": "Leia o README" } },
+      { "dt": 500, "env": { "projectDir": "C:\\Projetos\\meu-app" },
+        "payload": { "hook_event_name": "PreToolUse", "session_id": "sessao-exemplo-1", "tool_name": "Read",
+                     "tool_input": { "file_path": "C:\\Projetos\\meu-app\\README.md" }, "tool_use_id": "toolu_exemplo_1" } },
+      { "dt": 300, "env": { "projectDir": "C:\\Projetos\\meu-app" },
+        "payload": { "hook_event_name": "PostToolUse", "session_id": "sessao-exemplo-1", "tool_name": "Read",
+                     "tool_input": { "file_path": "C:\\Projetos\\meu-app\\README.md" }, "tool_use_id": "toolu_exemplo_1" } }
+    ]
+  }
+  ```
+
+  Salve o arquivo em UTF-8 **sem BOM**, por exemplo como `$env:TEMP\exemplo-minimo.json`. O Bloco de Notas do Windows 11 e o VS Code já salvam assim. No PowerShell 5.1, `Set-Content -Encoding UTF8` e `Out-File` gravam com BOM, e o injetor recusa o arquivo com "Não foi possível ler o cenário ... (SyntaxError)". Como este exemplo só tem caracteres ASCII, `Set-Content -Encoding ascii` também serve.
+
+  Com o servidor isolado no ar e a mesma `AGENT_QUEST_HOME` neste terminal, ele roda com `npm run inject -- "$env:TEMP\exemplo-minimo.json"`. No `/api/state` aparece a sessão `sessao-exemplo-1`, do projeto `meu-app`, com o `Read` de `README.md` na atividade.
+
+Nunca grave num cenário eventos de sessões reais sem passar pela sanitização: eles podem ter código, comandos e segredos.
+
 ## Solução de problemas
 
 ### Nenhum evento chegando
@@ -546,9 +599,10 @@ Risco aceito: programas que rodam com o seu usuário do Windows conseguem ler o 
 
 - [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Visão geral da arquitetura](../arquitetura/visao-geral.md): seções "Como rodar localmente", "Rotas e mapeamento de URL", "Limites e valores padrão" e "Falhas e como o sistema reage".
-- [Modelo de eventos](../arquitetura/modelo-de-eventos.md): seção 7 (sessões, projetos, equipe e limpeza) e seção 9 (`/events`, `/api/state` e `/api/health`).
+- [Modelo de eventos](../arquitetura/modelo-de-eventos.md): seção 7 (sessões, projetos, equipe e limpeza) e seção 9 (`/events` e a retomada, `/api/state` e `/api/health`).
 - [ADR 0004](../adr/0004-tempo-real-com-sse.md): tempo real com Server-Sent Events.
 - [ADR 0005](../adr/0005-estado-em-memoria.md): estado só em memória e diretório de dados fora do OneDrive.
 - [ADR 0006](../adr/0006-seguranca-do-servidor-local.md): segurança do servidor local.
 - [ADR 0007](../adr/0007-identidade-dos-agentes.md): identidade dos agentes e papéis do time.
-- [Plano da v1](../plano/v1.md): tarefas T2 (servidor), T7 (estado) e T9a (tempo real e ligação de ponta a ponta), com os critérios de aceite.
+- [ADR 0010](../adr/0010-estrategia-de-testes.md): estratégia de testes e o formato dos cenários que o injetor lê.
+- [Plano da v1](../plano/v1.md): tarefas T2 (servidor), T7 (estado), T9a (tempo real e ligação de ponta a ponta) e T9b (retomada, cliente lento e injetor), com os critérios de aceite.

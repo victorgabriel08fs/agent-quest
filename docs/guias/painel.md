@@ -157,7 +157,9 @@ No topo, à direita, o selo mostra a conexão ao vivo com o servidor (passe o mo
 | **reconectando** | A conexão caiu (por exemplo, o servidor foi parado) e o navegador está tentando de novo sozinho. |
 | **desconectado** | A conexão fechou de vez, por exemplo porque já há 8 painéis conectados. O painel tenta reabrir sozinho, com esperas crescentes de até 30 segundos. |
 
-Quando o servidor volta, o selo volta para "ao vivo" e o painel recebe o estado completo de novo. Como o servidor guarda tudo só em memória, um servidor reiniciado começa vazio, e as sessões reaparecem com os próximos eventos ([ADR 0005](../adr/0005-estado-em-memoria.md)).
+Se a conexão cair com o servidor ainda no ar (o computador suspenso, uma aba congelada pelo navegador), o painel reconecta sozinho e recebe só o que perdeu, sem baixar o estado inteiro de novo, desde que isso caiba no que o servidor guarda: as últimas 1 000 atualizações, até 1 MiB. Senão, recebe o estado completo. Uma aba que não acompanha o ritmo e acumula mais de 1 MiB sem ler é desconectada pelo servidor e volta sozinha, também com o estado completo ([detalhes](servidor.md#reconexão-e-painéis-lentos)).
+
+Quando o servidor é reiniciado, o selo volta para "ao vivo" e o painel recebe o estado completo de novo. Como o servidor guarda tudo só em memória, um servidor reiniciado começa vazio, e as sessões reaparecem com os próximos eventos ([ADR 0005](../adr/0005-estado-em-memoria.md)).
 
 ## Seletor de sessão
 
@@ -201,7 +203,6 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 | Comandos de teste reconhecidos como teste ("Rodando os testes"), em vez de comando de terminal | T6 |
 | Cena animada: o agente caminhando até a copa, o pergaminho da delegação, o impacto de uma falha, os bugs no Lab de QA e o selo "!" de aprovação | T12b |
 | Filtros da atividade por papel e por agente, e animação de entrada das linhas | T11b |
-| Retomada da conexão sem baixar o estado inteiro de novo | T9b |
 | Seletor agrupado por projeto, "seguir atividade" e escolha guardada | T13 |
 | Modo discreto (esconde comandos, caminhos e títulos) e a legenda com a fonte de cada indicador | T14 |
 | Barra de contexto (Foco ou Mana), opcional | T15 e T16 |
@@ -225,6 +226,7 @@ npm run test:e2e
 - **Nenhum navegador é baixado.** O `npm install` instala só o pacote do Playwright, e os testes usam o Edge instalado (`channel: 'msedge'`), sem abrir janela. Não rode `npx playwright install`: o projeto não precisa dos navegadores do Playwright.
 - **Não mexe no seu servidor.** Os testes sobem um servidor próprio, numa porta livre e com um diretório de dados temporário, nunca na porta 47821 nem em `%LOCALAPPDATA%\agent-quest\`. Dá para rodar com o seu servidor ligado. A pasta temporária é apagada no fim.
 - **O que é conferido:** o painel abre sem violar a política de segurança de conteúdo, sem erro de script e sem nenhuma requisição para fora; a troca de tema por botões, teclas, endereço e memória do navegador; o layout em 360, 820 e 1280 px; e a posição dos tokens na cena. Os testes com sessões simulam o servidor ao vivo com os estados de exemplo de `test/fixtures/state/`.
+- **Ver o painel com dados sem a captura:** com o servidor no ar, o `npm run inject` envia um cenário de eventos pelo mesmo caminho da captura ([Injetar um cenário](servidor.md#injetar-um-cenário-npm-run-inject)).
 - **Quando um teste falha,** o Playwright guarda o rastro em `test-results/`, que não vai para o repositório.
 - O `npm test` não roda estes testes: ele cobre os de unidade e de integração, e não precisa de `npm install`.
 

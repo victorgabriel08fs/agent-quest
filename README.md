@@ -128,7 +128,7 @@ capture/          plugin de captura (fonte): marketplace local, hooks e encaminh
 server/           servidor local: HTTP e segurança, ingestão, normalização, estado e tempo real
 web/              painel no navegador: conexão, store, views, cena e temas
 shared/           contrato entre o servidor e o painel
-scripts/          npm test e npm run capture:deploy
+scripts/          npm test, npm run capture:deploy e npm run inject
 test/             testes de unidade, integração e ponta a ponta, e fixtures
 tools/probe/      sonda da sessão de teste dos hooks (T0)
 docs/             guias, arquitetura, ADRs, plano e pesquisa
@@ -145,6 +145,14 @@ npm run test:e2e   # ponta a ponta com o Microsoft Edge instalado, sem baixar na
 ```
 
 Os testes sobem servidores próprios, numa porta livre e com uma pasta de dados temporária: nunca mexem no seu servidor nem na sua captura. O `@playwright/test` é a única dependência de desenvolvimento ([ADR 0010](docs/adr/0010-estrategia-de-testes.md)).
+
+Para ver o painel com dados sem o Claude Code, o injetor envia ao servidor local um cenário de eventos de hooks, pelo mesmo caminho da captura:
+
+```powershell
+npm run inject -- <arquivo.json> [--fast] [--speed N]
+```
+
+O formato do cenário, de onde ele vem e um exemplo mínimo estão em [Injetar um cenário](docs/guias/servidor.md#injetar-um-cenário-npm-run-inject). Os cenários reais, gravados e sanitizados, chegam com a sessão de teste dos hooks.
 
 ### Convenções
 
@@ -166,14 +174,15 @@ Abra uma issue com a versão do Agent Quest (campo `version` do `/api/health`), 
 - servidor local seguro, sem dependências, com o estado das sessões em memória;
 - normalização dos eventos com redação de segredos;
 - sessões, agentes, subagentes em paralelo e aninhados, delegações e a ida para a copa;
-- painel ao vivo com equipe, cena estática, atividade, seletor de sessão, os dois temas e layout responsivo.
+- painel ao vivo com equipe, cena estática, atividade, seletor de sessão, os dois temas e layout responsivo;
+- reconexão do painel sem baixar o estado inteiro de novo;
+- injetor de cenários para desenvolvimento (`npm run inject`).
 
 **Próximo marco, a Primeira luz:** a sessão de teste dos hooks no Claude Code real, a liberação do design e a primeira instalação da captura. A partir daí, o resto da v1 é construído com o painel acompanhando o próprio time.
 
 **Ainda na v1:**
 
 - tickets e etapas, "aguardando aprovação", bugs e resultado de testes, e os indicadores do topo com valores reais;
-- retomada da conexão sem baixar o estado inteiro, e um injetor de cenários para desenvolvimento (`npm run inject`);
 - filtros da atividade, cena animada e várias sessões com "seguir atividade";
 - modo discreto, que esconde comandos e caminhos para compartilhar a tela, e a legenda de cada indicador;
 - opcional: uma barra com o uso aproximado do contexto de cada agente.
