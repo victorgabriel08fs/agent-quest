@@ -587,6 +587,23 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
    - **Não sensíveis:** `tokenizer`, `tokens`, `max_tokens`, `oauth`, `author`, `key_file`, `keyboard`, `monkey`, `npm_config_cache`.
    - Falsos positivos como `sort_key=x` ou `secretary=x` são aceitos: escondem um valor inofensivo.
 
+   **Sequências ANSI dentro de valores** (B8 do tester do T5, decidido em 18/10/2026). Como o ESC só sai na etapa 7, as classes de valor das etapas 3 a 6 precisam tratar as sequências como parte do valor. Antes, `API_KEY=ESC[32mabc123segredoESC[0m` virava `API_KEY=•••[32mabc123segredo`: o valor aceitava o ESC mas parava no `[`, só o ESC era trocado, a etapa 7 não reconhecia mais a sequência e a segunda passada via `NOME=•••` e pulava. Regra:
+   - `SEQ` é uma CSI completa (`\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]`), uma OSC completa (`\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)`) ou um ESC solto (`\x1B`);
+   - toda classe de valor **sem aspas** das etapas 4 a 6 passa a ser `(?:SEQ|X)+`, em que `X` é a classe atual sem o ESC. Isso vale para:
+     - o valor dos pares (`BARE_VALUE`);
+     - o valor do `setx`;
+     - o valor de `--nome`;
+     - as formas sem aspas de `-u` e `--user`;
+     - o token do `Bearer`.
+
+     Os valores de cabeçalho e de credencial em URL já aceitam ESC e `[`, mas ganham a mesma forma, para uma OSC com espaço dentro não cortar o valor;
+   - os corpos dos tokens da etapa 3 aceitam `SEQ` entre os caracteres, depois do prefixo: `ghp_(?:SEQ|[A-Za-z0-9])…`. A borda à esquerda continua igual. Um token colorido inteiro (`ESC[32mghp_…`) é pego na segunda passada, depois que a etapa 7 tira a cor;
+   - **um valor que começa com ESC casa e absorve a sequência**, em vez de casar vazio ou não casar. Casar vazio deixaria `NOME=•••` seguido do segredo, e a segunda passada pularia. Não casar deixaria o segredo exposto quando a cor está no meio do valor (`abc ESC[1m def`, sem os espaços). Um valor feito só de `SEQ` também casa, o que é inofensivo;
+   - valores entre aspas não mudam: já vão até a aspa de fechamento não escapada, com o que houver dentro;
+   - **desempenho:** `SEQ` sempre começa com ESC, e `X` não contém ESC, então as alternativas são disjuntas pelo primeiro caractere e o casamento continua linear. O teste de crescimento do ADR 0010 cobre um valor com milhares de sequências.
+
+   Com isso, a primeira passada já redige o valor inteiro, com as cores. A etapa 7 e a segunda passada continuam valendo para os casos em que a sequência esconde o nome ou o token (cor antes do nome, `gh ESC[0m p_…`).
+
 7. **Sequências ANSI, depois da redação** (18/10/2026):
    - saem as sequências CSI na gramática do ECMA-48: `ESC [`, parâmetros em 0x30–0x3F, intermediários em 0x20–0x2F e um byte final em 0x40–0x7E;
    - saem as OSC: `ESC ]` até BEL ou `ESC \`;
@@ -596,7 +613,9 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
 
    **Espaços dentro de sequências não são fronteira de palavra.** Os espaços dentro de uma CSI completa (o intermediário 0x20) ou de uma OSC somem nesta etapa. Por isso, o corte em espaço da leitura limitada (`scanWindow`, seção 2) e o descarte de palavras partidas junto ao marcador do encaminhador (`dropCutWords`, seção 2) só usam espaço em branco que continua existindo depois da redação. Usar um espaço desses como fronteira partiria um token, como no B4 do tester.
 
-   Remover sequências pode juntar pedaços e formar um segredo: em `gh ESC[0m p_…`, sem os espaços, a remoção dá `ghp_…`. Por isso, **se a etapa 7 removeu alguma coisa, as etapas 2 a 6 rodam de novo** sobre o resultado. A segunda passada não encontra mais ESC, então o resultado é ponto fixo, com no máximo duas passadas.
+   Remover sequências pode juntar pedaços e formar um segredo: em `gh ESC[0m p_…`, sem os espaços, a remoção dá `ghp_…`. Por isso, **se a etapa 7 removeu alguma coisa, as etapas 2 a 6 rodam de novo** sobre o resultado.
+
+   **Duas passadas bastam sempre**, inclusive com cor dentro de cor e cor dos dois lados. A etapa 7 remove todas as CSI e OSC numa varredura e depois todo ESC e BEL que sobrar. Remover caracteres nunca cria um ESC novo. Então a segunda passada recebe texto sem nenhum ESC nem BEL, as etapas 2 a 6 são idempotentes nele, e o resultado é ponto fixo.
 
 **Propriedades obrigatórias, com testes:**
 
