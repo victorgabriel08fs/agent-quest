@@ -43,6 +43,7 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 
 ## Outros
 
+- [README do projeto](../README.md): o que é o Agent Quest, início rápido, privacidade e situação do projeto.
 - [Sonda do T0](../tools/probe/README.md): ferramenta de validação da captura e roteiro da sessão de teste.
 - [Mockup do painel](../mockups/painel.html): referência visual aprovada. Abra o arquivo direto no navegador.
 - [CHANGELOG](../CHANGELOG.md): o que mudou em cada entrega.
