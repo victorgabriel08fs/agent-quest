@@ -64,3 +64,7 @@ Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. A confirmação
 ## Complemento de 18/10/2026: teto do corpo e unidades
 
 O passo 1 da decisão ("corta strings longas") ganhou um teto: o corpo enviado nunca passa de 1 000 000 bytes, com até três passos genéricos de redução, sem o encaminhador saber o que o normalizador usa. Os cortes contam unidades UTF-16. Detalhes na seção 1 do modelo de eventos ("Unidades no encaminhador" e "Teto do corpo"). Motivo: um payload com muitas strings menores passava de 1 MiB, recebia 413 e o evento se perdia, depois de até 270 ms enviando cerca de 10 MiB.
+
+## Complemento de 18/10/2026: prazo de 2 s na prática
+
+O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido assim: **até cerca de 2 s, salvo o `JSON.parse` de um stdin patológico**. O tester da captura 0.1.1 mostrou que a redução síncrona do teto do corpo impedia o prazo de disparar: com centenas de milhares de chaves, o processo passou de 2 s, gastou CPU e perdeu o evento. A captura 0.1.2 dá à redução um orçamento de 1 s, conferido dentro dos laços, e um envelope de emergência de custo constante (detalhes na seção 1 do modelo de eventos, "Orçamento de tempo da redução"). O Claude Code nunca espera nenhum desses casos, porque o hook é assíncrono. O que está em jogo é CPU e a perda do evento, não o bloqueio do agente.

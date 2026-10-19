@@ -35,7 +35,7 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado. O formato exato do marcador faz parte deste contrato: o normalizador o reconhece por `…\[cortado \d+ caracteres\]…` e descarta as palavras partidas encostadas nele (seção 2, "Marcador de corte do encaminhador"). Mudar o marcador exige mudar os dois lados.
 - **Unidades no encaminhador** (definidas em 18/10/2026):
   - os cortes de string contam **unidades UTF-16** (`String.length`): "4 KiB" quer dizer 4096 unidades, e o `N` do marcador também conta unidades;
-  - um corte nunca parte um par de surrogates: se cair no meio, recua uma unidade;
+  - um corte nunca deixa surrogate solto: se uma borda, do início ou do fim, cair no meio de um par, o par inteiro sai do trecho mantido;
   - o teto do corpo (abaixo) conta **bytes UTF-8**, porque é a unidade do limite de 1 MiB do servidor.
 
   Esta é uma exceção deliberada à definição de caractere da seção 10 (ponto de código, `charLength`), que vale para textos exibidos. O encaminhador precisa ser barato com stdin de até 16 MiB, e contar pontos de código nesse tamanho custaria caro. Como os limites exibidos são bem menores e recontados no servidor, a diferença não aparece no painel.
@@ -49,6 +49,15 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
      - os valores simples de `tool_input`, na ordem do original.
 
      Se nem os obrigatórios couberem, o encaminhador não envia e sai em silêncio, como em qualquer outra falha.
+
+  **Orçamento de tempo da redução** (N1 do tester, decidido em 18/10/2026). A redução é síncrona, então o prazo de 2 s só disparava depois dela. Com payloads patológicos, o processo passava de 2 s e o evento se perdia: 600 mil chaves (6,8 MiB) levaram 2,1 s; 1,15 milhão (13 MiB), 6,2 s; com a máquina carregada, até 20 000 × 600 em `tool_input` chegou a 2,6 s. A correção:
+  - a redução tem orçamento até 1 s desde o início do processo. O tempo é conferido antes de cada passo e, dentro dos laços, a cada 1 000 itens visitados;
+  - se o orçamento acabar, o encaminhador desiste da redução e manda o **envelope de emergência**: só os obrigatórios e os prioritários do passo 3, lidos direto do primeiro nível do payload (custo constante), com `truncated: true`;
+  - no passo 3, o tamanho é somado a cada campo acrescentado, sem serializar o envelope inteiro de novo a cada vez, para o passo ser linear;
+  - o timeout do POST passa a ser o tempo que falta até o prazo de 2 s, no máximo 1 s;
+  - a única etapa que não pode ser interrompida é o `JSON.parse` do stdin (até 16 MiB). O T4 mede o pior caso e registra o número.
+
+  Na v1, por isso, "até 2 s" vale salvo um `JSON.parse` patológico.
 
   Em qualquer passo além do primeiro, `truncated` é `true`. O encaminhador continua sem saber o que o normalizador usa: os passos são genéricos. Perda aceita no passo 3: um Stop gigante perde `background_tasks`, e o reducer trata como Stop sem tarefas.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.
