@@ -248,7 +248,7 @@ Decisão em ADR 0007. Regras operacionais:
      - não é quem delegou nem um ancestral dele;
      - foi criada no máximo 2 s antes do `ts` desse Pre (`startedAt ≥ ts − 2000`). A janela é mais larga que a corrida típica porque o `ts` é a hora de partida do processo do encaminhador, que atrasa de forma desigual sob carga.
 
-     A instância recebe `label` igual à `description` e `parentKey` igual a quem delegou, num `update` sem evento. O `agent.delegated` sai normalmente nesse Pre. O `agent.started` já emitido não se repete nem muda, porque o estado da instância é que carrega o rótulo. Sem instância elegível, a delegação fica pendente, como no passo 1;
+     A instância recebe `label` igual à `description` e `parentKey` igual a quem delegou. Isso chega no estado do `update` que leva o `agent.delegated` desse mesmo Pre; não há `update` separado, nem tipo de evento novo (confirmado em 19/10/2026). O `agent.started` já emitido não se repete nem muda, porque o estado da instância é que carrega o rótulo. Sem instância elegível, a delegação fica pendente, como no passo 1;
   3. `tool.post` de `Agent` com `linkedAgentId`: se o elo provisório (passo 2 ou 2a) apontava para outro agente, troca as descrições e corrige `parentKey`. Para subagente em segundo plano (`launch: async_launched`), esse fato chega logo no início.
 - **Aninhados:** `from` é o `agentKey` de quem chamou `Agent`, seja a sessão principal ou outro subagente. O painel anima a delegação de quem delegou para quem recebeu.
 - **Agentes internos:** `subagent.stop` com `agentType` vazio e agente desconhecido é descartado.
@@ -334,6 +334,7 @@ A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a
   - o `apply` devolve, além de `events` e `changed`, `newProjects`: as pastas de projeto vistas pela primeira vez;
   - a ligação (T9a) chama `read(projectDir)` do leitor de `server/agent-names.js` (`createAgentNamesReader({ homeDir, list, timeoutMs })`), que é assíncrono e lê `<projeto>/.claude/agents/` e `~/.claude/agents/`;
   - o leitor tem um prazo por pasta (padrão 500 ms), que cobre unidade de rede sem precisar detectá-la; ignora UNC e caminho relativo; devolve `[]` em erro ou prazo vencido; guarda o resultado em cache por pasta; filtra os `.md` **antes** de limitar a 200 nomes;
+  - o prazo para de esperar, mas não cancela o `readdir`, que segura uma thread do pool do libuv (4 por padrão, usadas também para servir arquivos). Por isso, **no máximo uma listagem fica em andamento**, e as outras pastas esperam numa fila (ajuste de 19/10/2026). O `read` de cada pasta continua resolvendo dentro do prazo, com `[]` se não deu tempo. Uma listagem que termina depois do prazo atualiza o cache e chama `onLate(projectDir, names)`, e a ligação aplica o resultado com `setAgentNames`;
   - com o resultado, a ligação chama `setAgentNames(state, projectDir, names) → { changed }`, e o `roster` das sessões desse projeto é atualizado com `update` sem evento;
   - até a leitura terminar, o `roster` tem só `orq` e os papéis vistos;
   - o `createState` deixa de receber `readAgentNames`.
@@ -345,7 +346,7 @@ A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a
   - ficam todos os agentes não encerrados, com um teto defensivo de 100;
   - ficam no máximo os 50 encerrados mais recentes, por `lastEventAt`;
   - os mais antigos saem do `agents`, e o próximo `update` já vem sem eles;
-  - o `agent_id` removido vai para uma lista de lápides da sessão, com os últimos 1 000 ids, para que um evento atrasado dele seja ignorado em vez de recriar o agente como novo e "trabalhando";
+  - o `agent_id` removido vai para uma lista de lápides da sessão, com os últimos 1 000 ids, para que um evento atrasado dele seja ignorado em vez de recriar o agente como novo e "trabalhando". Limite aceito: um evento que chegue depois de mais 1 000 remoções na mesma sessão recria o agente. Eventos atrasados chegam em milissegundos ou segundos, e 1 000 remoções levam horas;
   - o `feed` pode citar um `agentKey` que não está mais em `agents`, e o painel usa os dados do próprio evento.
 - **Formas de borda do caminho do projeto** (observação 2 do tester do T7):
   - `project.key` e `project.name` partem do caminho já na forma canônica da seção 2 ("Formas de caminho"), pela mesma função do normalizador. Assim `/c/Users/…` (MSYS) se junta com `c:/Users/…`;
@@ -403,7 +404,7 @@ data: {"seq":1236,"sessionId":"…"}
     - Nos testes, o padrão é um contador local, com `runId` fixo.
     - A alternativa descartada, numerar no T9a mexendo nos objetos já guardados no `feed`, criaria um acoplamento escondido entre o reducer e a ligação.
     - O hub (`server/http/sse.js`) recebe o `seq` pronto.
-  - **Horas no estado** (ponto 12 do T7): o reducer usa o `ts` do fato (o `sentAt` do encaminhador) para tudo o que vai ao estado. `startedAt` é o menor `ts` visto, `lastEventAt` é o maior, e a atividade "mais recente" é a de maior `ts`. Assim, a ordem de chegada não muda o estado final (teste de permutação). `activity.at` é o início da atividade. O `now` do relógio serve só para status (`active` com evento há menos de 2 min) e para a limpeza do `tick`.
+  - **Horas no estado** (ponto 12 do T7): o reducer usa o `ts` do fato (o `sentAt` do encaminhador) para tudo o que vai ao estado. `startedAt` é o menor `ts` visto, `lastEventAt` é o maior, e a atividade "mais recente" é a de maior `ts`. Assim, a ordem de chegada não muda o estado final (teste de permutação). `activity.at` é o início da atividade. O `now` do relógio serve só para status (`active` com evento há menos de 2 min) e para a limpeza do `tick`. Na ligação, o `now` do `apply` é a hora de chegada do envelope (`receivedAt`), e o `tick` usa o relógio real (confirmado em 19/10/2026).
 - **Cliente:**
   - `seq` menor ou igual ao último aplicado: ignora;
   - igual ao último + 1: aplica;

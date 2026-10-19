@@ -63,18 +63,26 @@ export function charLength(text) {}          // → número de pontos de código
 export function plainText(text) {}           // → texto sem invisíveis, controles e ANSI (etapas 1 e 7), sem redigir
 
 // server/domain/state/index.js
-export function createState({ roleOverrides, sequence }) {}   // → State; sequence padrão contador local (modelo de eventos, seção 9)
+export function createState({ roleOverrides, sequence, homeDir }) {}   // → State; sequence padrão contador local; homeDir padrão null (a ligação passa os.homedir(), contexto de unidade para /c/...)
 export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] já numerados pelo sequence, changed: string[], newProjects: string[] }
-export function setAgentNames(state, projectDir, names) {}   // → { changed }; roster das sessões do projeto (seção 7)
+export function setAgentNames(state, projectDir, names) {}   // → { changed: string[] } (ids de sessão, como apply e tick); roster das sessões do projeto (seção 7)
+
+// server/domain/tools.js
+export function canonicalPath(path, { homeDir }) {}   // → forma canônica (seção 2, "Formas de caminho"); usada no displayPath e no project.key
+
+// server/pipeline.js (ligação de ponta a ponta, T9a; fora do domínio e do hub)
+export function createPipeline({ /* state, hub, reader, sequence, relógio */ }) {}   // ingestão → normalize → apply → hub; tick periódico; leitura de agentes
+// startServer({ …, pipeline }) aceita um pipeline pronto só para testes e devolve o pipeline; createApp({ …, sessionCount }) para o /api/health
 export function tick(state, now) {}          // → { events, changed, removed }; eventos já numerados pelo sequence
 export function getSessionState(state, sessionId) {}   // → SessionState com feed, ou null (snapshot e /api/state)
 export function getSessionStates(state) {}             // → SessionState[] com feed
 export function sessionCount(state) {}                 // → número de sessões em memória (/api/health)
 
 // server/agent-names.js (fora de server/domain/; ligado ao createState no T9a)
-export function createAgentNamesReader({ homeDir, list, timeoutMs }) {}   // → { read(projectDir) → Promise<string[]> }; lê <projeto>/.claude/agents/ e ~/.claude/agents/
-                                                                           //   assíncrono, prazo por pasta (500 ms), cache por pasta, ignora UNC e caminho relativo,
-                                                                           //   [] em erro ou prazo; filtra .md antes do limite de 200; list injetável nos testes
+export function createAgentNamesReader({ homeDir, list, timeoutMs, onLate }) {}   // → { read(projectDir) → Promise<string[]> }; lê <projeto>/.claude/agents/ e ~/.claude/agents/
+                                                                                   //   assíncrono, prazo por pasta (500 ms), cache por pasta, ignora UNC e caminho relativo,
+                                                                                   //   [] em erro ou prazo; filtra .md antes do limite de 200; no máximo 1 listagem em andamento
+                                                                                   //   (fila); onLate(projectDir, names) quando uma listagem termina depois do prazo; list injetável
 
 // web/js/store.js
 export function createStore() {}
@@ -170,6 +178,7 @@ agents-quest/
 │       └── scripts/forward.mjs
 ├── server/
 │   ├── main.js, config.js, runtime-file.js
+│   ├── pipeline.js                  ligação de ponta a ponta (T9a): ingestão → normalize → estado → hub, tick e leitura de agentes
 │   ├── agent-names.js               nomes em .claude/agents/ (projeto e usuário), assíncrono, com prazo e cache por pasta; fora do domínio
 │   ├── node-types.js                só typedefs de tipos do Node (ADR 0003)
 │   ├── http/        app.js, security.js, static.js, sse.js
