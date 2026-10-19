@@ -60,11 +60,15 @@ export function normalize(envelope, { receivedAt, homeDir }) {}   // → Fact | 
 export function redact(text) {}              // → string, idempotente
 export function redactAndCut(text, max) {}   // → string com no máximo max caracteres, ponto fixo de redact; único corte de textos exibidos
 export function charLength(text) {}          // → número de pontos de código; única definição de "caractere" nos limites
+export function plainText(text) {}           // → texto sem invisíveis, controles e ANSI (etapas 1 e 7), sem redigir
 
 // server/domain/state/index.js
-export function createState({ roleOverrides, readAgentNames }) {}   // → State
-export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] sem seq, changed: string[] }
-export function tick(state, now) {}          // → { events, changed, removed }
+export function createState({ roleOverrides, readAgentNames, sequence }) {}   // → State; readAgentNames padrão () => [], sequence padrão contador local (modelo de eventos, seção 9)
+export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] já numerados pelo sequence, changed: string[] }
+export function tick(state, now) {}          // → { events, changed, removed }; eventos já numerados pelo sequence
+export function getSessionState(state, sessionId) {}   // → SessionState com feed, ou null (snapshot e /api/state)
+export function getSessionStates(state) {}             // → SessionState[] com feed
+export function sessionCount(state) {}                 // → número de sessões em memória (/api/health)
 
 // web/js/store.js
 export function createStore() {}

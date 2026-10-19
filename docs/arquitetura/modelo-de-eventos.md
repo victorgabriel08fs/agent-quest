@@ -110,7 +110,7 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido,
   - `tool.fail`: as de `tool.pre`, mais `error`, `interrupted`, `durationMs` e `testResult`.
 
   Para `Agent` e `Task`, `category` é `null`, `target` é o `subagent_type` e `detail` é a `description`, como na atividade `delegate` da seção 9.
-- **`agent_id` presente mas inválido**: o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Revisto em 18/10/2026: é válido só o texto que casa com `^[A-Za-z0-9_.:-]{1,128}$`, sem espaços nem controles. Isso inclui os formatos reais (UUID, `a…` hexadecimal) e recusa `'   '`, vazio, número e texto com espaço. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido, com o mesmo padrão. `tool_use_id` e `prompt_id` fora do padrão viram `null`, mas não descartam o evento.
+- **`agent_id` presente mas inválido**: o normalizador descarta o evento, que devolve `null` e conta como `ignored`. Revisto em 18/10/2026: é válido só o texto que casa com `^[A-Za-z0-9_.:-]{1,128}$`, sem espaços nem controles. Isso inclui os formatos reais (UUID, `a…` hexadecimal) e recusa `'   '`, vazio, número e texto com espaço. O `agent_id` literal `main` também é inválido (T7, ponto 14), porque colidiria com a chave da sessão principal (`agentKey = agent_id ?? 'main'`). A proteção fica no normalizador, sem mudar o formato do `agentKey` do contrato. Não pode virar `main`, senão o evento seria atribuído ao orquestrador em silêncio. Sem a chave, ou com valor `null`, continua valendo `agentKey = 'main'`. O mesmo vale para `session_id` inválido, com o mesmo padrão. `tool_use_id` e `prompt_id` fora do padrão viram `null`, mas não descartam o evento.
 - **Identificadores** (`agent_type`, `subagent_type`, `tool_name`, nome de skill, modelo, servidor e ferramenta MCP), decididos em 18/10/2026:
   - não passam por `redact`. São nomes de configuração local, e a redação gerava falsos positivos: `auth:tester` virava `auth:•••` e caía em `aux`;
   - **valor cru:** saem os caracteres invisíveis e de controle da etapa 1 da redação e também as sequências ANSI e os ESC soltos, como na etapa 7, mas sem redigir. Assim `Re` + `ESC[0m` + `ad` dá a categoria `read`. Acima de 128 caracteres, vira `null`. O cru decide a categoria (no normalizador), o papel (`resolveRole`, no reducer) e as comparações de tipo, como o elo delegação → instância. Ele vai no fato como `agentTypeKey` e `subagentTypeKey` (e `agentTypeKey` em cada item de `backgroundTasks`), só para uso interno: **nunca** entra em `SessionState`, em evento canônico nem em log;
@@ -206,24 +206,27 @@ O normalizador gera o fato; o reducer aplica as regras da seção 6 e emite os e
 
 | Hook | Condição | Eventos canônicos |
 |---|---|---|
-| SessionStart | — | `session.started`. Com `source: compact`, também `context.compacted` se o PostCompact não tiver chegado |
-| SessionEnd | — | `quest.finished(interrupted)` se havia ticket aberto; `session.ended` |
+| SessionStart | — | `session.started`. Com `source: compact`, também `context.compacted` se o PostCompact não tiver chegado. É o único que emite `session.started`: uma sessão criada sob demanda, pelo primeiro evento de um `session_id` desconhecido, aparece no painel por um `update` com `event: null` (T7, ponto 3) |
+| SessionEnd | — | Agentes ainda trabalhando ou aguardando são liberados: subagentes recebem `agent.finished(unknown)` e o `main` fica `idle` (já no T7, ponto 7). Depois, `quest.finished(interrupted)` se havia ticket aberto (T8) e `session.ended` |
 | UserPromptSubmit | origem do usuário | `quest.finished(interrupted)` se havia ticket aberto; `quest.started` |
 | UserPromptSubmit | origem do sistema | reabre o ticket em espera, sem evento no feed |
 | PreToolUse | `Agent` ou `Task` | `agent.delegated` |
 | PreToolUse | outras ferramentas | `tool.started` |
 | PostToolUse | `Agent` ou `Task` | confirma ou corrige o elo delegação → instância (sem evento) |
 | PostToolUse | outras ferramentas | `tool.started` se o Pre não chegou; `tool.finished`; `test.finished` se for comando de teste; `permission.resolved(approved)` se havia pedido pendente para essa chamada |
-| PostToolUseFailure | — | igual ao anterior, com `tool.failed` no lugar de `tool.finished` |
+| PostToolUseFailure | outras ferramentas | igual ao PostToolUse, com `tool.failed` no lugar de `tool.finished` |
+| PostToolUseFailure | `Agent` ou `Task` | sem `tool.failed`, porque delegação nunca tem `tool.started`. A atividade `delegate` de quem delegou vai para `failed`, e a delegação pendente, se ainda não tiver instância ligada, é descartada, para não se ligar a um SubagentStart posterior (T7, ponto 4) |
 | PermissionRequest | — | `permission.requested` |
 | PermissionDenied | — | `permission.resolved(denied, auto)` |
 | Notification | `permission_prompt` | `permission.requested` só se não houver pedido pendente na sessão |
 | Notification | `idle_prompt` | `quest.finished(interrupted)` se havia ticket aberto; `session.idle` |
-| SubagentStart | `agent_type` não vazio | `agent.started`; nada se o agente já existe (retomada) |
+| SubagentStart | `agent_type` não vazio | `agent.started`; nada se o agente já existe (retomada ou criado antes sob demanda) |
+| (estado) | primeiro evento de um `agent_id` desconhecido (ferramenta, ou SubagentStop com tipo) | `agent.started` para o agente criado sob demanda (T7, ponto 2). No SubagentStop de desconhecido com tipo, sai `agent.started` e logo `agent.finished` |
 | SubagentStop | agente conhecido ou `agent_type` não vazio | `agent.finished`; `quest.phase(done)` se era o último agente do papel em execução |
-| Stop | sem tarefa em segundo plano rodando | `quest.finished(done)`; subagentes em primeiro plano ainda marcados como trabalhando → `agent.finished(unknown)` |
-| Stop | com tarefa em segundo plano rodando | ticket passa a `waiting_background`, sem evento |
-| StopFailure | — | `quest.finished(failed)` com o tipo de erro |
+| Stop ou StopFailure | sempre | `main` fica `idle`. Subagentes em primeiro plano ainda marcados como trabalhando recebem `agent.finished(unknown)`, em todo Stop: um subagente em primeiro plano bloqueia o turno, então não pode estar rodando quando o Stop chega. Os de segundo plano seguem (T7, ponto 5) |
+| Stop | sem tarefa em segundo plano rodando | `quest.finished(done)` (T8) |
+| Stop | com tarefa em segundo plano rodando | ticket passa a `waiting_background`, sem evento (T8) |
+| StopFailure | — | `quest.finished(failed)` com o tipo de erro (T8) |
 | PreCompact | — | atividade do agente vira "compactando", sem evento |
 | PostCompact | — | `context.compacted` |
 | (estado) | atividade sem ticket aberto | `quest.started(implicit)` |
@@ -295,8 +298,12 @@ Decisão em ADR 0007. Regras operacionais:
 
 - Subagente: `SubagentStop` → `status: idle`, `finished: true`; o token vai para a copa (taverna). Instâncias encerradas saem da cena quando começa o ticket seguinte.
 - Sessão principal: `Stop` → `idle`, mas o token do orquestrador fica na sala dele, como no mockup.
-- No `Stop` sem tarefas em segundo plano, subagentes em primeiro plano que ainda constam como trabalhando recebem `agent.finished(unknown)`.
-- Agente "trabalhando" sem ferramenta em execução e sem eventos há 15 min → `agent.finished(unknown)`.
+- Em todo `Stop` ou `StopFailure`, haja ou não tarefa em segundo plano, subagentes em primeiro plano que ainda constam como trabalhando recebem `agent.finished(unknown)`. A condição "sem tarefa em segundo plano" vale só para o desfecho do ticket (T8).
+- No `SessionEnd`, todos os agentes ainda trabalhando ou aguardando são liberados da mesma forma, e o `main` fica `idle`. Assim, um Esc sem Stop seguido de `/clear` não deixa uma sessão `ended` com o `main` trabalhando.
+- Subagente "trabalhando" sem ferramenta em execução e sem eventos há 15 min → `agent.finished(unknown)`. Para o `main`, a mesma regra só o deixa `idle`, sem `agent.finished`: o orquestrador nunca "termina".
+- **Volta depois de encerramento inferido** (decidido em 19/10/2026):
+  - depois de SubagentStop, de Stop (subagentes em primeiro plano) ou de SessionEnd, eventos atrasados atualizam saúde e feed, mas não devolvem o agente a "trabalhando" (seção 8, regra 4);
+  - depois da inferência por 15 min, um `tool.pre` com um `toolUseId` novo, que não é atraso, mostra que o agente está vivo: ele volta a `working` com `finished: false`, sem evento novo, porque o `tool.started` já aparece no feed. Um subagente pode passar mais de 15 min pensando sem chamar ferramenta.
 - **No cartão da equipe** (decidido no T10a, 18/10/2026), por papel:
   - instâncias trabalhando ou aguardando aparecem todas, e o "×N" conta só essas;
   - instâncias encerradas do ticket atual (`lastEventAt` maior ou igual ao `quest.startedAt`; sem ticket, todas contam como atuais) aparecem até 3, as mais recentes por `lastEventAt`, e as demais viram "+N instâncias encerradas";
@@ -313,10 +320,10 @@ A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a
 ## 7. Sessões e projetos
 
 - **Chave:** `session_id`. Eventos de subagentes chegam com o `session_id` da sessão principal **[T0]**.
-- **Projeto:** `env.projectDir`; se faltar, o `cwd` do primeiro evento. `project.key` é o caminho normalizado (barras `/`, letra de unidade minúscula, sem barra no fim); `project.name` é a última parte do caminho.
+- **Projeto:** `env.projectDir`; se faltar, o `cwd` do primeiro evento. `project.key` é o caminho normalizado (barras `/`, letra de unidade minúscula, sem barra no fim); `project.name` é a última parte do caminho. Sem nenhum dos dois, o projeto fica `{ key: '', name: '', dir: '' }`, porque o contrato não admite `project: null`. O painel mostra o texto de "projeto desconhecido" do tema e agrupa essas sessões juntas (T7, ponto 11).
 - **Rótulo:** `session_title`, senão o título do primeiro ticket (até 48 caracteres), senão `Sessão a1b2c3`.
 - **Status:** `waiting` (aprovação pendente) tem prioridade sobre `active` (algum agente trabalhando ou evento há menos de 2 min), que tem prioridade sobre `idle`. `ended` após SessionEnd.
-- **Equipe (`roster`):** sempre `orq`; mais os papéis do time cujos agentes existem em `<projeto>/.claude/agents/` ou `~/.claude/agents/` (o servidor lê só os nomes dos arquivos, uma vez por sessão); mais qualquer papel que aparecer na sessão; mais `aux` se houver convidado.
+- **Equipe (`roster`):** sempre `orq`; mais os papéis do time cujos agentes existem em `<projeto>/.claude/agents/` ou `~/.claude/agents/` (o servidor lê só os nomes dos arquivos, uma vez por projeto, quando ele fica conhecido). A leitura do disco não fica no domínio (T7, ponto 10): o `createState` recebe `readAgentNames(projectDir) → string[]`, com padrão `() => []`, e a implementação em disco (ignora UNC e caminho relativo, devolve `[]` em erro, guarda em cache por pasta) fica fora de `server/domain/` e é ligada no T9a. O custo é a listagem de duas pastas pequenas, uma vez por projeto. Arquivos novos só aparecem depois de reiniciar o servidor, o que é aceito na v1; mais qualquer papel que aparecer na sessão; mais `aux` se houver convidado.
 - **`/clear`, retomada e compactação:** se o `session_id` mudar, é outra sessão. A anterior encerra pelo SessionEnd ou pela limpeza.
 - **Limpeza:** sessão encerrada sai da memória após 30 min; sem eventos, após 6 h.
 - **No painel:** uma sessão por vez em equipe, cena, ticket e atividade. Seletor no topo, agrupado por projeto, com status e aprovações pendentes. O modo padrão "seguir atividade" troca para a sessão mais ativa quando a atual está parada há 30 s, no máximo uma vez a cada 10 s. Escolher uma sessão a fixa. Se outra sessão tiver aprovação pendente, um aviso aparece no topo.
@@ -327,7 +334,7 @@ Hooks não têm número de sequência, e cada evento vem de um processo próprio
 
 1. O primeiro evento de um `toolUseId` (Pre, Post ou Failure) gera `tool.started`, porque Post e Failure também trazem `tool_input`. Os seguintes só atualizam.
 2. PreToolUse que chega depois do Post da mesma chamada é ignorado.
-3. Evento de ferramenta com `agent_id` desconhecido cria o agente na hora (papel pelo `agent_type`). O SubagentStart que chegar depois só completa o elo.
+3. Evento de ferramenta com `agent_id` desconhecido cria o agente na hora (papel pelo `agentTypeKey`) e emite `agent.started` (T7, ponto 2). Se o tipo só chegar depois, por exemplo num SubagentStart ou num evento seguinte com `agent_type`, o papel e o `agentType` exibido são atualizados (de `aux` para `tes`, por exemplo) e o `roster` acompanha (T7, ponto 9). O SubagentStart que chegar depois só completa o elo.
 4. Depois do SubagentStop, eventos atrasados do agente atualizam saúde e feed, mas não o devolvem a "trabalhando". O mesmo vale para a sessão principal depois do Stop, até o próximo pedido.
 5. Fato com `promptId` de ticket encerrado não reabre o ticket.
 
@@ -364,7 +371,14 @@ data: {"seq":1236,"sessionId":"…"}
   - Cada mensagem que muda estado, ou seja `update` (com ou sem evento) e `session-removed`, recebe exatamente o `seq` anterior + 1 dentro do mesmo `runId`.
   - `hello` e `snapshot` levam o `seq` atual, sem incrementar. O heartbeat não tem `seq`.
   - O `seq` e o `id` de um evento canônico são os do `update` que o leva.
-  - Quem numera é a ligação de ponta a ponta do servidor (fechamento do T9a). O hub (`server/http/sse.js`) recebe o `seq` pronto.
+  - Quem numera (decidido em 19/10/2026, ponto 1 do T7) é um único `sequence`, criado pelo servidor com o `runId` e injetado no `createState({ …, sequence })`. Ele tem `next() → { seq, id }` e `current() → seq`.
+    - O reducer numera cada evento canônico no momento em que o cria, e o mesmo objeto, já numerado e nunca mais alterado, vai para o `feed` e para o retorno de `apply` e `tick`.
+    - A ligação de ponta a ponta (T9a) publica um `update` por evento, na ordem devolvida, e usa o mesmo `sequence` para numerar os `update` sem evento (sessões em `changed` sem evento) e os `session-removed`.
+    - O `seq` do `snapshot` é `sequence.current()`.
+    - Nos testes, o padrão é um contador local, com `runId` fixo.
+    - A alternativa descartada, numerar no T9a mexendo nos objetos já guardados no `feed`, criaria um acoplamento escondido entre o reducer e a ligação.
+    - O hub (`server/http/sse.js`) recebe o `seq` pronto.
+  - **Horas no estado** (ponto 12 do T7): o reducer usa o `ts` do fato (o `sentAt` do encaminhador) para tudo o que vai ao estado. `startedAt` é o menor `ts` visto, `lastEventAt` é o maior, e a atividade "mais recente" é a de maior `ts`. Assim, a ordem de chegada não muda o estado final (teste de permutação). `activity.at` é o início da atividade. O `now` do relógio serve só para status (`active` com evento há menos de 2 min) e para a limpeza do `tick`.
 - **Cliente:**
   - `seq` menor ou igual ao último aplicado: ignora;
   - igual ao último + 1: aplica;
@@ -528,6 +542,7 @@ Exportações:
 | `redact(text) → string` | Aplica as etapas abaixo. Entrada que não é texto vira `''`; falha interna devolve só `•••`. |
 | `redactAndCut(text, max) → string` | Redige e corta para no máximo `max` caracteres, contando o `…` final. É a única função de corte de textos exibidos: o normalizador e o `sanitize.mjs` usam esta, nenhum outro corte. |
 | `charLength(text) → number` | Quantidade de caracteres. É a única definição de "caractere" para todos os limites do projeto: os da tabela acima, os 200 do teste de campos proibidos e a conferência dos cenários. A única exceção é o corte de transporte do encaminhador, que conta unidades UTF-16 (seção 1). |
+| `plainText(text) → string` | Etapas 1 e 7, sem redigir: tira invisíveis, controles, sequências ANSI e ESC e BEL soltos. É a única implementação desse "texto limpo", usada para o valor cru dos identificadores (`tools.js`), para os padrões de resumo de teste do `sanitize.mjs`, no lugar da cópia local `/[\x07\x1B]/g` do `plainText` de lá, e para o `parseTestSummary` do T6. Acrescentada em 19/10/2026. |
 | `isSensitiveName(name) → boolean` | Exportada só para os testes. Não faz parte do contrato com outros módulos. |
 
 **Caractere** é um ponto de código Unicode (`Array.from(text).length`). Um par de surrogates nunca é partido.
@@ -596,7 +611,7 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
    - `SEQ` define o que conta como sequência dentro de um valor. A forma atual vem do ajuste pós-aprovação do T5, de 18/10/2026, e cobre também introdutores incompletos. Em cada ESC, exatamente uma das quatro alternativas casa, e com um único comprimento:
      1. **CSI, completa ou incompleta:** `\x1B\[[\x20-\x3F]*(?:[\x40-\x7E]|(?![\x20-\x7E]))`. Toma todos os bytes de 0x20 a 0x3F (parâmetros e intermediários, em qualquer ordem) e, depois, o byte final, se houver. Se o próximo caractere não for ASCII imprimível (outro ESC, fim do texto, `ç`), a sequência termina incompleta. Encurtar o laço deixaria um byte de 0x20 a 0x3F como próximo, e as duas saídas falham, então não há segunda leitura;
      2. **OSC completa:** `\x1B\][^\x07\x1B]*(?:\x07|\x1B\x5C)`;
-     3. **introdutor de OSC incompleto:** `\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))`. Toma só o `ESC]`; o corpo segue como `X`, e um espaço termina o valor normalmente, sem engolir o resto da linha;
+     3. **OSC aberta (sem terminador):** `\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*(?![^\x07\x1B\s])`. Revisto em 19/10/2026 (B11 do tester do T5). Toma o `ESC]` e o corpo até o próximo ESC, BEL, espaço em branco ou fim. O lookahead final força o corpo máximo, então a leitura continua única. Antes, a alternativa tomava só o `ESC]`, e o `;` ou a `,` do corpo típico (`ESC]8;;x`, `ESC]0;`) delimitava o valor: `API_KEY=abc` + `ESC]8;;xdefsegredo` virava `API_KEY=•••;;xdefsegredo`. Um espaço continua terminando o valor, sem engolir o resto da linha;
      4. **ESC solto:** `\x1B(?![\[\]])`. É todo ESC que não começa `[` nem `]`, porque as alternativas 1 a 3 já cobrem todo `ESC[` e todo `ESC]`.
 
      `\x5C` é a barra invertida. A forma anterior (CSI e OSC só completas, ESC solto com lookahead negativo) deixava um introdutor incompleto no meio do valor terminá-lo: o ESC casava como solto, e o `[` ou `]` seguinte delimitava o valor. Exemplos: `API_KEY=abc` + `ESC]defsegredo` virava `API_KEY=•••]defsegredo`; `token=ghp_AAAAAAAAAA` + `ESC]AAAA…` virava `token=•••]AAAA…` (observação 1 do tester do T5, lacuna anterior ao B8). Conferido no Node 24.20 em 18/10/2026: esses casos, `ESC[1;` e `ESC[12` antes de outro ESC, e `ESC[1` antes de `ç`, ficam inteiros em `•••`. Num valor que falha depois do laço (URL sem `@`), 8 vezes mais repetições levam de 8 a 10 vezes mais tempo, e 64 mil repetições levam cerca de 6 ms. A etapa 7 continua com a gramática do ECMA-48 para remover sequências do texto;
@@ -607,13 +622,32 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
      - as formas sem aspas de `-u` e `--user`;
      - o token do `Bearer`.
 
-     Os valores de cabeçalho e de credencial em URL já aceitam ESC e `[`, mas ganham a mesma forma, para uma OSC com espaço dentro não cortar o valor;
-   - os corpos dos tokens da etapa 3 aceitam `SEQ` entre os caracteres, depois do prefixo: `ghp_(?:SEQ|[A-Za-z0-9])…`. A borda à esquerda continua igual. Um token colorido inteiro (`ESC[32mghp_…`) é pego na segunda passada, depois que a etapa 7 tira a cor;
+     Os valores de cabeçalho também ganham a mesma forma, para uma OSC com espaço dentro não cortar o valor;
+   - **revertido em 19/10/2026 (B10):** os corpos dos tokens da etapa 3 e a credencial em URL **não** aceitam `SEQ`. Com `SEQ` no corpo, um começo de token podia cair dentro do casamento anterior (depois de `]`, `~` ou do byte final de uma sequência), e o tempo ficava quadrático. Um token ou uma credencial com cor é pego na segunda passada, depois que a etapa 7 tira a cor. Resíduo aceito: cor **no meio** de um token cujo trecho antes da cor já tem o tamanho mínimo deixa visível o trecho depois da cor (`ghp_<36>` + `ESC[1m` + `BBBB` vira `•••BBBB`). É um caso artificial; o modo discreto cobre a tela compartilhada;
    - **um valor que começa com ESC casa e absorve a sequência**, em vez de casar vazio ou não casar. Casar vazio deixaria `NOME=•••` seguido do segredo, e a segunda passada pularia. Não casar deixaria o segredo exposto quando a cor está no meio do valor (`abc ESC[1m def`, sem os espaços). Um valor feito só de `SEQ` também casa, o que é inofensivo;
    - valores entre aspas não mudam: já vão até a aspa de fechamento não escapada, com o que houver dentro;
-   - **desempenho:** `SEQ` sempre começa com ESC, e `X` não contém ESC, então `SEQ` e `X` são disjuntas pelo primeiro caractere. Dentro de `SEQ`, a disjunção vem do caractere depois do ESC (`[`, `]` ou outro) e, entre as duas formas de OSC, do lookahead que decide se há terminador. Cada alternativa tem um único comprimento possível, como explicado na definição acima. O casamento continua linear. O teste de crescimento do ADR 0010 cobre um valor com milhares de sequências e os casos que falham depois do laço (URL sem `@`, `-u` sem `:`).
+   - **leitura única:** `SEQ` sempre começa com ESC, e `X` não contém ESC, então `SEQ` e `X` são disjuntas pelo primeiro caractere. Dentro de `SEQ`, a disjunção vem do caractere depois do ESC (`[`, `]` ou outro) e, entre as duas formas de OSC, do lookahead que decide se há terminador. Cada alternativa tem um único comprimento possível. O tempo linear depende também das regras de "Linearidade por construção", logo abaixo.
 
-   Com isso, a primeira passada já redige o valor inteiro, com as cores. A etapa 7 e a segunda passada continuam valendo para os casos em que a sequência esconde o nome ou o token (cor antes do nome, `gh ESC[0m p_…`).
+   Com isso, a primeira passada já redige o valor inteiro, com as cores. A etapa 7 e a segunda passada continuam valendo para os casos em que a sequência esconde o nome ou o token (cor antes do nome, `gh ESC[0m p_…`, token ou credencial em URL com cor).
+
+   **Linearidade por construção** (B10 do tester do T5, decidido em 19/10/2026). Uma expressão global fica quadrática quando muitos começos possíveis caem dentro do laço de um começo anterior e cada tentativa relê até o fim antes de falhar. Exemplos medidos pelo tester: `.-u` repetido levou 429 ms em 32 KiB, e `ESC]-u`, 1,3 s. As etapas 3 a 6 seguem quatro regras, que valem para toda regra nova:
+   1. **Cabeça antes do laço.** Cada regra tem uma cabeça curta (prefixo do token, `://`, `-u`/`--user`, `Bearer`, nome de cabeçalho com `:`, nome com separador, `--nome`, `setx NOME`). O laço caro, de valor ou de corpo, só roda depois que a cabeça casou. Nas regras por nome, só roda depois que o nome foi julgado sensível. Os pares (etapa 6), o `setx` e o `--nome` são implementados assim:
+      - uma busca global só da cabeça, por exemplo `(?<![A-Za-z0-9_.-])([A-Za-z_][A-Za-z0-9_.-]*)([ \t]*(?::=|\?=|\+=|=>|=|:)[ \t]*)`;
+      - o teste de sensibilidade do nome;
+      - para nome sensível, o valor com uma expressão ancorada (flag `y`) na posição seguinte ao separador.
+
+      Um nome não sensível nunca tem o valor examinado.
+   2. **Começos disjuntos.** Em cada regra que pode falhar depois do laço, nenhum caractere que pode estar dentro do laço pode ser a borda à esquerda de um novo começo. Assim, cada trecho é examinado por no máximo uma tentativa. Concretamente:
+      - **`-u` e `--user`** só começam no início do texto ou depois de espaço em branco ou aspas: `(?<![^\s"'])(-u|--user)`. O valor deles não tem espaço nem aspas. Um `-u` colado em outro caractere, como `x.-uadmin:senha`, deixa de ser reconhecido, o que é aceito, porque não é a forma de uma opção de linha de comando;
+      - **tokens da etapa 3:** corpo só com os caracteres do token, sem `SEQ`, e borda `(?<![A-Za-z0-9_-])`. O JWT, com três segmentos separados por `.`, fica linear: um começo só pode estar no início de um segmento, e cada tentativa examina no máximo três segmentos;
+      - **credencial em URL:** o corpo exclui `/`, que faz parte da cabeça `://`, e não aceita `SEQ`;
+      - **nome de cabeçalho:** borda `(?<![A-Za-z0-9-])`, então só há um começo por sequência de letras, dígitos e hífens.
+   3. **Laço sem exigência depois.** Só aceitam `SEQ` os valores que não exigem nada depois do laço: pares, `setx`, `--nome`, cabeçalhos, `Bearer` e as formas sem aspas de `-u`/`--user`. Um laço desses casa de primeira, guloso, sem retrocesso.
+   4. **O cursor nunca volta.** Depois de um trecho redigido, a busca continua depois do fim dele. Depois de uma cabeça não sensível, continua logo depois do separador.
+
+   **Cinto de segurança:** todo chamador que redige texto externo aplica antes a janela de leitura limitada de 8192 caracteres (seção 2, "Leitura limitada"). O normalizador já faz isso; o `sanitize.mjs` passa a fazer também. Não há teto de tamanho por começo dentro das expressões: ele mudaria o resultado para JWTs e valores longos, e as quatro regras já garantem tempo linear.
+
+   **Conferido no Node 24.20 em 19/10/2026**, com um protótipo dessas regras e as entradas do tester repetidas até 4 KiB e 32 KiB: `.-u`, `]-u`, `.--user=`, `ESC]-u`, `ESC]eyJ`, `ESC[0~eyJ`, OSC completa + `eyJ`, `a=`, `token=`, `ESC]8;;x;` e `eyJa.`. Todas cresceram de forma linear, com 32 KiB entre 0,1 e 1,8 ms. Os vetores do B11 ficaram inteiros em `•••`.
 
 7. **Sequências ANSI, depois da redação** (18/10/2026):
    - saem as sequências CSI na gramática do ECMA-48: `ESC [`, parâmetros em 0x30–0x3F, intermediários em 0x20–0x2F e um byte final em 0x40–0x7E;

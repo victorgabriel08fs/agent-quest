@@ -114,6 +114,13 @@ Um limite absoluto (por exemplo, 10 ms para 4 KiB) depende da máquina e não di
   - `-----BEGIN PRIVATE KEY-----` sem END;
   - `://a:a:a:` repetido;
   - um caractere invisível entre cada letra;
+  - as entradas do B10 (19/10/2026), cada uma repetida até o tamanho:
+    - `.-u`, `]-u`, `.--user=` e `ESC]-u`;
+    - `ESC]eyJ`, `ESC[0~eyJ` e uma OSC completa seguida de `eyJ`;
+    - `a=` (nome não sensível) e `ESC]8;;x;`;
+    - `eyJa.`, `://a:a` e `a-a-` (nome de cabeçalho sem `:`).
+
+    Em todas, a expressão começa e falha várias vezes; elas são o teste de regressão da "Linearidade por construção" (modelo de eventos, seção 10, etapa 6);
   - `token=` repetido;
   - `Authorization: ` repetido.
 - **Medição:** para cada entrada e tamanho, o melhor tempo de N = 7 execuções, depois de uma execução de aquecimento.
