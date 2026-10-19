@@ -67,4 +67,9 @@ O passo 1 da decisão ("corta strings longas") ganhou um teto: o corpo enviado n
 
 ## Complemento de 18/10/2026: prazo de 2 s na prática
 
-O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido assim: **até cerca de 2 s, salvo o `JSON.parse` de um stdin patológico**. O tester da captura 0.1.1 mostrou que a redução síncrona do teto do corpo impedia o prazo de disparar: com centenas de milhares de chaves, o processo passou de 2 s, gastou CPU e perdeu o evento. A captura 0.1.2 dá à redução um orçamento de 1 s, conferido dentro dos laços, e um envelope de emergência de custo constante (detalhes na seção 1 do modelo de eventos, "Orçamento de tempo da redução"). O Claude Code nunca espera nenhum desses casos, porque o hook é assíncrono. O que está em jogo é CPU e a perda do evento, não o bloqueio do agente.
+O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido assim: **até cerca de 2 s, salvo o `JSON.parse` de um stdin patológico perto de 16 MiB**. O tester da captura 0.1.1 mostrou que a redução síncrona do teto do corpo impedia o prazo de disparar: com centenas de milhares de chaves, o processo passou de 2 s, gastou CPU e perdeu o evento. A captura 0.1.2 traz três mudanças:
+- a redução ganha um orçamento de 1 s, conferido dentro dos laços;
+- um envelope de emergência de custo constante;
+- um atalho: com stdin acima de 8 MiB, vai direto ao envelope de emergência. Motivo: o `JSON.parse` e a listagem das chaves de um objeto não podem ser interrompidos, e somados passam de 2 s no extremo de 16 MiB.
+
+Detalhes na seção 1 do modelo de eventos, "Orçamento de tempo da redução". O Claude Code nunca espera nenhum desses casos, porque o hook é assíncrono. O que está em jogo é CPU e a perda do evento, não o bloqueio do agente.
