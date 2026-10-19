@@ -57,11 +57,17 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
   - se o orçamento acabar, o encaminhador desiste da redução e manda o **envelope de emergência**: só os obrigatórios e os prioritários do passo 3, lidos direto do primeiro nível do payload (custo constante), com `truncated: true`;
   - no passo 3, o tamanho é somado a cada campo acrescentado, sem serializar o envelope inteiro de novo a cada vez, para o passo ser linear;
   - o timeout do POST passa a ser o tempo que falta até o prazo de 2 s, no máximo 1 s. Pelo limite de 1 750 ms do orçamento, sobram pelo menos 250 ms quando a redução termina no prazo;
-  - **duas etapas não podem ser interrompidas**: o `JSON.parse` do stdin e a listagem das chaves de um objeto (`Object.keys` e `for...in` montam a lista inteira antes de devolver). Medidas do dev da 0.1.2: `JSON.parse` de 16 MiB leva 1,3 a 1,8 s; listar 1,84 milhão de chaves, 0,75 a 0,81 s. Somadas, passam de 2 s;
+  - **duas etapas não podem ser interrompidas**: o `JSON.parse` do stdin e a listagem das chaves de um objeto (`Object.keys` e `for...in` montam a lista inteira antes de devolver). Medidas do dev e do tester da 0.1.2:
+    - `JSON.parse` de 16 MiB com 1,85 milhão de chaves curtas no primeiro nível: 1 280 a 1 822 ms;
+    - as mesmas chaves dentro de `tool_response`, com a CPU a 100%: 1 330 a 2 639 ms;
+    - listar 1,84 milhão de chaves: 0,75 a 0,81 s;
+    - logo abaixo de 8 MiB, com a máquina a 44%: parse de 778 a 885 ms e `Object.keys` de 302 a 371 ms.
+
+    Somadas, as duas etapas passam de 2 s no extremo;
   - **atalho por tamanho** (decidido em 18/10/2026): com stdin acima de 8 MiB, o encaminhador vai direto ao envelope de emergência depois do `JSON.parse`, sem listar chaves. Os obrigatórios e os prioritários são lidos por acesso direto (`payload.session_id` e afins), que não depende do número de chaves. Até 8 MiB, os três passos rodam com o orçamento de 1 s. Pelas medidas, 8 MiB dá cerca de 0,9 s de `JSON.parse` mais uma listagem de cerca de 0,4 s, ainda dentro do prazo;
   - custo aceito do atalho: acima de 8 MiB, o envelope não leva `tool_response`. Um comando de teste com saída gigante perde o resultado do teste. O limite é provisório: o G0b o revisa com os tamanhos reais de payload medidos no T0 (V14).
 
-  Na v1, por isso, "até 2 s" vale salvo um `JSON.parse` patológico perto dos 16 MiB numa máquina carregada. Nesse caso o evento se perde em silêncio, sem afetar o Claude Code.
+  Na v1, por isso, "até 2 s" vale salvo payloads patológicos com centenas de milhares de chaves. Numa máquina calma, a exceção aparece perto dos 16 MiB. **Sob carga, aparece abaixo de 8 MiB**: com a CPU a 100%, um stdin logo abaixo de 8 MiB com cerca de 930 mil chaves levou de 2,2 a 5,9 s e não foi enviado. Nesse caso o evento se perde em silêncio, sem afetar o Claude Code. Duas observações não bloqueantes da 0.1.2 ficaram para o G0b (plano): o passo 1 sem orçamento e o limite de 8 MiB calibrado com a máquina calma.
 
   Em qualquer passo além do primeiro, `truncated` é `true`. O encaminhador continua sem saber o que o normalizador usa: os passos são genéricos. Perda aceita no passo 3: um Stop gigante perde `background_tasks`, e o reducer trata como Stop sem tarefas.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.

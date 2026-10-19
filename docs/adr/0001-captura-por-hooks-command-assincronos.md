@@ -67,7 +67,7 @@ O passo 1 da decisão ("corta strings longas") ganhou um teto: o corpo enviado n
 
 ## Complemento de 18/10/2026: prazo de 2 s na prática
 
-O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido assim: **até cerca de 2 s, salvo o `JSON.parse` de um stdin patológico perto de 16 MiB**. O tester da captura 0.1.1 mostrou que a redução síncrona do teto do corpo impedia o prazo de disparar: com centenas de milhares de chaves, o processo passou de 2 s, gastou CPU e perdeu o evento. A captura 0.1.2 traz três mudanças:
+O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido assim: **até cerca de 2 s, salvo payloads patológicos com centenas de milhares de chaves**. Numa máquina calma, isso só aparece perto de 16 MiB; sob carga, também abaixo de 8 MiB (medidas na seção 1 do modelo de eventos). O tester da captura 0.1.1 mostrou que a redução síncrona do teto do corpo impedia o prazo de disparar: com centenas de milhares de chaves, o processo passou de 2 s, gastou CPU e perdeu o evento. A captura 0.1.2 traz três mudanças:
 - o passo 1 da redução nunca é interrompido pelo tempo, para eventos normais saírem completos;
 - os passos 2 e 3 ganham um orçamento de 1 s desde o início da redução, limitado a 1 750 ms desde a partida do processo, para guardar 250 ms para o POST. O tempo é conferido dentro dos laços, e os passos 1 e 2 são abandonados cedo quando um piso do tamanho de saída já passa do teto;
 - um envelope de emergência de custo constante;
