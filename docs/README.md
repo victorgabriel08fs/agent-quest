@@ -8,7 +8,7 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 |---|---|
 | [Iniciar e parar o servidor](guias/servidor.md) | Requisitos, `npm start` e `npm run dev`, porta, diretório de dados e `AGENT_QUEST_HOME`, `runtime.json`, `--debug-dump`, como parar em cada terminal, mensagens comuns, `/api/health`, `/events` e `/api/state`, solução de problemas e segurança |
 | [O painel](guias/painel.md) | Como abrir, equipe, ticket e etapas, cena, atividade, indicadores, temas e atalhos, selo de conexão, seletor de sessão, estado sem sessões, o que ainda não está ligado e os testes de ponta a ponta |
-| [Ligar, pausar e remover a captura](guias/captura.md) | O que a captura faz e nunca faz, `npm run capture:deploy`, teste sem instalar, instalação, `/reload-plugins`, confiança da pasta, pausar, remover, atualizar, `AGENT_QUEST_HOME` dos dois lados e solução de problemas |
+| [Ligar, pausar e remover a captura](guias/captura.md) | O que a captura faz e nunca faz, eventos enormes resumidos e o orçamento de tempo, `npm run capture:deploy`, teste sem instalar, instalação, `/reload-plugins`, confiança da pasta, pausar, remover, atualizar e versão da captura, `AGENT_QUEST_HOME` dos dois lados e solução de problemas |
 
 ## Arquitetura
 

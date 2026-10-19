@@ -155,7 +155,7 @@ O servidor grava este arquivo ao iniciar e o apaga ao parar. O encaminhador da c
 - `pid`: o número do processo do servidor.
 - `version` e `startedAt`: a versão do Agent Quest e a hora do início, em milissegundos desde 1970.
 
-Não edite o arquivo. Ele é gravado de forma atômica (primeiro num arquivo temporário, depois renomeado), para a captura nunca ler um arquivo pela metade.
+Não edite o arquivo. Ele é gravado de forma atômica (primeiro num arquivo temporário, depois renomeado), para a captura nunca ler um arquivo pela metade. No Windows, a troca falha por instantes se outro programa estiver com o arquivo aberto (um encaminhador lendo, o antivírus, o indexador ou o OneDrive). Nesse caso, o servidor tenta de novo por até cerca de 2 segundos antes de desistir.
 
 ### Usar outra pasta (`AGENT_QUEST_HOME`)
 
@@ -307,7 +307,7 @@ O aviso aparece quando o caminho fica dentro da pasta indicada pelas variáveis 
 - **"Argumentos inválidos: ..."**, seguida da linha de uso: opção desconhecida. O servidor aceita só `--port <número>` e `--debug-dump`. Sai com código 1.
 - **"Aviso: ... config.json não é um objeto JSON válido; o arquivo foi ignorado."** (ou "não foi possível ler"): corrija o arquivo. Até lá, vale o padrão.
 - **"Aviso: "roles" no config.json não é um objeto; foi ignorado."**: a chave `roles` está com formato errado. Ela ainda não tem efeito nesta fase; corrija ou remova a chave.
-- **"Não foi possível gravar o runtime.json em ..."**: o diretório de dados não pôde ser criado ou gravado, por exemplo com `AGENT_QUEST_HOME` apontando para um lugar sem permissão. Sai com código 1.
+- **"Não foi possível gravar o runtime.json em ... (código do erro)."**: o diretório de dados não pôde ser criado ou gravado, por exemplo com `AGENT_QUEST_HOME` apontando para um lugar sem permissão. Sai com código 1. Se a pasta tem permissão e o código é `EPERM`, `EACCES` ou `EBUSY`, o mais provável é que algum programa tenha segurado o `runtime.json` por mais tempo que as novas tentativas, de cerca de 2 segundos. Espere um instante e inicie de novo.
 - **O PowerShell recusa o `npm`** dizendo que a execução de scripts está desabilitada: use `npm.cmd` no lugar de `npm` (por exemplo, `npm.cmd start`). Nesse caso, o Ctrl+C também mostra a pergunta do cmd, `Deseja finalizar o arquivo em lotes (S/N)?`.
 
 ### Códigos de saída do servidor
