@@ -549,6 +549,19 @@ describe('ajustes da revisão do tester (seções 2 e 10, 18/10/2026)', () => {
     assert.equal(run('PreToolUse', { tool_name: 'Read', agent_id: 'a'.repeat(128) }).agentId, 'a'.repeat(128));
   });
 
+  it('agent_id literal "main" é inválido: descarta o evento, e o elo do Agent vira null (T7, ponto 14)', () => {
+    for (const hook of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop', 'PermissionRequest']) {
+      assert.equal(run(hook, { tool_name: 'Read', agent_id: 'main', agent_type: 'tester' }), null, hook);
+    }
+    // Só o literal exato é reservado: outras caixas e ids que contêm "main" continuam válidos.
+    for (const good of ['Main', 'MAIN', 'main1', 'a-main']) {
+      assert.equal(run('PreToolUse', { tool_name: 'Read', agent_id: good }).agentId, good);
+    }
+    assert.deepEqual(agentLaunch({ status: 'completed', agentId: 'main' }), { linkedAgentId: null, launch: 'completed' });
+    const link = run('PostToolUse', { tool_name: 'Agent', tool_input: {}, tool_response: { agentId: 'main', status: 'completed' } });
+    assert.equal(link.linkedAgentId, null);
+  });
+
   it('fatos de ferramenta têm exatamente as chaves da própria linha, mais as comuns', () => {
     const commonKeys = Object.keys(common('PreToolUse'));
     const preKeys = ['toolUseId', 'tool', 'category', 'target', 'detail', 'inputHash', 'background', 'subagentType', 'subagentTypeKey', 'description'];

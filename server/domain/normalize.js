@@ -63,6 +63,13 @@ export const MAX_ID_CHARS = 128;
 export const ID_PATTERN = new RegExp(`^[A-Za-z0-9_.:-]{1,${MAX_ID_CHARS}}$`);
 
 /**
+ * `agent_id` reservado: `main` é a chave da sessão principal no estado
+ * (`agentKey = agent_id ?? 'main'`), então um subagente com esse id seria
+ * atribuído ao orquestrador. É tratado como id inválido (seção 2; T7, ponto 14).
+ */
+export const RESERVED_AGENT_IDS = Object.freeze(['main']);
+
+/**
  * Caminhos guardados como vieram (projectDir, transcriptPath, agentTranscriptPath):
  * até 1024; acima disso, null. São as únicas exceções ao teto de 200 da seção 10
  * (seção 2, "Forma do fato e limites"): um transcript de subagente passa de 200 com facilidade.
@@ -190,7 +197,7 @@ function buildFact(envelope, receivedAt, homeDir) {
   if (sessionId === null) return null;
   // agent_id presente mas inválido descarta o evento: virar 'main' atribuiria o
   // evento ao orquestrador em silêncio (seção 2). Sem a chave, ou null, é a sessão principal.
-  const agentId = idValue(payload.agent_id);
+  const agentId = agentIdValue(payload.agent_id);
   if (agentId === null && payload.agent_id !== undefined && payload.agent_id !== null) return null;
 
   const env = isPlainObject(data.env) ? /** @type {Record<string, unknown>} */ (data.env) : {};
@@ -333,7 +340,7 @@ export function agentLaunch(toolResponse) {
   if (!isPlainObject(toolResponse)) return NO_LAUNCH;
   const response = /** @type {Record<string, unknown>} */ (toolResponse);
   return {
-    linkedAgentId: idValue(response.agentId),
+    linkedAgentId: agentIdValue(response.agentId),
     launch: /** @type {'completed'|'async_launched'|null} */ (oneOf(response.status, AGENT_LAUNCHES)),
   };
 }
@@ -437,6 +444,16 @@ function backgroundTasks(value) {
  */
 function idValue(value) {
   return typeof value === 'string' && ID_PATTERN.test(value) ? value : null;
+}
+
+/**
+ * Id de agente: como `idValue`, e nunca um id reservado (`main`).
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function agentIdValue(value) {
+  const id = idValue(value);
+  return id !== null && RESERVED_AGENT_IDS.includes(id) ? null : id;
 }
 
 /**
