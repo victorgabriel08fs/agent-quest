@@ -52,6 +52,68 @@ import {
 /** Prazo generoso para "o processo subiu": detecta travamento, não mede tempo (ADR 0010). */
 const START_GUARD_MS = 60_000;
 
+// ---------------------------------------------------------------------------
+// Guardas contra travamento: o arquivo termina sozinho mesmo se o código de
+// produção travar. Cada teste e cada gancho tem `timeout`; cada espera tem
+// prazo; tudo o que o arquivo abre (servidores, processos, clientes SSE,
+// pipes, laços) se registra aqui e é fechado no `after` final, também quando
+// uma asserção falha. Os temporizadores das guardas usam `unref`.
+// ---------------------------------------------------------------------------
+
+/** Prazo de cada teste e gancho (node:test `timeout`). */
+const TEST = { timeout: 180_000 };
+const LONG_TEST = { timeout: 420_000 };
+/** Prazo de cada passo de limpeza. */
+const CLEANUP_GUARD_MS = 20_000;
+
+/**
+ * Corrida contra um prazo, com temporizador `unref`. Detecta travamento; não mede tempo.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} label
+ * @returns {Promise<T>}
+ */
+function guard(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: sem resposta em ${ms} ms (travou)`)), ms);
+    timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Limpezas pendentes do arquivo, na ordem em que foram registradas. */
+const cleanups = new Map();
+let cleanupSeq = 0;
+
+/** Registra uma limpeza; devolve a função que a tira do registro (já foi feita). */
+function onCleanup(fn) {
+  const id = cleanupSeq++;
+  cleanups.set(id, fn);
+  return () => cleanups.delete(id);
+}
+
+/** Roda as limpezas pendentes, da mais nova para a mais antiga, cada uma com prazo. */
+async function runCleanups() {
+  for (const [id, fn] of [...cleanups].reverse()) {
+    cleanups.delete(id);
+    await guard(Promise.resolve().then(fn), CLEANUP_GUARD_MS, 'limpeza').catch(() => {});
+  }
+}
+
+/** `launchServer` com o processo registrado para ser encerrado no fim, aconteça o que acontecer. */
+function launchTracked(args, env) {
+  const run = launchServer(args, env, { timeoutMs: START_GUARD_MS });
+  onCleanup(() => killTree(run.child));
+  return run;
+}
+
+/** Encerra um processo filho com prazo. */
+function stopProcess(run) {
+  return guard(killTree(run.child), CLEANUP_GUARD_MS, 'encerrar o servidor');
+}
+
 const VERSION = JSON.parse(readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;
 
 /** Projeto e pasta pessoal fictícios (montagens no mesmo processo; nada é lido do disco com eles). */
@@ -137,6 +199,8 @@ function assertAdrHeaders(headers, label) {
 // ---------------------------------------------------------------------------
 
 const openClients = new Set();
+/** Pedidos a /events ainda sem resposta. */
+const pendingRequests = new Set();
 
 /**
  * Cliente SSE: guarda cada mensagem (`event`, `id`, `data` já em JSON, hora de
@@ -147,6 +211,8 @@ const openClients = new Set();
 function openSse(port, { headers = {}, onMessage } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.get({ host: '127.0.0.1', port, path: '/events', agent: false, headers }, (res) => {
+      clearTimeout(noResponse);
+      pendingRequests.delete(req);
       const waiters = new Set();
       const notify = () => {
         for (const check of [...waiters]) check();
@@ -163,6 +229,10 @@ function openSse(port, { headers = {}, onMessage } = {}) {
         closed: null,
         close() {
           req.destroy();
+        },
+        /** Espera a conexão fechar, com prazo (detecta travamento). */
+        closedWithin(ms = 20_000) {
+          return guard(client.closed, ms, 'a conexão SSE fechar');
         },
         /** Mensagens que mudam estado (update e session-removed). */
         numbered() {
@@ -197,6 +267,7 @@ function openSse(port, { headers = {}, onMessage } = {}) {
               cleanup();
               fail(new Error(`${label}: não chegou em ${timeoutMs} ms (${client.messages.length} mensagens)`));
             }, timeoutMs);
+            timer.unref();
             waiters.add(check);
             check();
           });
@@ -247,7 +318,15 @@ function openSse(port, { headers = {}, onMessage } = {}) {
       openClients.add(client);
       resolve(client);
     });
-    req.on('error', reject);
+    // Sem os cabeçalhos da resposta em 20 s, desiste: um servidor travado não segura o teste.
+    const noResponse = setTimeout(() => req.destroy(new Error('GET /events sem resposta em 20 s (travou)')), 20_000);
+    noResponse.unref();
+    pendingRequests.add(req);
+    req.on('error', (err) => {
+      clearTimeout(noResponse);
+      pendingRequests.delete(req);
+      reject(err);
+    });
   });
 }
 
@@ -271,7 +350,7 @@ function reconnectingSse(port, { retryMs = 100 } = {}) {
     for (const check of [...waiters]) check();
   };
   const retry = () => {
-    if (!rc.stopped) setTimeout(connect, retryMs);
+    if (!rc.stopped) setTimeout(connect, retryMs).unref();
   };
   function connect() {
     if (rc.stopped) return;
@@ -319,13 +398,16 @@ function reconnectingSse(port, { retryMs = 100 } = {}) {
         cleanup();
         fail(new Error(`${label}: não chegou em ${timeoutMs} ms`));
       }, timeoutMs);
+      timer.unref();
       waiters.add(check);
       check();
     });
   rc.waitDisconnects = (n, timeoutMs = 10_000) => waitFor(() => rc.disconnects >= n, { timeoutMs, label: 'queda da conexão' });
+  const forget = onCleanup(() => rc.stop());
   rc.stop = () => {
     rc.stopped = true;
     rc.current?.close();
+    forget();
   };
   connect();
   return rc;
@@ -446,20 +528,49 @@ const fixedReader = (names) => ({ read: async () => [...names] });
 async function startLocal(t, { pipeline = {}, reader = fixedReader([]) } = {}) {
   const data = tempDir('aq-int-9a-local-');
   const home = tempDir('aq-int-9a-home-');
+  const removeDirs = () => {
+    for (const dir of [data, home]) {
+      try {
+        dir.cleanup();
+      } catch {
+        // pasta temporária do sistema; não vale travar nem derrubar o arquivo por ela
+      }
+    }
+  };
+  const forgetDirs = onCleanup(removeDirs);
   const logs = [];
-  const server = await startServer({
-    argv: ['--port', '0'],
-    env: { AGENT_QUEST_HOME: data.dir },
-    homedir: home.dir,
-    logError: (message) => logs.push(message),
-    // reader: null usa o leitor de disco da ligação (com onLate), ajustável por pipeline.readerOptions.
-    pipeline: { ...(reader ? { reader } : {}), ...pipeline },
-  });
+  const server = await guard(
+    startServer({
+      argv: ['--port', '0'],
+      env: { AGENT_QUEST_HOME: data.dir },
+      homedir: home.dir,
+      logError: (message) => logs.push(message),
+      // reader: null usa o leitor de disco da ligação (com onLate), ajustável por pipeline.readerOptions.
+      pipeline: { ...(reader ? { reader } : {}), ...pipeline },
+    }),
+    START_GUARD_MS,
+    'startServer',
+  );
   assert.equal(server.status, 'started');
+  let done = false;
+  const shutdown = async () => {
+    if (done) return;
+    done = true;
+    try {
+      await guard(server.close(), CLEANUP_GUARD_MS, 'close() do servidor');
+    } catch {
+      // close() travou: derruba as conexões e solta o servidor, para o arquivo terminar.
+      server.pipeline.stop();
+      server.server.closeAllConnections();
+      server.server.unref();
+    }
+    removeDirs();
+  };
+  const forget = onCleanup(shutdown);
+  forgetDirs();
   t.after(async () => {
-    await server.close();
-    data.cleanup();
-    home.cleanup();
+    forget();
+    await shutdown();
   });
   const { port } = server;
   const { token } = server.runtime;
@@ -474,9 +585,12 @@ async function startLocal(t, { pipeline = {}, reader = fixedReader([]) } = {}) {
   };
 }
 
-after(() => {
+// Limpeza final do arquivo: roda depois de todos os testes, também quando algum falhou ou estourou o prazo.
+after(async () => {
+  for (const req of [...pendingRequests]) req.destroy();
   for (const client of [...openClients]) client.close();
-});
+  await runCleanups();
+}, TEST);
 
 // ===========================================================================
 // 1. Servidor real (outro processo) e HTTP real
@@ -492,20 +606,25 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
   before(async () => {
     data = tempDir('aq-int-9a-spec-');
     home = tempDir('aq-int-9a-spec-home-');
-    run = launchServer(['--port', '0'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }), { timeoutMs: START_GUARD_MS });
+    run = launchTracked(['--port', '0'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }));
     assert.equal(await run.started, true, run.output());
     const runtime = await waitFor(() => readJson(path.join(data.dir, 'runtime.json')), { label: 'runtime.json', timeoutMs: START_GUARD_MS });
     ({ port, token } = runtime);
-  });
+  }, TEST);
 
   after(async () => {
     for (const client of [...openClients]) client.close();
-    if (run) await killTree(run.child);
-    data?.cleanup();
-    home?.cleanup();
-  });
+    if (run) await stopProcess(run).catch(() => {});
+    for (const dir of [data, home]) {
+      try {
+        dir?.cleanup();
+      } catch {
+        // pasta temporária; não trava o arquivo
+      }
+    }
+  }, TEST);
 
-  it('toda conexão recebe hello e snapshot, com e sem Last-Event-ID; snapshot = /api/state; no-store', async () => {
+  it('toda conexão recebe hello e snapshot, com e sem Last-Event-ID; snapshot = /api/state; no-store', TEST, async () => {
     const S = sid(101);
     for (const payload of [hook('SessionStart', S, { source: 'startup', model: 'claude-opus-5-5' }), pre(S, tid('A1')), post(S, tid('A1'))]) {
       assert.equal((await postHook(port, token, envelope(payload))).status, 204);
@@ -540,7 +659,7 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     }
   });
 
-  it('seq contínuo misturando update com evento e sem evento; o cliente monta exatamente o /api/state; health com sessions e clients reais', async () => {
+  it('seq contínuo misturando update com evento e sem evento; o cliente monta exatamente o /api/state; health com sessions e clients reais', TEST, async () => {
     const client = await connected(port);
     const S = sid(102);
     const W = { id: aid(102), type: 'tester' };
@@ -570,11 +689,11 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     assert.equal(health.clients, 1);
     assert.equal(health.events.received, health.events.accepted + health.events.deduped + health.events.rejected);
     client.close();
-    await client.closed;
+    await client.closedWithin();
     await waitFor(async () => (await getJson(port, '/api/health')).clients === 0, { label: 'clients volta a 0' });
   });
 
-  it('o nono cliente recebe 503 com a ligação ativa; os oito recebem o mesmo update; quem sai libera a vaga', async () => {
+  it('o nono cliente recebe 503 com a ligação ativa; os oito recebem o mesmo update; quem sai libera a vaga', TEST, async () => {
     const clients = [];
     for (let i = 0; i < 8; i++) clients.push(await connected(port));
     assert.equal((await getJson(port, '/api/health')).clients, 8);
@@ -582,14 +701,14 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     assert.equal(ninth.status, 503);
     assert.equal(ninth.headers['cache-control'], 'no-store');
     assertAdrHeaders(ninth.headers, '503');
-    await ninth.closed;
+    await ninth.closedWithin();
     assert.equal((await getJson(port, '/api/health')).clients, 8, 'o 503 não entra na contagem');
     const S = sid(103);
     assert.equal((await postHook(port, token, envelope(pre(S, tid('C1'))))).status, 204);
     const got = await Promise.all(clients.map((c) => c.waitFor((m) => m.data?.event?.data?.toolUseId === tid('C1'))));
     assert.equal(new Set(got.map((m) => `${m.id}|${JSON.stringify(m.data)}`)).size, 1, 'os oito recebem a mesma mensagem');
     clients[0].close();
-    await clients[0].closed;
+    await clients[0].closedWithin();
     await waitFor(async () => (await getJson(port, '/api/health')).clients === 7, { label: 'vaga liberada' });
     const again = await connected(port);
     assert.equal((await getJson(port, '/api/health')).clients, 8);
@@ -597,7 +716,7 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     await waitFor(async () => (await getJson(port, '/api/health')).clients === 0, { label: 'todos saíram' });
   });
 
-  it('Host, Origin e Sec-Fetch-Site inválidos: 403 em /events e /api/state, no-store, sem estado no corpo e sem entrar na contagem', async () => {
+  it('Host, Origin e Sec-Fetch-Site inválidos: 403 em /events e /api/state, no-store, sem estado no corpo e sem entrar na contagem', TEST, async () => {
     const S = sid(104);
     assert.equal((await postHook(port, token, envelope(pre(S, tid('D1'))))).status, 204);
     await settledState(port);
@@ -635,7 +754,7 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     assertAdrHeaders(state.headers, '/api/state');
   });
 
-  it('segurança da ingestão continua: sem token, token errado, Origin e outro Content-Type são recusados e não mudam o estado', async () => {
+  it('segurança da ingestão continua: sem token, token errado, Origin e outro Content-Type são recusados e não mudam o estado', TEST, async () => {
     const before = await settledState(port);
     const S = sid(105);
     const body = envelope(pre(S, tid('E1')));
@@ -658,7 +777,27 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     assert.ok(!after.sessions.some((s) => s.id === S));
   });
 
-  it('escuta só em 127.0.0.1: ::1 e os endereços não internos da máquina recusam a conexão', async (t) => {
+  it('a ligação passa a pasta pessoal (os.homedir()) ao estado: /c/Users/… (Git Bash) e C:\\Users\\… caem no mesmo project.key', TEST, async () => {
+    // Um projectDir no formato MSYS não tem letra de unidade; só vira c:/… pelo contexto da pasta pessoal
+    // (seção 2, "Formas de caminho"; seção 7). Sem o homeDir na ligação, as duas sessões ficariam em projetos diferentes.
+    const windowsForm = 'C:\\Users\\fulana\\Projetos\\juncao-9a';
+    const msysForm = '/c/Users/fulana/Projetos/juncao-9a';
+    const [A, B] = [sid(106), sid(107)];
+    assert.equal((await postHook(port, token, envelope(pre(A, tid('J1')), { projectDir: windowsForm }))).status, 204);
+    assert.equal((await postHook(port, token, envelope(pre(B, tid('J2')), { projectDir: msysForm }))).status, 204);
+    await waitFor(async () => {
+      const state = await getJson(port, '/api/state');
+      return state.sessions.some((s) => s.id === A) && state.sessions.some((s) => s.id === B);
+    }, { label: 'as duas sessões', timeoutMs: 20_000 });
+    const state = await getJson(port, '/api/state');
+    const [pa, pb] = [A, B].map((id) => state.sessions.find((s) => s.id === id).project);
+    assert.equal(pa.key, 'c:/Users/fulana/Projetos/juncao-9a');
+    assert.equal(pb.key, pa.key, 'o caminho MSYS cai no mesmo projeto');
+    assert.equal(pb.name, 'juncao-9a');
+    assert.equal(pb.dir, msysForm, 'dir fica como veio');
+  });
+
+  it('escuta só em 127.0.0.1: ::1 e os endereços não internos da máquina recusam a conexão', TEST, async (t) => {
     const refused = (host) =>
       new Promise((resolve) => {
         const socket = net.connect({ host, port });
@@ -793,21 +932,25 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     writeFileSync(path.join(agentsDir, 'LEIA-ME.txt'), 'não é agente');
     port = await fixedPort();
     // --debug-dump só como instrumento do teste: diz quais payloads o servidor aceitou (regra de carga).
-    run = launchServer(['--port', String(port), '--debug-dump'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }), { timeoutMs: START_GUARD_MS });
+    run = launchTracked(['--port', String(port), '--debug-dump'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }));
     assert.equal(await run.started, true, run.output());
     runtime = await waitFor(() => readJson(path.join(data.dir, 'runtime.json')), { label: 'runtime.json', timeoutMs: START_GUARD_MS });
     assert.equal(runtime.port, port);
     env = forwarderEnv({ AGENT_QUEST_HOME: data.dir, CLAUDE_PROJECT_DIR: projectDir });
     sse = await connected(port);
-  });
+  }, TEST);
 
   after(async () => {
     for (const client of [...openClients]) client.close();
-    if (run) await killTree(run.child);
-    data?.cleanup();
-    home?.cleanup();
-    projectRoot?.cleanup();
-  });
+    if (run) await stopProcess(run).catch(() => {});
+    for (const dir of [data, home, projectRoot]) {
+      try {
+        dir?.cleanup();
+      } catch {
+        // pasta temporária; não trava o arquivo
+      }
+    }
+  }, TEST);
 
   const common = (hookName, fields = {}, who = null) => ({
     session_id: SID,
@@ -819,7 +962,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     ...fields,
   });
 
-  it('a sequência realista de hooks, pelo encaminhador real, chega ao SessionState esperado da seção 9', async (t) => {
+  it('a sequência realista de hooks, pelo encaminhador real, chega ao SessionState esperado da seção 9', LONG_TEST, async (t) => {
     const agentInput = { description: 'Rodar a suíte', prompt: 'PROMPT-DO-AGENTE-9A', subagent_type: 'tester' };
     const readInput = { file_path: path.join(projectDir, 'CLAUDE.md') };
     const bashInput = { command: 'npm test', description: 'Rodar os testes' };
@@ -944,7 +1087,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     }
   });
 
-  it('dedupe: o mesmo hook entregue por dois encaminhadores ao mesmo tempo (plugin carregado duas vezes) vira um único evento', async (t) => {
+  it('dedupe: o mesmo hook entregue por dois encaminhadores ao mesmo tempo (plugin carregado duas vezes) vira um único evento', TEST, async (t) => {
     // Regra de carga: as duas cópias precisam chegar para haver o que deduplicar. Uma cópia
     // perdida só vale se o encaminhador dela esperou um prazo do ADR 0001 e a máquina estava
     // sobrecarregada; aí tenta de novo com outro payload (até 3 vezes) e, sem sucesso, pula.
@@ -986,7 +1129,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     t.skip(`dedupe não avaliado: máquina sobrecarregada (${load.text}); ${misses.join('; ')}`);
   });
 
-  it('latência: encaminhador real → servidor → cliente SSE recebe o tool.started de um subagente em menos de 500 ms', async (t) => {
+  it('latência: encaminhador real → servidor → cliente SSE recebe o tool.started de um subagente em menos de 500 ms', LONG_TEST, async (t) => {
     const S3 = '7f3c2a10-5b6d-4e8f-9a01-0000000000d3';
     let n = 0;
     await assertWithinLimit(
@@ -1004,7 +1147,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     );
   });
 
-  it('dois subagentes do mesmo tipo em paralelo, com os encaminhadores rodando ao mesmo tempo: duas instâncias com as próprias ações e descrições, e o cliente monta o /api/state', async (t) => {
+  it('dois subagentes do mesmo tipo em paralelo, com os encaminhadores rodando ao mesmo tempo: duas instâncias com as próprias ações e descrições, e o cliente monta o /api/state', LONG_TEST, async (t) => {
     const S4 = '7f3c2a10-5b6d-4e8f-9a01-0000000000d4';
     const A = { id: 'a1111111111111111', type: 'tester' };
     const B = { id: 'a2222222222222222', type: 'tester' };
@@ -1055,7 +1198,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     assertSameAsState(replay(sse.messages), state);
   });
 
-  it('queda e volta do servidor: o cliente reconecta sozinho, recebe hello de outra execução e snapshot, e a sessão volta no evento seguinte', async (t) => {
+  it('queda e volta do servidor: o cliente reconecta sozinho, recebe hello de outra execução e snapshot, e a sessão volta no evento seguinte', LONG_TEST, async (t) => {
     // Os prazos daqui só detectam travamento (ADR 0010): nada é medido.
     const rc = reconnectingSse(port, { retryMs: 100 });
     try {
@@ -1064,15 +1207,15 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
       const oldRunId = firstHello.data.runId;
       const lastSeqBefore = (await getJson(port, '/api/state')).seq;
 
-      await killTree(run.child); // queda: o processo morre sem apagar o runtime.json
+      await stopProcess(run); // queda: o processo morre sem apagar o runtime.json
       await rc.waitDisconnects(1, 30_000);
-      await sse.closed; // o cliente antigo também percebe a queda
+      await sse.closedWithin(); // o cliente antigo também percebe a queda
 
       // Durante a queda, o encaminhador sai em silêncio (pid morto), sem enviar.
       const down = await runForwarder({ env, stdin: JSON.stringify(common('PreToolUse', { tool_name: 'Read', tool_input: { file_path: path.join(projectDir, 'x.md') }, tool_use_id: 'toolu_01Durante9A' })) });
       assertSilentExit(down, 'durante a queda');
 
-      run = launchServer(['--port', String(port), '--debug-dump'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }), { timeoutMs: START_GUARD_MS });
+      run = launchTracked(['--port', String(port), '--debug-dump'], minimalEnv({ AGENT_QUEST_HOME: data.dir, USERPROFILE: home.dir, HOME: home.dir }));
       assert.equal(await run.started, true, run.output());
       const newRuntime = await waitFor(() => {
         const current = readJson(path.join(data.dir, 'runtime.json'));
@@ -1107,7 +1250,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
 // ===========================================================================
 
 describe('T9a ligação no mesmo processo (startServer com a opção pipeline)', () => {
-  it('reducer que lança: 204, conta como ignored, log só com o tipo, update sem evento da sessão; os eventos válidos seguintes continuam chegando', async (t) => {
+  it('reducer que lança: 204, conta como ignored, log só com o tipo, update sem evento da sessão; os eventos válidos seguintes continuam chegando', TEST, async (t) => {
     const SECRET = 'ghp_SEGREDONOERRO0123456789abcdefghijkl';
     const BEFORE = tid('ExplodeAntes');
     const AFTER = tid('ExplodeDepois');
@@ -1186,7 +1329,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
   });
 
   // B1 do tester (19/10/2026): a ligação perdia o newProjects quando o reducer lançava, e o projeto nunca era lido.
-  it('erro do reducer no primeiro evento de um projeto novo: o roster ainda recebe os papéis de .claude/agents/', async (t) => {
+  it('erro do reducer no primeiro evento de um projeto novo: o roster ainda recebe os papéis de .claude/agents/', TEST, async (t) => {
     let first = true;
     const local = await startLocal(t, {
       reader: fixedReader(['tester', 'arquiteto']),
@@ -1210,7 +1353,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     await waitFor(async () => (await local.state()).sessions.find((s) => s.id === S)?.roster.includes('arq'), { timeoutMs: 2000, label: 'roster com os papéis do projeto' });
   });
 
-  it('fatos descartados pelo normalizador: 204, ignored, nenhum seq gasto, nenhuma sessão; o servidor segue', async (t) => {
+  it('fatos descartados pelo normalizador: 204, ignored, nenhum seq gasto, nenhuma sessão; o servidor segue', TEST, async (t) => {
     const local = await startLocal(t);
     const client = await connected(local.port);
     const S = sid(304);
@@ -1239,7 +1382,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.deepEqual(local.logs, []);
   });
 
-  it('tick (relógio e temporizadores injetados): update com evento, update sem evento e session-removed com seq contínuo; sessão removida e recriada', async (t) => {
+  it('tick (relógio e temporizadores injetados): update com evento, update sem evento e session-removed com seq contínuo; sessão removida e recriada', TEST, async (t) => {
     const intervals = fakeIntervals();
     const base = Date.now();
     let now = base;
@@ -1311,7 +1454,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.equal((await local.health()).sessions, 0);
   });
 
-  it('tick com o relógio real: setInterval de 5000 ms com unref; a primeira passada vem depois de ~5 s; close() desliga', async (t) => {
+  it('tick com o relógio real: setInterval de 5000 ms com unref; a primeira passada vem depois de ~5 s; close() desliga', TEST, async (t) => {
     const handles = [];
     const cleared = [];
     const ticks = [];
@@ -1346,7 +1489,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.deepEqual(cleared, [handles[0].handle], 'close() desligou o tick');
   });
 
-  it('erro no tick vai só ao log, com o tipo; nada é publicado e os eventos seguem', async (t) => {
+  it('erro no tick vai só ao log, com o tipo; nada é publicado e os eventos seguem', TEST, async (t) => {
     const intervals = fakeIntervals();
     const local = await startLocal(t, {
       pipeline: { timers: intervals.timers, reducer: { apply, tick: () => { throw new RangeError('SEGREDO-NO-TICK ghp_0123456789abcdefghijklmnopqrstuvwxyz'); } } },
@@ -1365,7 +1508,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.equal(next.data.seq, client.numbered()[count - 1].data.seq + 1);
   });
 
-  it('rajada de 3 200 envelopes de 8 sessões com clientes entrando e saindo: ordem por sessão, seq contínuo, nada perdido e /api/state igual ao que os clientes montaram', async (t) => {
+  it('rajada de 3 200 envelopes de 8 sessões com clientes entrando e saindo: ordem por sessão, seq contínuo, nada perdido e /api/state igual ao que os clientes montaram', LONG_TEST, async (t) => {
     const local = await startLocal(t, { reader: fixedReader(['tester']) });
     const persistent = await connected(local.port);
     const LANES = 8;
@@ -1390,24 +1533,36 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
         if (n === 0 && i === PER_LANE / 2) lateJoiner = await connected(local.port);
       }
     };
+    // O laço de clientes para sempre: no fim, numa falha de uma rajada ou se o servidor sumir.
+    t.after(() => {
+      finished = true;
+    });
     const churn = async () => {
       while (!finished) {
-        const client = await openSse(local.port);
+        let client;
+        try {
+          client = await openSse(local.port);
+        } catch {
+          return;
+        }
         if (client.status === 200) {
           await client.waitFor((m) => m.event === 'snapshot').catch(() => {});
           await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 30)));
           churned.push(client);
         }
         client.close();
-        await client.closed;
+        await client.closedWithin().catch(() => {});
         // Cada snapshot leva as 8 sessões com feed; a pausa só limita o custo do teste (servidor e clientes no mesmo processo).
         await new Promise((r) => setTimeout(r, 40));
       }
     };
     const churners = [churn(), churn(), churn(), churn()];
-    await Promise.all(Array.from({ length: LANES }, (_, n) => lane(n)));
-    finished = true;
-    await Promise.all(churners);
+    try {
+      await Promise.all(Array.from({ length: LANES }, (_, n) => lane(n)));
+    } finally {
+      finished = true;
+      await guard(Promise.all(churners), CLEANUP_GUARD_MS, 'clientes que entram e saem').catch(() => {});
+    }
 
     const total = sent.reduce((sum, ids) => sum + ids.length, 0);
     await waitFor(() => persistent.numbered().filter((m) => m.data.event?.kind === 'tool.started').length >= total, { timeoutMs: 20_000, label: 'todos os tool.started' });
@@ -1436,11 +1591,11 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     for (const [i, client] of churned.entries()) replay(client.messages, `cliente ${i} que entrou e saiu`);
     for (const session of state.sessions) assert.ok(session.feed.length <= 200, 'feed limitado a 200');
     lateJoiner.close();
-    await lateJoiner.closed;
+    await lateJoiner.closedWithin();
     await waitFor(async () => (await local.health()).clients === 1, { label: 'só o persistente' });
   });
 
-  it('fila cheia (createApp + createPipeline como no main.js, limite 50): descarta os mais antigos, conta dropped, e o SSE recebe exatamente os que ficaram, numerados em sequência', async (t) => {
+  it('fila cheia (createApp + createPipeline como no main.js, limite 50): descarta os mais antigos, conta dropped, e o SSE recebe exatamente os que ficaram, numerados em sequência', TEST, async (t) => {
     const runId = 'fila9a';
     const TOKEN = 'token-de-teste-9a';
     const intervals = fakeIntervals();
@@ -1460,11 +1615,21 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
       sessionCount: pipeline.sessionCount,
     });
     pipeline.attach(hub);
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    t.after(() => new Promise((resolve) => {
-      server.closeAllConnections();
-      server.close(resolve);
-    }));
+    await guard(new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)), START_GUARD_MS, 'listen');
+    const closeServer = () =>
+      guard(
+        new Promise((resolve) => {
+          server.closeAllConnections();
+          server.close(resolve);
+        }),
+        CLEANUP_GUARD_MS,
+        'fechar o servidor',
+      ).catch(() => server.unref());
+    const forget = onCleanup(closeServer);
+    t.after(() => {
+      forget();
+      return closeServer();
+    });
     const { port } = server.address();
     const client = await connected(port);
     const S = sid(501);
@@ -1484,7 +1649,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.deepEqual(logs, []);
   });
 
-  it('dedupe pela ingestão: o mesmo payload repetido (outro sentAt) vira um evento; outra sessão com o mesmo resto não é duplicata', async (t) => {
+  it('dedupe pela ingestão: o mesmo payload repetido (outro sentAt) vira um evento; outra sessão com o mesmo resto não é duplicata', TEST, async (t) => {
     const local = await startLocal(t);
     const client = await connected(local.port);
     const payload = pre(sid(601), tid('Dup'));
@@ -1499,7 +1664,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.deepEqual(client.numbered().map((m) => [m.data.event?.kind, m.data.event?.sessionId]), [['tool.started', sid(601)], ['tool.started', sid(602)]]);
   });
 
-  it('segredos, ANSI e conteúdo nos envelopes: nada disso, nenhum *Key cru, nenhum campo fora do contrato e nenhum texto que não seja ponto fixo de redact sai pelo SSE ou pelo /api/state', async (t) => {
+  it('segredos, ANSI e conteúdo nos envelopes: nada disso, nenhum *Key cru, nenhum campo fora do contrato e nenhum texto que não seja ponto fixo de redact sai pelo SSE ou pelo /api/state', TEST, async (t) => {
     const local = await startLocal(t, { reader: fixedReader(['tester']) });
     const client = await connected(local.port);
     const S = sid(701);
@@ -1584,7 +1749,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     for (const message of client.messages) walk(message.data, message.event);
   });
 
-  it('fuzz: 20 000 envelopes aleatórios e passadas do tick pela ligação nunca fazem o reducer lançar; o seq segue contínuo e o snapshot é o que o painel monta', async () => {
+  it('fuzz: 20 000 envelopes aleatórios e passadas do tick pela ligação nunca fazem o reducer lançar; o seq segue contínuo e o snapshot é o que o painel monta', LONG_TEST, async () => {
     let seed = 0x9a9a9a;
     const rand = () => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -1692,31 +1857,36 @@ async function stuckThread() {
     sockets.push(socket);
     socket.on('error', () => {});
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(name, resolve);
-  });
-  const handle = await open(name, 'r');
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    forget();
+    for (const socket of sockets) socket.end('x');
+    server.close(); // um `open` ainda pendente falha, e um `read` pendente termina
+  };
+  // Registrado antes do `open`: se o teste acabar no meio, o pipe é solto e a thread volta.
+  const forget = onCleanup(release);
+  await guard(
+    new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(name, resolve);
+    }),
+    CLEANUP_GUARD_MS,
+    'pipe nomeado',
+  );
+  const handle = await guard(open(name, 'r'), CLEANUP_GUARD_MS, 'abrir o pipe nomeado');
   const reading = handle
     .read(Buffer.alloc(1), 0, 1, null)
     .catch(() => {})
     .finally(() => handle.close().catch(() => {}));
-  let released = false;
-  return {
-    reading,
-    release() {
-      if (released) return;
-      released = true;
-      for (const socket of sockets) socket.end('x');
-      server.close();
-    },
-  };
+  return { reading, release };
 }
 
 describe('Leitor de .claude/agents/ lento ou travado (leitor de disco da ligação, com onLate)', () => {
   const windowsOnly = process.platform !== 'win32' && 'usa pipe nomeado do Windows para prender uma thread do libuv';
 
-  it('dez pastas com listagem presa: uma listagem por vez; o servidor segue servindo arquivos e processando eventos; cada pasta que termina atualiza o roster por update sem evento', { skip: windowsOnly }, async (t) => {
+  it('dez pastas com listagem presa: uma listagem por vez; o servidor segue servindo arquivos e processando eventos; cada pasta que termina atualiza o roster por update sem evento', { skip: windowsOnly, ...TEST }, async (t) => {
     const blockers = new Map();
     const calls = [];
     let running = 0;
@@ -1762,9 +1932,14 @@ describe('Leitor de .claude/agents/ lento ou travado (leitor de disco da ligaç�
     }
     assert.equal((await local.send(pre(sid(901), tid('Preso1')), { projectDir: project(1) })).status, 204);
     await client.waitFor((m) => m.data?.event?.data?.toolUseId === tid('Preso1'));
-    assert.equal(maxRunning, 1, 'no máximo uma listagem em andamento');
-    assert.equal(blockers.size, 1, 'as outras pastas esperam na fila');
-    for (const session of (await local.state()).sessions) assert.deepEqual(session.roster, ['orq'], 'até a leitura, só os papéis vistos');
+    // Seção 7 (19/10/2026): no máximo 2 listagens não terminadas (a em andamento e as perdidas depois de 10 s).
+    assert.ok(maxRunning <= 2, `listagens não terminadas ao mesmo tempo: ${maxRunning}`);
+    assert.ok(blockers.size <= 2, `pastas presas ao mesmo tempo: ${blockers.size}`);
+    t.diagnostic(`listagens simultâneas: no máximo ${maxRunning}`);
+    // Até a pasta do projeto ser listada, o roster tem só os papéis vistos, mais os da pasta pessoal se ela já foi lida.
+    for (const session of (await local.state()).sessions) {
+      assert.ok([JSON.stringify(['orq']), JSON.stringify(['orq', 'doc'])].includes(JSON.stringify(session.roster)), `roster antes da listagem: ${session.roster}`);
+    }
 
     // Cada pasta liberada termina (em geral depois do prazo): o roster completo da sessão dela chega num
     // update sem evento, e a próxima começa. Se a pasta pessoal já estava listada quando o prazo do read
@@ -1782,7 +1957,7 @@ describe('Leitor de .claude/agents/ lento ou travado (leitor de disco da ligaç�
       assert.deepEqual(update.data.session.roster, FULL, `roster de preso-${n}`);
     }
     for (const session of (await local.state()).sessions) assert.deepEqual(session.roster, FULL, `roster final de ${session.id}`);
-    assert.equal(maxRunning, 1);
+    assert.ok(maxRunning <= 2, `listagens não terminadas ao mesmo tempo: ${maxRunning}`);
     assert.equal(calls.length, N + 1, 'cada pasta (as dez e a pessoal) listada uma vez');
     assert.equal(new Set(calls).size, N + 1);
     assertSameAsState(replay(client.messages), await local.state());
@@ -1795,7 +1970,7 @@ describe('Leitor de .claude/agents/ lento ou travado (leitor de disco da ligaç�
     assert.deepEqual(local.logs, []);
   });
 
-  it('listagem lenta que termina depois do prazo (temporizadores injetados): o roster sai com os papéis vistos e se atualiza quando a listagem termina', async (t) => {
+  it('listagem lenta que termina depois do prazo (temporizadores injetados): o roster sai com os papéis vistos e se atualiza quando a listagem termina', TEST, async (t) => {
     const deadlines = [];
     const timers = {
       setTimeout(run) {
