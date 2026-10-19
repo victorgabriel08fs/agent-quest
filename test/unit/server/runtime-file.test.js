@@ -2,6 +2,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { closeSync, existsSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import process from 'node:process';
@@ -82,18 +83,36 @@ describe('writeRuntimeFile e readRuntimeFile', () => {
   });
 
   it('um leitor nunca vê o arquivo pela metade durante gravações seguidas', async () => {
+    // O leitor lê sem parar durante as 50 gravações, inclusive enquanto o
+    // temporário é escrito, e só pula a leitura durante o próprio rename. Ali não
+    // há estado intermediário para ver (o rename é atômico), e no Windows o
+    // leitor com o arquivo aberto faz o rename falhar (EPERM). Num laço apertado,
+    // isso derrubava cerca de 30% das tentativas, e com a máquina carregada cabiam
+    // só umas 5 nos ~2 s: às vezes a gravação desistia. As novas tentativas com o
+    // arquivo preso têm teste próprio (acima).
     const file = runtimeFilePath(tmp.dir);
+    let renaming = 0;
+    const renameFile = async (from, to) => {
+      renaming++;
+      try {
+        await rename(from, to);
+      } finally {
+        renaming--;
+      }
+    };
     let reads = 0;
     let stop = false;
     const reader = (async () => {
       while (!stop) {
-        const text = readFileSync(file, 'utf8');
-        JSON.parse(text); // lança se o arquivo estiver incompleto
-        reads++;
+        if (renaming === 0) {
+          const text = readFileSync(file, 'utf8');
+          JSON.parse(text); // lança se o arquivo estiver incompleto
+          reads++;
+        }
         await new Promise((resolve) => setImmediate(resolve));
       }
     })();
-    for (let i = 0; i < 50; i++) await writeRuntimeFile(tmp.dir, sample({ port: 51000 + i }));
+    for (let i = 0; i < 50; i++) await writeRuntimeFile(tmp.dir, sample({ port: 51000 + i }), { rename: renameFile });
     stop = true;
     await reader;
     assert.ok(reads > 0);

@@ -113,9 +113,10 @@ function parseRuntimeInfo(text) {
  * diretório de dados se preciso. No Linux e no macOS, só o dono lê o arquivo.
  * @param {string} dataDir
  * @param {RuntimeInfo} info
+ * @param {{ rename?: (from: string, to: string) => Promise<void> }} [deps]   trocado só nos testes
  * @returns {Promise<void>}
  */
-export async function writeRuntimeFile(dataDir, info) {
+export async function writeRuntimeFile(dataDir, info, { rename: renameFile = rename } = {}) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const target = runtimeFilePath(dataDir);
   const temp = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
@@ -124,7 +125,7 @@ export async function writeRuntimeFile(dataDir, info) {
     await writeFile(temp, `${JSON.stringify({ port, token, pid, version, startedAt }, null, 2)}\n`, {
       mode: 0o600,
     });
-    await renameWithRetry(temp, target);
+    await renameWithRetry(temp, target, renameFile);
   } catch (err) {
     await rm(temp, { force: true }).catch(() => {});
     throw err;
@@ -216,13 +217,14 @@ export function isPidAlive(pid) {
 /**
  * @param {string} from
  * @param {string} to
+ * @param {(from: string, to: string) => Promise<void>} renameFile
  */
-async function renameWithRetry(from, to) {
+async function renameWithRetry(from, to, renameFile) {
   const deadline = Date.now() + RENAME_RETRY_WINDOW_MS;
   let delay = RENAME_FIRST_DELAY_MS;
   for (;;) {
     try {
-      await rename(from, to);
+      await renameFile(from, to);
       return;
     } catch (err) {
       const code = /** @type {any} */ (err)?.code;
