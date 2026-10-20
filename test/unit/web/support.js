@@ -3,8 +3,8 @@
 
 import { readFileSync } from 'node:fs';
 
-/** Snapshots escritos à mão a partir da seção 9 do modelo de eventos (T10a). */
-export const SNAPSHOT_NAMES = Object.freeze(['neutro', 'primeira-luz', 'ticket-completo']);
+/** Snapshots escritos à mão a partir da seção 9 do modelo de eventos (T10a; ticket-entregue no T12b). */
+export const SNAPSHOT_NAMES = Object.freeze(['neutro', 'primeira-luz', 'ticket-completo', 'ticket-entregue']);
 
 /** Vetor de XSS usado em todos os testes de escape. */
 export const XSS = '<img src=x onerror=alert(1)>';

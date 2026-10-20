@@ -215,6 +215,28 @@ describe('connect: mensagens', () => {
     assert.equal(ctx.http.calls.length, 0);
   });
 
+  it('retomada por Last-Event-ID (T9b): na mesma execução chegam só os updates que faltaram, sem snapshot nem /api/state', () => {
+    const ctx = live();
+    ctx.source().emit('update', update(122));
+    const source = ctx.source();
+    source.drop();
+    assert.equal(ctx.connection.state(), 'reconnecting');
+    // O navegador reconecta sozinho, no mesmo EventSource, mandando o Last-Event-ID.
+    source.open();
+    source.emit('hello', { protocol: 1, runId: 'run-a', seq: 124, serverVersion: '0.1.0' });
+    source.emit('update', update(123));
+    source.emit('update', update(124));
+    assert.equal(ctx.connection.state(), 'live');
+    assert.equal(ctx.instances.length, 1, 'nenhum EventSource novo');
+    assert.equal(ctx.http.calls.length, 0, 'sem buscar /api/state');
+    assert.equal(ctx.store.runId, 'run-a');
+    assert.equal(ctx.store.seq, 124);
+    const session = ctx.store.sessions.get(SESSION.id);
+    assert.equal(session?.label, 'passo 124');
+    assert.deepEqual(session?.feed.slice(-3).map((e) => e.seq), [122, 123, 124]);
+    assert.equal(session?.feed.length, SESSION.feed.length + 3);
+  });
+
   it('session-removed em ordem tira a sessão', () => {
     const ctx = live();
     ctx.source().emit('session-removed', { seq: 122, sessionId: SESSION.id });

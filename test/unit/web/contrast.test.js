@@ -53,7 +53,16 @@ const PAIRS = [
   ['--muted', '--room-base', NORMAL, 'nome da sala na cena'],
   ...['--c-orq', '--c-arq', '--c-dev', '--c-tes', '--c-doc', '--c-idle'].map((tint) =>
     ['--muted', `${tint}*0.12/--room-base`, NORMAL, `nome da sala sobre o topo tingido (${tint})`]),
+  // Filtros do feed (T11b): chip apertado, bloco da equipe com o mouse em cima e
+  // bloco ou instância apertados (tingidos com a cor do papel; 10% cobre os 9%
+  // do bloco e os 6% da instância com o mouse em cima).
+  ['--text', '--accent-soft/--surface', NORMAL, 'chip de filtro apertado ("Todos")'],
+  ['--text', '--surface-2', NORMAL, 'bloco da equipe com o mouse em cima'],
+  ['--warn-text', '--surface-2', NORMAL, 'agente aguardando, com o mouse no bloco'],
+  ...['--c-orq', '--c-arq', '--c-dev', '--c-tes', '--c-doc', '--c-aux'].flatMap((tint) =>
+    ['--text', '--muted', '--warn-text'].map((text) => [text, `${tint}*0.10/--surface`, NORMAL, `bloco ou instância apertados no filtro (${tint})`])),
   ['--bubble-fg', '--bubble-bg', NORMAL, 'texto do balão na cena'],
+  ['--on-warn', '--warn', NORMAL, 'balão de aprovação e selo "!" na cena (T12b)'],
   ['--text', '--room-base', NORMAL, '"+N" e nome do token na cena'],
   ['--surface', '--good', GRAPHIC, 'marca ✓ da etapa concluída'],
 ];

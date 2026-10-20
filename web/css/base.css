@@ -32,6 +32,8 @@ kbd { padding: 1px 6px; font: 11px/1.4 var(--font-mono); background: var(--surfa
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .35s; }
 
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+/* Entrada das linhas novas do feed (mockup, slidein). */
+@keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 /* Pulso em anel, para destacar sem mexer na opacidade do texto (contraste, ADR 0009). */
 @keyframes pending-ring { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px var(--warn-soft); } }
 

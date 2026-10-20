@@ -1,7 +1,12 @@
 // @ts-check
-// Cena estática (T12a; o T12b acrescenta animações e os estados do T8).
+// Cena (T12a; T12b: estados do T8 e as animações em web/js/fx.js).
 // Portada da cena do mockup (mockups/painel.js e painel.css): as seis salas do
 // tema, um token por instância, balão com a ação atual e a copa (taverna).
+//
+// T12b: agente aguardando aprovação ganha o selo "!" e o balão de aprovação
+// (mockup); a sala de testes mostra um bug por falha em aberto (`bugs.open`),
+// até MAX_BUGS_SHOWN e "+N" além disso, e fica em alarme enquanto houver bugs.
+// Os ícones dos bugs vêm do CSS do tema (themes.css, --fx-bug).
 //
 // Regras (modelo de eventos, seção 6, "Voltou para a copa"; ADR 0007):
 // - a sessão principal fica sempre na sala do orquestrador (hq), mesmo ociosa;
@@ -53,6 +58,19 @@ export const ROOM_OWNER = Object.freeze(/** @type {Record<RoomId, RoleId|null>} 
 
 /** Tokens desenhados por sala; o resto vira "+N". */
 export const MAX_TOKENS_PER_ROOM = 3;
+
+/** Bugs desenhados na sala de testes; o resto vira "+N" (plano, T12b). */
+export const MAX_BUGS_SHOWN = 4;
+
+/**
+ * Bugs em aberto da sessão (`bugs.open`), como inteiro não negativo.
+ * @param {SessionState|null} session
+ * @returns {number}
+ */
+export function openBugs(session) {
+  const open = session?.bugs?.open;
+  return typeof open === 'number' && Number.isFinite(open) && open > 0 ? Math.floor(open) : 0;
+}
 
 /**
  * @typedef {object} TokenPlacement
@@ -142,9 +160,11 @@ export function sceneLayout(session) {
 export function renderScene({ session, theme }) {
   const h = createHelpers(theme, session?.agents ?? []);
   const layout = sceneLayout(session);
+  const bugs = openBugs(session);
+  const bugText = bugs > 0 ? `, ${bugs} ${bugs === 1 ? 'falha de teste em aberto' : 'falhas de teste em aberto'}` : '';
   return `<div class="loop" aria-hidden="true"></div>` +
-    `<div class="rooms" role="img" aria-label="${esc(sceneSummary(layout, theme))}">` +
-    layout.map((room) => roomHTML(room, theme, h)).join('') +
+    `<div class="rooms" role="img" aria-label="${esc(`${sceneSummary(layout, theme)}${bugText}`)}">` +
+    layout.map((room) => roomHTML(room, theme, h, room.id === 'test' ? bugs : 0)).join('') +
     `</div>`;
 }
 
@@ -175,22 +195,40 @@ export function sceneSummary(layout, theme) {
  * @param {RoomLayout} room
  * @param {Theme} theme
  * @param {ThemeHelpers} h
+ * @param {number} bugs   bugs em aberto (só na sala de testes)
  * @returns {string}
  */
-function roomHTML(room, theme, h) {
+function roomHTML(room, theme, h, bugs) {
   const words = theme.rooms[room.id];
   const owner = ROOM_OWNER[room.id];
   const more = room.overflow > 0
     ? `<span class="room-more" title="${room.overflow} ${room.overflow === 1 ? 'agente a mais' : 'agentes a mais'} nesta sala">+${room.overflow}</span>`
     : '';
-  return `<div class="room${room.active ? ' active' : ''}" data-room="${room.id}"${owner ? ` data-agent="${owner}"` : ''} data-count="${room.tokens.length}" data-layout="${room.layout}">` +
+  const classes = `room${room.active ? ' active' : ''}${bugs > 0 ? ' alarm' : ''}`;
+  return `<div class="${classes}" data-room="${room.id}"${owner ? ` data-agent="${owner}"` : ''} data-count="${room.tokens.length}" data-layout="${room.layout}">` +
     `<div class="room-label"><span class="ri">${esc(words.icon)}</span>${esc(words.name)}</div>` +
     // Com "+N", o selo ocupa o canto da primeira decoração.
     (more ? '' : `<span class="deco d1">${esc(words.deco[0])}</span>`) +
     `<span class="deco d2">${esc(words.deco[1])}</span>` +
+    bugsHTML(bugs) +
     room.tokens.map((token) => tokenHTML(token, theme, h)).join('') +
     more +
     `</div>`;
+}
+
+/**
+ * Bugs da sala de testes: um por falha em aberto, até MAX_BUGS_SHOWN, e "+N".
+ * Decorativos: a contagem vai no resumo da cena para leitores de tela.
+ * @param {number} count
+ * @returns {string}
+ */
+function bugsHTML(count) {
+  if (count <= 0) return '';
+  const shown = Math.min(count, MAX_BUGS_SHOWN);
+  let html = '';
+  for (let index = 0; index < shown; index++) html += `<span class="bug" data-bug="${index}"><i></i></span>`;
+  if (count > shown) html += `<span class="bug-more">+${count - shown}</span>`;
+  return html;
 }
 
 /**
@@ -210,9 +248,11 @@ function tokenHTML({ agent, slot }, theme, h) {
   const bubble = status === 'working' || status === 'waiting'
     ? `<div class="bubble"><span class="bubble-text">${esc(theme.actionText(agent, h))}</span></div>`
     : '';
+  // Selo "!" de aprovação pendente (mockup, .tok-alert).
+  const alert = status === 'waiting' ? '<i class="tok-alert" aria-hidden="true">!</i>' : '';
   return `<div class="token ${esc(status)}" data-key="${esc(agent.key)}" data-agent="${esc(role)}" data-slot="${slot}" title="${esc(title)}">` +
     bubble +
-    `<div class="tok-av">${esc(words.icon)}</div>` +
+    `<div class="tok-av">${esc(words.icon)}${alert}</div>` +
     `<div class="tok-name">${esc(name)}</div>` +
     `</div>`;
 }

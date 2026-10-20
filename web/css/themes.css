@@ -4,7 +4,12 @@
    Contraste (complemento do ADR 0009): os tons vivos (--warn, --bad, --good,
    --gold, --faint, --c-*) ficam em pontos, bordas, barras, fundos e ícones.
    Texto usa --text, --muted, --accent ou as variáveis --*-text, conferidas por
-   test/unit/web/contrast.test.js (4,5:1 contra o pior fundo). */
+   test/unit/web/contrast.test.js (4,5:1 contra o pior fundo).
+
+   Cena animada (T12b): --on-warn é o texto sobre --warn (balão e selo "!" de
+   aprovação); --fx-message, --fx-bug e --fx-burst-1 a 4 são os ícones do
+   envelope, do bug e do confete de cada tema (mockup, painel-temas.js).
+   Comentários ficam fora dos blocos de variáveis, que o teste de contraste lê. */
 
 :root[data-theme="escritorio"] {
   color-scheme: light;
@@ -26,6 +31,9 @@
   --path: #c4cad4;
   --bubble-bg: #101828; --bubble-fg: #ffffff;
   --title-font: var(--font-display);
+  --on-warn: #241400;
+  --fx-message: "📨"; --fx-bug: "🐛";
+  --fx-burst-1: "🎉"; --fx-burst-2: "🎊"; --fx-burst-3: "✨"; --fx-burst-4: "⭐";
 }
 
 :root[data-theme="guilda"] {
@@ -52,6 +60,9 @@
   --path: rgba(224, 178, 91, .38);
   --bubble-bg: #f3e9d6; --bubble-fg: #1a1611;
   --title-font: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  --on-warn: #241400;
+  --fx-message: "📜"; --fx-bug: "👹";
+  --fx-burst-1: "🪙"; --fx-burst-2: "✨"; --fx-burst-3: "💎"; --fx-burst-4: "⭐";
 }
 
 /* Cor de cada papel, para quem tiver data-agent="<papel>". */

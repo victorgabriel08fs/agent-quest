@@ -65,7 +65,17 @@
 
 /* ===== Equipe ===== */
 .roster { display: grid; gap: 2px; margin: 0; padding: 0 8px 8px; list-style: none; }
-.member { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; padding: 10px; border: 1px solid transparent; border-radius: 14px; }
+/* Cada bloco filtra a atividade pelo papel, e cada instância pela instância
+   (T11b, como o membro-botão do mockup). O botão de verdade é o nome do papel;
+   o clique no resto do bloco vale como clique nele (main.js). */
+.member { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; padding: 10px; border: 1px solid transparent; border-radius: 14px; cursor: pointer; transition: background .2s, border-color .2s; }
+.member:hover { background: var(--surface-2); }
+.member.is-filter { background: color-mix(in srgb, var(--agent) 9%, var(--surface)); border-color: color-mix(in srgb, var(--agent) 40%, transparent); }
+.m-pick { flex: 0 1 auto; min-width: 0; padding: 0; text-align: left; background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.inst-pick { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: calc(100% + 12px); min-width: 0; margin: -4px -6px; padding: 4px 6px; text-align: left; background: none; border: 1px solid transparent; border-radius: 10px; cursor: pointer; transition: background .2s, border-color .2s; }
+.inst-pick.is-static { cursor: inherit; }
+button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--surface)); }
+.inst-pick[aria-pressed="true"] { background: color-mix(in srgb, var(--agent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--agent) 45%, transparent); }
 .avatar { position: relative; align-self: start; width: 48px; height: 48px; padding: 3px; background: color-mix(in srgb, var(--agent) 45%, var(--surface-3)); border-radius: 50%; }
 .avatar > span { display: grid; place-items: center; width: 100%; height: 100%; font-size: 21px; background: color-mix(in srgb, var(--agent) 15%, var(--surface)); border: 2px solid var(--surface); border-radius: 50%; }
 .status-dot { position: absolute; right: -1px; bottom: -1px; width: 14px; height: 14px; background: var(--faint); border: 3px solid var(--surface); border-radius: 50%; }
@@ -77,10 +87,10 @@
 .m-count { flex: none; margin-left: auto; padding: 1px 8px; font-size: 11px; font-weight: 700; color: var(--text); background: color-mix(in srgb, var(--agent) 18%, transparent); border-radius: 99px; }
 .m-sub { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .m-role { font-size: 11.5px; color: var(--muted); }
-.m-action { overflow: hidden; margin-top: 3px; font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+.m-action { display: block; overflow: hidden; margin-top: 3px; font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
 .member.idle > .m-body > .m-action { color: var(--muted); }
-.instances { display: grid; gap: 8px; margin: 2px 0 0; padding: 0; list-style: none; }
-.inst { display: grid; gap: 1px; min-width: 0; }
+.instances { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; }
+.inst { min-width: 0; }
 .instances.multi .inst + .inst { padding-top: 8px; border-top: 1px dashed var(--border); }
 .i-label { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 3px; font-size: 12px; color: var(--muted); }
 .i-dot { display: none; flex: none; width: 8px; height: 8px; background: var(--faint); border-radius: 50%; }
@@ -142,8 +152,19 @@
 .onboarding .health[data-state="error"] { color: var(--bad-text); }
 
 /* ===== Atividade ===== */
+/* Chips de filtro (T11b), portados do mockup: "Todos" e um por papel. */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; border-bottom: 1px solid var(--border); }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; cursor: pointer; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.chip-ag { width: 30px; padding: 0; font-size: 15px; background: color-mix(in srgb, var(--agent) 10%, var(--surface)); }
+.chip-ag[aria-pressed="true"] { background: color-mix(in srgb, var(--agent) 22%, var(--surface)); border-color: var(--agent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent) 25%, transparent); }
 .entries { flex: 1; min-height: 0; margin: 0; padding: 8px 8px 12px; overflow-y: auto; list-style: none; border-top: 1px solid var(--border); scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+.filters:not([hidden]) ~ .entries { border-top: 0; }
+.entries:empty { display: none; }
 .entry { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 8px; border-radius: 12px; }
+/* Linha nova entrando no topo, com a animação do mockup (slidein). */
+.entry.is-new { animation: slidein .35s ease-out; }
 .entry.bad { background: var(--bad-soft); }
 .entry.good { background: var(--good-soft); }
 .entry.warn { background: var(--warn-soft); }
@@ -172,4 +193,10 @@
 @media (max-width: 640px) {
   .q-title { font-size: 20px; }
   .seg button { padding: 0 10px; }
+}
+/* Movimento reduzido: o base.css já desliga todas as animações; aqui fica
+   explícito para as do feed e da equipe. */
+@media (prefers-reduced-motion: reduce) {
+  .entry.is-new { animation: none; }
+  .member, .inst-pick { transition: none; }
 }

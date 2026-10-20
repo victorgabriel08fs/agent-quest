@@ -1,0 +1,580 @@
+{
+  "seq": 328,
+  "sessions": [
+    {
+      "id": "9c8b7a65-4321-4abc-9def-0123456789ab",
+      "project": {
+        "key": "d:/projetos/agents-quest",
+        "name": "agents-quest",
+        "dir": "D:\\projetos\\agents-quest"
+      },
+      "label": "Implementar a ingestão",
+      "client": "terminal",
+      "status": "active",
+      "startedAt": 1792342800000,
+      "lastEventAt": 1792343731000,
+      "agents": [
+        {
+          "key": "main",
+          "agentId": null,
+          "agentType": null,
+          "role": "orq",
+          "label": "",
+          "status": "idle",
+          "finished": false,
+          "background": false,
+          "parentKey": null,
+          "activity": {
+            "kind": "delegate",
+            "category": null,
+            "tool": "Agent",
+            "target": "tester",
+            "detail": "testar a ingestão",
+            "state": "done",
+            "at": 1792343660000
+          },
+          "waitingFor": null,
+          "health": {
+            "ok": 9,
+            "total": 10
+          },
+          "context": null,
+          "startedAt": 1792342800000,
+          "lastEventAt": 1792343731000
+        },
+        {
+          "key": "a6a1b2c3d4e5f6a70",
+          "agentId": "a6a1b2c3d4e5f6a70",
+          "agentType": "arquiteto",
+          "role": "arq",
+          "label": "revisar o ADR anterior",
+          "status": "idle",
+          "finished": true,
+          "background": false,
+          "parentKey": "main",
+          "activity": {
+            "kind": "tool",
+            "category": "read",
+            "tool": "Read",
+            "target": "docs/adr/0005-estado-em-memoria.md",
+            "detail": null,
+            "state": "done",
+            "at": 1792343000000
+          },
+          "waitingFor": null,
+          "health": {
+            "ok": 3,
+            "total": 3
+          },
+          "context": null,
+          "startedAt": 1792342950000,
+          "lastEventAt": 1792343100000
+        },
+        {
+          "key": "a7a2b3c4d5e6f7a81",
+          "agentId": "a7a2b3c4d5e6f7a81",
+          "agentType": "arquiteto",
+          "role": "arq",
+          "label": "desenhar a ingestão",
+          "status": "idle",
+          "finished": true,
+          "background": false,
+          "parentKey": "main",
+          "activity": {
+            "kind": "tool",
+            "category": "write",
+            "tool": "Write",
+            "target": "docs/adr/0011-ingestao.md",
+            "detail": null,
+            "state": "done",
+            "at": 1792343490000
+          },
+          "waitingFor": null,
+          "health": {
+            "ok": 5,
+            "total": 5
+          },
+          "context": null,
+          "startedAt": 1792343410000,
+          "lastEventAt": 1792343500000
+        },
+        {
+          "key": "a8a3b4c5d6e7f8a92",
+          "agentId": "a8a3b4c5d6e7f8a92",
+          "agentType": "dev-backend",
+          "role": "dev",
+          "label": "implementar a ingestão",
+          "status": "idle",
+          "finished": true,
+          "background": false,
+          "parentKey": "main",
+          "activity": {
+            "kind": "tool",
+            "category": "edit",
+            "tool": "Edit",
+            "target": "server/ingest/envelope.js",
+            "detail": null,
+            "state": "done",
+            "at": 1792343640000
+          },
+          "waitingFor": null,
+          "health": {
+            "ok": 8,
+            "total": 10
+          },
+          "context": null,
+          "startedAt": 1792343505000,
+          "lastEventAt": 1792343650000
+        },
+        {
+          "key": "a9a4b5c6d7e8f9a03",
+          "agentId": "a9a4b5c6d7e8f9a03",
+          "agentType": "tester",
+          "role": "tes",
+          "label": "testar a ingestão",
+          "status": "idle",
+          "finished": true,
+          "background": false,
+          "parentKey": "main",
+          "activity": {
+            "kind": "tool",
+            "category": "test",
+            "tool": "Bash",
+            "target": "npm run test:e2e",
+            "detail": "Rodar os testes de ponta a ponta",
+            "state": "done",
+            "at": 1792343702000
+          },
+          "waitingFor": null,
+          "health": {
+            "ok": 4,
+            "total": 4
+          },
+          "context": null,
+          "startedAt": 1792343662000,
+          "lastEventAt": 1792343730000
+        }
+      ],
+      "roster": [
+        "orq",
+        "arq",
+        "dev",
+        "tes",
+        "doc"
+      ],
+      "quest": {
+        "id": "pr-0003",
+        "n": 3,
+        "title": "Implementar a ingestão",
+        "implicit": false,
+        "status": "done",
+        "startedAt": 1792343400000,
+        "endedAt": 1792343731000,
+        "phases": {
+          "design": "done",
+          "code": "done",
+          "test": "done",
+          "docs": "pending"
+        },
+        "actions": 47,
+        "error": null
+      },
+      "counters": {
+        "questsDone": 3,
+        "bugsCrushed": 5,
+        "pendingApprovals": 0
+      },
+      "bugs": {
+        "open": 0,
+        "lastRun": {
+          "ok": true,
+          "passed": 14,
+          "failed": 0,
+          "total": 14,
+          "framework": "node:test",
+          "at": 1792343729000
+        }
+      },
+      "feed": [
+        {
+          "id": "w7x2m:300",
+          "seq": 300,
+          "ts": 1792342800000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": null,
+          "kind": "session.started",
+          "data": {
+            "source": "resume",
+            "projectName": "agents-quest"
+          }
+        },
+        {
+          "id": "w7x2m:301",
+          "seq": 301,
+          "ts": 1792342940000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "quest.started",
+          "data": {
+            "questId": "pr-0002",
+            "n": 2,
+            "title": "Desenhar a ingestão",
+            "implicit": false
+          }
+        },
+        {
+          "id": "w7x2m:302",
+          "seq": 302,
+          "ts": 1792343185000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "quest.finished",
+          "data": {
+            "questId": "pr-0002",
+            "n": 2,
+            "outcome": "done",
+            "error": null,
+            "durationMs": 245000,
+            "actions": 18
+          }
+        },
+        {
+          "id": "w7x2m:303",
+          "seq": 303,
+          "ts": 1792343400000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "quest.started",
+          "data": {
+            "questId": "pr-0003",
+            "n": 3,
+            "title": "Implementar a ingestão",
+            "implicit": false
+          }
+        },
+        {
+          "id": "w7x2m:304",
+          "seq": 304,
+          "ts": 1792343405000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "agent.delegated",
+          "data": {
+            "toolUseId": "toolu_02AAAAAAAAAAAAAAAAAAAAAA",
+            "toType": "arquiteto",
+            "toRole": "arq",
+            "description": "desenhar a ingestão",
+            "background": false
+          }
+        },
+        {
+          "id": "w7x2m:305",
+          "seq": 305,
+          "ts": 1792343410000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a7a2b3c4d5e6f7a81",
+          "kind": "quest.phase",
+          "data": {
+            "questId": "pr-0003",
+            "phase": "design",
+            "state": "active"
+          }
+        },
+        {
+          "id": "w7x2m:306",
+          "seq": 306,
+          "ts": 1792343450000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a7a2b3c4d5e6f7a81",
+          "kind": "permission.requested",
+          "data": {
+            "tool": "Write",
+            "category": "write",
+            "target": "docs/adr/0011-ingestao.md"
+          }
+        },
+        {
+          "id": "w7x2m:307",
+          "seq": 307,
+          "ts": 1792343460000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a7a2b3c4d5e6f7a81",
+          "kind": "permission.resolved",
+          "data": {
+            "outcome": "approved",
+            "by": "user"
+          }
+        },
+        {
+          "id": "w7x2m:308",
+          "seq": 308,
+          "ts": 1792343500000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a7a2b3c4d5e6f7a81",
+          "kind": "agent.finished",
+          "data": {
+            "outcome": "done"
+          }
+        },
+        {
+          "id": "w7x2m:309",
+          "seq": 309,
+          "ts": 1792343500000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a7a2b3c4d5e6f7a81",
+          "kind": "quest.phase",
+          "data": {
+            "questId": "pr-0003",
+            "phase": "design",
+            "state": "done"
+          }
+        },
+        {
+          "id": "w7x2m:310",
+          "seq": 310,
+          "ts": 1792343504000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "agent.delegated",
+          "data": {
+            "toolUseId": "toolu_02BBBBBBBBBBBBBBBBBBBBBB",
+            "toType": "dev-backend",
+            "toRole": "dev",
+            "description": "implementar a ingestão",
+            "background": false
+          }
+        },
+        {
+          "id": "w7x2m:311",
+          "seq": 311,
+          "ts": 1792343560000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a8a3b4c5d6e7f8a92",
+          "kind": "permission.requested",
+          "data": {
+            "tool": "Bash",
+            "category": "bash",
+            "target": "npm install"
+          }
+        },
+        {
+          "id": "w7x2m:312",
+          "seq": 312,
+          "ts": 1792343570000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a8a3b4c5d6e7f8a92",
+          "kind": "permission.resolved",
+          "data": {
+            "outcome": "unknown",
+            "by": "inferred"
+          }
+        },
+        {
+          "id": "w7x2m:313",
+          "seq": 313,
+          "ts": 1792343580000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a8a3b4c5d6e7f8a92",
+          "kind": "permission.resolved",
+          "data": {
+            "outcome": "denied",
+            "by": "auto"
+          }
+        },
+        {
+          "id": "w7x2m:314",
+          "seq": 314,
+          "ts": 1792343600000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "context.compacted",
+          "data": {
+            "trigger": "auto"
+          }
+        },
+        {
+          "id": "w7x2m:315",
+          "seq": 315,
+          "ts": 1792343650000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a8a3b4c5d6e7f8a92",
+          "kind": "agent.finished",
+          "data": {
+            "outcome": "unknown"
+          }
+        },
+        {
+          "id": "w7x2m:316",
+          "seq": 316,
+          "ts": 1792343650000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a8a3b4c5d6e7f8a92",
+          "kind": "quest.phase",
+          "data": {
+            "questId": "pr-0003",
+            "phase": "code",
+            "state": "done"
+          }
+        },
+        {
+          "id": "w7x2m:317",
+          "seq": 317,
+          "ts": 1792343660000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "agent.delegated",
+          "data": {
+            "toolUseId": "toolu_02CCCCCCCCCCCCCCCCCCCCCC",
+            "toType": "tester",
+            "toRole": "tes",
+            "description": "testar a ingestão",
+            "background": false
+          }
+        },
+        {
+          "id": "w7x2m:318",
+          "seq": 318,
+          "ts": 1792343680000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "tool.started",
+          "data": {
+            "toolUseId": "toolu_02DDDDDDDDDDDDDDDDDDDDDD",
+            "tool": "Bash",
+            "category": "test",
+            "target": "npm test",
+            "detail": "Rodar a suíte"
+          }
+        },
+        {
+          "id": "w7x2m:319",
+          "seq": 319,
+          "ts": 1792343700000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "test.finished",
+          "data": {
+            "toolUseId": "toolu_02DDDDDDDDDDDDDDDDDDDDDD",
+            "ok": true,
+            "passed": 14,
+            "failed": 0,
+            "total": 14,
+            "framework": "node:test"
+          }
+        },
+        {
+          "id": "w7x2m:320",
+          "seq": 320,
+          "ts": 1792343710000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "tool.started",
+          "data": {
+            "toolUseId": "toolu_02EEEEEEEEEEEEEEEEEEEEEE",
+            "tool": "Bash",
+            "category": "test",
+            "target": "npm test",
+            "detail": "Rodar a suíte de novo"
+          }
+        },
+        {
+          "id": "w7x2m:321",
+          "seq": 321,
+          "ts": 1792343730000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "test.finished",
+          "data": {
+            "toolUseId": "toolu_02EEEEEEEEEEEEEEEEEEEEEE",
+            "ok": false,
+            "passed": 12,
+            "failed": 2,
+            "total": 14,
+            "framework": "node:test"
+          }
+        },
+        {
+          "id": "w7x2m:322",
+          "seq": 322,
+          "ts": 1792343760000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "permission.requested",
+          "data": {
+            "tool": "Bash",
+            "category": "bash",
+            "target": "npm run test:e2e"
+          }
+        },
+        {
+          "id": "w7x2m:324",
+          "seq": 324,
+          "ts": 1792343705000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "permission.resolved",
+          "data": {
+            "outcome": "approved",
+            "by": "user"
+          }
+        },
+        {
+          "id": "w7x2m:325",
+          "seq": 325,
+          "ts": 1792343729000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "test.finished",
+          "data": {
+            "toolUseId": "toolu_01W7X2MTESTE2E0000000000",
+            "ok": true,
+            "passed": 14,
+            "failed": 0,
+            "total": 14,
+            "framework": "node:test"
+          }
+        },
+        {
+          "id": "w7x2m:326",
+          "seq": 326,
+          "ts": 1792343730000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "agent.finished",
+          "data": {
+            "outcome": "done"
+          }
+        },
+        {
+          "id": "w7x2m:327",
+          "seq": 327,
+          "ts": 1792343730000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "a9a4b5c6d7e8f9a03",
+          "kind": "quest.phase",
+          "data": {
+            "questId": "pr-0003",
+            "phase": "test",
+            "state": "done"
+          }
+        },
+        {
+          "id": "w7x2m:328",
+          "seq": 328,
+          "ts": 1792343731000,
+          "sessionId": "9c8b7a65-4321-4abc-9def-0123456789ab",
+          "agentKey": "main",
+          "kind": "quest.finished",
+          "data": {
+            "questId": "pr-0003",
+            "n": 3,
+            "outcome": "done",
+            "error": null,
+            "durationMs": 331000,
+            "actions": 47
+          }
+        }
+      ]
+    }
+  ]
+}

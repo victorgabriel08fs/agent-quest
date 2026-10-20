@@ -9,8 +9,14 @@
 // redesenhos pedidos pela conexão são agrupados por quadro de animação.
 // Trocar de tema muda `data-theme` e refaz os textos, sem tocar no estado nem
 // reabrir a conexão (ADR 0009).
+//
+// Filtros do feed (T11b): o filtro é preferência de quem observa e vale para a
+// sessão em que foi escolhido. A lista do feed é atualizada no lugar
+// (views/feed.js, `syncFeedList`), para as linhas novas entrarem no topo com a
+// animação do mockup sem recriar as outras.
 
 import { connect, frameBatcher } from './connection.js';
+import { createSceneFx } from './fx.js';
 import { renderScene } from './scene.js';
 import { resolveSelectedId, sessionList } from './selectors.js';
 import { createStore } from './store.js';
@@ -18,7 +24,7 @@ import { resolveThemeId, themeIdForKey } from './themes/contract.js';
 import escritorio from './themes/escritorio.js';
 import guilda from './themes/guilda.js';
 import { renderEmpty } from './views/empty.js';
-import { renderFeed } from './views/feed.js';
+import { ALL, feedModel, nextFilter, resolveFilter, syncFeedList } from './views/feed.js';
 import { renderParty } from './views/party.js';
 import { renderQuest } from './views/quest.js';
 import { sessionOptions, syncSessionSelect } from './views/sessions.js';
@@ -34,6 +40,8 @@ const THEME_IDS = THEMES.map((theme) => theme.id);
 const STORAGE_KEY = 'agent-quest-theme';
 const HEALTH_REFRESH_MS = 15_000;
 const CLOCK_MS = 1_000;
+/** Tempo máximo em que uma região fica sem redesenhar com um botão apertado. */
+const HOLD_MAX_MS = 1_500;
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -52,11 +60,18 @@ const ui = {
   toggle: byId('theme-toggle'),
   party: byId('party'),
   questSlot: byId('quest-slot'),
-  scene: byId('scene'),
-  feed: byId('feed'),
+  sceneStage: byId('scene-stage'),
+  sceneFx: byId('scene-fx'),
+  feedHead: byId('feed-head'),
+  feedFilters: byId('feed-filters'),
+  feedEmpty: byId('feed-empty'),
+  feedEntries: byId('feed-entries'),
 };
 
 const store = createStore();
+
+/** Animações da cena; com prefers-reduced-motion, nenhuma (T12b). */
+const sceneFx = createSceneFx({ stage: ui.sceneStage, layer: ui.sceneFx, motion: () => !reducedMotion.matches });
 
 /** Preferências de quem observa e o que não vem do SSE. */
 const app = {
@@ -70,6 +85,8 @@ const app = {
   healthState: 'loading',
   /** @type {ConnectionState} */
   connection: 'connecting',
+  /** Filtro do feed (T11b) e a sessão em que ele foi escolhido. */
+  filter: { sessionId: /** @type {string|null} */ (null), value: ALL },
 };
 
 const currentTheme = () => THEMES.find((theme) => theme.id === app.themeId) ?? THEMES[0];
@@ -85,6 +102,18 @@ function currentView() {
   return { list, session: app.selectedId === null ? null : store.sessions.get(app.selectedId) ?? null };
 }
 
+/**
+ * Filtro do feed em vigor: só na sessão em que foi escolhido, e enquanto o
+ * controle dele existir (views/feed.js, `resolveFilter`).
+ * @param {SessionState|null} session
+ * @returns {string}
+ */
+function currentFilter(session) {
+  const value = session && session.id === app.filter.sessionId ? resolveFilter(session, app.filter.value) : ALL;
+  if (value === ALL) app.filter = { sessionId: null, value: ALL };
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Desenho
 // ---------------------------------------------------------------------------
@@ -93,15 +122,70 @@ function currentView() {
 const lastHTML = new WeakMap();
 
 /**
+ * Regiões com botões que estão sendo apertados. Elas não são redesenhadas até
+ * o botão ser solto: o clique chegaria a um elemento já trocado e se perderia.
+ * @type {Set<Element>}
+ */
+const held = new Set();
+/** @type {ReturnType<typeof setTimeout>|undefined} */
+let holdTimer;
+
+/**
  * Escreve o HTML gerado pelas views (todo texto dinâmico já escapado) só quando
- * ele muda.
+ * ele muda. Se o foco estava num botão de filtro da região, ele volta para o
+ * botão equivalente no HTML novo (o teclado não perde o lugar a cada update).
  * @param {Element} element
  * @param {string} html
  */
 function setHTML(element, html) {
-  if (lastHTML.get(element) === html) return;
+  if (held.has(element) || lastHTML.get(element) === html) return;
   lastHTML.set(element, html);
+  const active = document.activeElement;
+  const focusKey = active && active !== element && element.contains(active) ? active.getAttribute('data-filter') : null;
   element.innerHTML = html;
+  if (focusKey !== null) {
+    const next = [...element.querySelectorAll('[data-filter]')].find((node) => node.getAttribute('data-filter') === focusKey);
+    if (next instanceof HTMLElement) next.focus({ preventScroll: true });
+  }
+}
+
+/**
+ * Cria um elemento a partir do HTML de uma view, pelo `setHTML` (num <template>,
+ * fora da página).
+ * @param {string} html
+ * @returns {HTMLElement}
+ */
+function elementFromHTML(html) {
+  const template = document.createElement('template');
+  setHTML(template, html);
+  const node = template.content.firstElementChild;
+  if (!(node instanceof HTMLElement)) throw new Error('HTML de linha do feed sem elemento');
+  return node;
+}
+
+/**
+ * Segura o redesenho de uma região enquanto um botão dela está apertado (mouse,
+ * toque ou teclado), por no máximo HOLD_MAX_MS.
+ * @param {Element} element
+ */
+function holdWhilePressed(element) {
+  const hold = () => {
+    held.add(element);
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(releaseHeld, HOLD_MAX_MS);
+  };
+  element.addEventListener('pointerdown', hold);
+  element.addEventListener('keydown', (event) => {
+    const key = /** @type {KeyboardEvent} */ (event).key;
+    if (key === ' ' || key === 'Enter') hold();
+  });
+}
+
+function releaseHeld() {
+  if (held.size === 0) return;
+  held.clear();
+  clearTimeout(holdTimer);
+  scheduleRender();
 }
 
 /** @param {SessionState|null} session */
@@ -135,10 +219,56 @@ function renderAll() {
   syncSessionSelect(ui.sessionSelect, sessionOptions(list, app.selectedId));
   setHTML(ui.stats, renderStats(session, theme, now));
   setHTML(ui.conn, renderConnection(app.connection));
-  setHTML(ui.party, renderParty({ session, theme }));
-  setHTML(ui.feed, renderFeed({ session, theme }));
-  setHTML(ui.scene, renderScene({ session, theme }));
+  const filter = currentFilter(session);
+  setHTML(ui.party, renderParty({ session, theme, filter }));
+  renderFeedCard(feedModel({ session, theme, filter }));
+  renderSceneArea(session, theme);
   renderCenter(session);
+}
+
+/**
+ * Cena (T12b): guarda onde cada token estava, redesenha as salas e deixa o
+ * fx.js animar o que mudou (FLIP, envelope, impacto, bugs e cartão final).
+ * @param {SessionState|null} session
+ * @param {import('./themes/contract.js').Theme} theme
+ */
+function renderSceneArea(session, theme) {
+  const before = sceneFx.capture();
+  setHTML(ui.sceneStage, renderScene({ session, theme }));
+  sceneFx.update({ session, theme, before });
+}
+
+/**
+ * Cartão de atividade: cabeçalho, chips e mensagem de vazio pelo `setHTML`; a
+ * lista, no lugar.
+ * @param {import('./views/feed.js').FeedModel} model
+ */
+function renderFeedCard(model) {
+  setHTML(ui.feedHead, model.head);
+  setHTML(ui.feedFilters, model.filters);
+  ui.feedFilters.hidden = model.filters === '';
+  setHTML(ui.feedEmpty, model.empty);
+  ui.feedEmpty.hidden = model.empty === '';
+  syncFeedList(/** @type {any} */ (ui.feedEntries), model, elementFromHTML);
+}
+
+/**
+ * Aplica o filtro escolhido num botão (chip ou cartão da equipe).
+ * @param {Event} event
+ * @param {'set'|'toggle'} mode   chips escolhem; cartões alternam (como no mockup)
+ */
+function onFilterClick(event, mode) {
+  const target = /** @type {Element|null} */ (event.target);
+  // No cartão da equipe, clicar no bloco fora de um botão vale como clicar no papel.
+  const control = target?.closest('[data-filter]') ?? (mode === 'toggle' ? target?.closest('.member')?.querySelector('[data-filter]') : null);
+  if (!control) return;
+  const { session } = currentView();
+  if (!session) return;
+  const value = nextFilter(currentFilter(session), control.getAttribute('data-filter') ?? ALL, mode);
+  app.filter = { sessionId: session.id, value };
+  // O clique já chegou: a região pode ser redesenhada.
+  held.clear();
+  renderAll();
 }
 
 /** Redesenho agrupado por quadro de animação (vários updates, um desenho). */
@@ -215,6 +345,18 @@ ui.toggle.addEventListener('click', (event) => {
 ui.sessionSelect.addEventListener('change', () => {
   app.selectedId = ui.sessionSelect.value || null;
   renderAll();
+});
+
+ui.party.addEventListener('click', (event) => onFilterClick(event, 'toggle'));
+ui.feedFilters.addEventListener('click', (event) => onFilterClick(event, 'set'));
+holdWhilePressed(ui.party);
+holdWhilePressed(ui.feedFilters);
+for (const type of ['pointerup', 'pointercancel', 'keyup']) window.addEventListener(type, releaseHeld, true);
+// Só a janela perdendo o foco solta a região. O blur do botão que perde o foco
+// no mousedown chega logo depois do pointerdown e soltaria a região no meio do
+// clique (bug do tester no T11b).
+window.addEventListener('blur', (event) => {
+  if (event.target === window) releaseHeld();
 });
 
 document.addEventListener('keydown', (event) => {

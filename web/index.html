@@ -30,11 +30,19 @@
   <section class="center" aria-label="Ticket e cena">
     <div id="quest-slot"></div>
     <div class="card scene-card">
-      <div class="scene" id="scene"></div>
+      <div class="scene" id="scene">
+        <div class="stage" id="scene-stage"></div>
+        <div class="fx" id="scene-fx" aria-hidden="true"></div>
+      </div>
     </div>
   </section>
 
-  <aside class="card feed" id="feed" aria-labelledby="feed-title"></aside>
+  <aside class="card feed" id="feed" aria-labelledby="feed-title">
+    <div class="card-head" id="feed-head"></div>
+    <div class="filters" id="feed-filters" role="group" aria-label="Filtrar por agente" hidden></div>
+    <p class="card-empty" id="feed-empty" hidden></p>
+    <ol class="entries" id="feed-entries"></ol>
+  </aside>
 </main>
 
 <p class="foot">Roda 100% local, sem internet · atalhos: <kbd>1</kbd> <kbd>2</kbd> tema, <kbd>T</kbd> alterna</p>

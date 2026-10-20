@@ -15,7 +15,7 @@
 //   chama busca /api/state e reaplica o que chegou depois (connection.js);
 // - o snapshot sempre substitui tudo, porque é a verdade do servidor.
 
-import { FEED_KINDS } from '../../shared/contract.js';
+import { isFeedEvent } from './selectors.js';
 
 /** @typedef {import('../../shared/contract.js').SessionState} SessionState */
 /** @typedef {import('../../shared/contract.js').CanonicalEvent} CanonicalEvent */
@@ -50,15 +50,18 @@ const isSeq = (value) => typeof value === 'number' && Number.isInteger(value) &&
 const hasId = (value) => Boolean(value) && typeof value === 'object' && typeof /** @type {any} */ (value).id === 'string';
 
 /**
- * Feed de uma sessão: só os tipos de FEED_KINDS, em ordem de `seq`, sem
- * repetir e com no máximo FEED_LIMIT eventos (os mais recentes).
+ * Feed de uma sessão: só os eventos que entram no feed (contrato, seção 3:
+ * tipos de FEED_KINDS, e `quest.phase` só com `state: done`, a mesma regra do
+ * servidor e de `isFeedEvent`), em ordem de `seq`, sem repetir e com no máximo
+ * FEED_LIMIT eventos (os mais recentes). Assim o feed do store fica igual ao
+ * do /api/state (bug do tester no T11b: etapas ativas ocupavam o limite).
  * @param {readonly CanonicalEvent[]} events
  * @returns {CanonicalEvent[]}
  */
 function normalizeFeed(events) {
   const bySeq = new Map();
   for (const event of events) {
-    if (event && isSeq(event.seq) && /** @type {readonly string[]} */ (FEED_KINDS).includes(event.kind)) {
+    if (event && typeof event === 'object' && isSeq(event.seq) && isFeedEvent(event)) {
       bySeq.set(event.seq, event);
     }
   }
@@ -102,7 +105,7 @@ export function applySnapshot(store, snapshot) {
 
 /**
  * Aplica um `update`: troca o estado da sessão (que vem sem feed) e, se o
- * evento for de FEED_KINDS, acrescenta-o ao feed da sessão.
+ * evento entra no feed (`isFeedEvent`), acrescenta-o ao feed da sessão.
  * @param {Store} store
  * @param {UpdateMessage} update
  * @returns {ApplyResult}
@@ -115,7 +118,7 @@ export function applyUpdate(store, update) {
   const previous = store.sessions.get(update.session.id);
   let feed = previous?.feed ?? [];
   const event = update.event;
-  if (event && /** @type {readonly string[]} */ (FEED_KINDS).includes(event.kind) && isSeq(event.seq)) {
+  if (event && typeof event === 'object' && isSeq(event.seq) && isFeedEvent(event)) {
     feed = normalizeFeed([...feed, event]);
   }
   store.sessions.set(update.session.id, { ...update.session, feed });
