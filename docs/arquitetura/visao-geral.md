@@ -235,6 +235,11 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
   - por instância, pelo cartão da equipe. Enquanto o filtro de instância está ligado, aparece também um chip dessa instância, que se desfaz com o próprio chip ou com "Todos" (acréscimo previsto no T14);
   - o filtro volta para "Todos" ao trocar de sessão e quando o botão que o ligou some (a instância foi para o "+N" ou o papel saiu da equipe);
   - o filtro de uma instância mostra os eventos dela. A delegação que a criou aparece no filtro de quem delegou, porque o estado do agente não guarda o id da chamada que o criou. Guardar esse id seria mudança de contrato (`AgentState` ou `agent.started`), fora da v1.
+- **Cena** (T12b, 20/10/2026):
+  - `#scene-stage` é redesenhado; `#scene-fx`, a camada de efeitos (envelope, impacto, confete), não é redesenhado e tem `aria-hidden`;
+  - o movimento usa FLIP com `element.animate()` nas propriedades individuais `translate` e `scale`, que se somam ao `transform` das vagas, nunca `style=`;
+  - depois de cada redesenho, os efeitos curtos são refeitos no elemento novo com o mesmo tempo decorrido, e as animações contínuas do CSS seguem o relógio da página, sem empilhar animações;
+  - os bugs ficam nas laterais da faixa de baixo da sala de testes, e não onde o mockup os põe, para não ficarem sob o balão do tester.
 - **Regras para qualquer parte interativa redesenhada** (valem para o T12b, o T13 e o T14):
   - **o foco não se perde:** depois do redesenho, o foco volta ao botão equivalente, achado pela chave estável (`data-key` ou equivalente);
   - **o clique não se perde:** enquanto um botão da região está apertado, ela não é redesenhada, por no máximo 1,5 s. Os dados pendentes entram no redesenho seguinte.

@@ -82,3 +82,9 @@ Decisão:
 
   O dev pode refinar os tons, desde que o teste abaixo continue passando.
 - **Teste:** um unitário em `test/unit/web/` lê `web/css/themes.css`, calcula o contraste de cada par usado (variável de texto contra cada fundo em que ela aparece, nos dois temas) e falha abaixo do critério.
+
+## Complemento de 20/10/2026: acréscimos do T12b
+
+- **Ícones de efeito ficam no CSS do tema**, e não no módulo JS: `--fx-message` (envelope ou pergaminho), `--fx-bug` e `--fx-burst-*` (confete), em `web/css/themes.css`. São visual, como as cores, e assim o contrato dos temas não muda.
+- **`--on-warn`:** cor do texto sobre a cor de aviso. No Escritório é `#241400`, que dá 6,8:1; o branco do mockup dava cerca de 2,6:1. Vale nos dois temas, e o teste de contraste do complemento de 18/10/2026 passa a incluir esse par.
+- **Para a revisão do T14:** o rótulo da sala em alarme no Escritório tem 4,53:1, perto do limite de 4,5:1. Entra no teste de contraste, com folga mínima de 4,6:1.
