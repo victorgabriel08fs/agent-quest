@@ -61,7 +61,10 @@ describe('describeTool: tabela da seção 3', () => {
     ['Edit', { file_path: `${PROJECT}\\x.txt`, old_string: 'a', new_string: 'b' }, { category: 'edit', target: 'x.txt', detail: null }],
     ['MultiEdit', { file_path: `${PROJECT}\\x.txt`, edits: [] }, { category: 'edit', target: 'x.txt', detail: null }],
     ['NotebookEdit', { notebook_path: `${PROJECT}\\n.ipynb`, new_source: 'x' }, { category: 'edit', target: 'n.ipynb', detail: null }],
+    ['Bash', { command: 'npm test -- --watch=false', description: 'Rodar a suíte' }, { category: 'test', target: 'npm test -- --watch=false', detail: 'Rodar a suíte' }],
+    // O teste seguido de outra linha é "teste no meio": não conta (seção 6).
     ['Bash', { command: 'npm test\nsegunda linha', description: 'Rodar a suíte' }, { category: 'bash', target: 'npm test', detail: 'Rodar a suíte' }],
+    ['Bash', { command: 'npm install', description: 'Instalar' }, { category: 'bash', target: 'npm install', detail: 'Instalar' }],
     ['PowerShell', { command: 'Get-ChildItem', description: 'Listar' }, { category: 'bash', target: 'Get-ChildItem', detail: 'Listar' }],
     ['BashOutput', { bash_id: 'b1' }, { category: 'bash', target: null, detail: null }],
     ['Monitor', { description: 'Acompanhar o build' }, { category: 'bash', target: null, detail: 'Acompanhar o build' }],
@@ -91,9 +94,15 @@ describe('describeTool: tabela da seção 3', () => {
     assert.ok(TOOL_CATEGORIES.includes('mcp') && TOOL_CATEGORIES.includes('other'));
   });
 
-  it('Bash e PowerShell ficam em bash até o T6, mesmo com comando de teste', () => {
-    assert.equal(describeTool('Bash', { command: 'npm test' }, ctx).category, 'bash');
-    assert.equal(describeTool('PowerShell', { command: 'node --test' }, ctx).category, 'bash');
+  it('T6: Bash e PowerShell com comando de teste viram test; com run_in_background, continuam bash', () => {
+    assert.equal(describeTool('Bash', { command: 'npm test' }, ctx).category, 'test');
+    assert.equal(describeTool('PowerShell', { command: 'node --test' }, ctx).category, 'test');
+    assert.equal(describeTool('Bash', { command: 'npm test', run_in_background: true }, ctx).category, 'bash');
+    assert.equal(describeTool('PowerShell', { command: 'pytest', run_in_background: true }, ctx).category, 'bash');
+    assert.equal(describeTool('Bash', { command: 'npm test', run_in_background: 'true' }, ctx).category, 'test');
+    // Só Bash e PowerShell: o Monitor com o mesmo comando continua bash.
+    assert.equal(describeTool('Monitor', { command: 'npm test' }, ctx).category, 'bash');
+    assert.ok(TOOL_CATEGORIES.includes('test'));
   });
 
   it('Agent e Task são as ferramentas de delegação', () => {
@@ -368,8 +377,9 @@ describe('identifier (seção 2, "Identificadores")', () => {
     assert.equal(identifier(`tes${String.fromCharCode(0x200b)}ter\x00`), 'tester');
     assert.equal(rawIdentifier(`Ba\x07sh\t`), 'Bash ');
     assert.equal(rawIdentifier('Ba\x1B[1msh'), 'Bash');
-    // Exibido: a redação tira a sequência depois de redigir, sem comer letras do token.
-    assert.equal(identifier(`\x1B[ghp_${'A'.repeat(36)}`), '[•••');
+    // Exibido: a redação tira a sequência depois de redigir, sem comer letras do
+    // token; a CSI incompleta antes do ••• sai inteira (T6).
+    assert.equal(identifier(`\x1B[ghp_${'A'.repeat(36)}`), '•••');
   });
 
   it('vazio, só invisíveis ou não texto: null', () => {
@@ -451,6 +461,8 @@ describe('firstLine e textLine', () => {
     // Espaço fora de sequência continua sendo fronteira.
     const check = boundaryChecker('a b\x1B[1 qc d');
     assert.deepEqual([1, 6, 9].map(check), [true, false, true]);
+    // T6: CSI incompleta antes de outro ESC, com espaço dentro, sai inteira na etapa 7.
+    assert.deepEqual([1, 4, 10].map(boundaryChecker('a \x1B[ \x1B[0mb c')), [true, false, true]);
   });
 
   it('texto enorme: só o começo é limpo, e uma OSC aberta até o fim dele não serve de fronteira', () => {

@@ -328,7 +328,7 @@ describe('categorias, alvos e detalhes (seção 3)', () => {
     ['Edit', { file_path: `${HOME}\\.claude\\CLAUDE.md`, old_string: 'a', new_string: 'b' }, 'edit', '~/.claude/CLAUDE.md', null],
     ['MultiEdit', { file_path: 'D:\\outro\\a.js', edits: [] }, 'edit', 'D:/outro/a.js', null],
     ['NotebookEdit', { notebook_path: `${PROJECT}\\a.ipynb` }, 'edit', 'a.ipynb', null],
-    ['Bash', { command: 'npm test -- test/unit\nsegunda', description: 'Rodar a suíte' }, 'bash', 'npm test -- test/unit', 'Rodar a suíte'],
+    ['Bash', { command: 'npm test -- test/unit\nsegunda', description: 'Rodar a suíte' }, 'bash', 'npm test -- test/unit', 'Rodar a suíte'], // quebra de linha depois do teste vale como ; (T6): não conta
     ['PowerShell', { command: 'Get-Content .\\a.txt', description: 'Ler' }, 'bash', 'Get-Content .\\a.txt', 'Ler'],
     ['BashOutput', { bash_id: 'b1' }, 'bash', null, null],
     ['Monitor', { command: 'tail -f log', description: 'Acompanhar' }, 'bash', 'tail -f log', 'Acompanhar'],
@@ -358,10 +358,11 @@ describe('categorias, alvos e detalhes (seção 3)', () => {
     });
   }
 
-  it('Bash e PowerShell ficam em bash até o T6, mesmo com comando de teste', () => {
+  it('Bash e PowerShell com comando de teste viram test (T6); com run_in_background continuam bash', () => {
     for (const command of ['npm test', 'node --test', 'npx vitest run', 'pytest -q', 'cd x && npm run test']) {
-      assert.equal(fact('PreToolUse', { tool_name: 'Bash', tool_input: { command } }).category, 'bash', command);
-      assert.equal(fact('PreToolUse', { tool_name: 'PowerShell', tool_input: { command } }).category, 'bash', command);
+      assert.equal(fact('PreToolUse', { tool_name: 'Bash', tool_input: { command } }).category, 'test', command);
+      assert.equal(fact('PreToolUse', { tool_name: 'PowerShell', tool_input: { command } }).category, 'test', command);
+      assert.equal(fact('PreToolUse', { tool_name: 'Bash', tool_input: { command, run_in_background: true } }).category, 'bash', `${command} em segundo plano`);
     }
   });
 
@@ -918,8 +919,8 @@ describe('etapa 7 (ANSI depois da redação) e consequências aprovadas em 18/10
 
   it('vetores da seção 10: ESC[ghp_…, ESC[AKIA…, gh ESC[0m p_… e controle no meio do token', () => {
     const cases = [
-      [`echo ${E}[${TOKEN}`, 'echo [•••'],
-      [`${E}[AKIA${'Q'.repeat(16)}`, '[•••'],
+      [`echo ${E}[${TOKEN}`, 'echo •••'], // T6: a etapa 7 tira a CSI incompleta antes do ••• (seção 10, correção no T6)
+      [`${E}[AKIA${'Q'.repeat(16)}`, '•••'],
       [`gh${E}[0mp_${'A'.repeat(36)}`, '•••'],
       [`gh\u0001p_${'A'.repeat(36)}`, '•••'],
       [`${E}[${'1;'.repeat(40)}m${TOKEN}`, '•••'],

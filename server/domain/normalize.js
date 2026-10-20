@@ -5,16 +5,17 @@
 //   payload sem `session_id` devolvem null (contam como `ignored` no /api/health).
 // - Nunca lança: entrada malformada vira null, e campo com tipo errado vira null.
 // - Minimização (seção 10): do `tool_input` só saem alvo, detalhe e `inputHash`;
-//   do `tool_response`, só `agentId` e `status` do Agent. Conteúdo de arquivo,
-//   saídas, texto do assistente, resumo da compactação e o pedido completo nunca
-//   entram no fato.
+//   do `tool_response`, só `agentId` e `status` do Agent e, de comando de teste,
+//   as contagens do resumo (`testResult`, T6). Conteúdo de arquivo, saídas, texto
+//   do assistente, resumo da compactação e o pedido completo nunca entram no fato.
 // - Todo texto exibido passa por `redactAndCut` (via tools.js), com os limites
 //   da seção 10. Nenhuma string do fato passa de 200 caracteres, menos os
 //   caminhos guardados (projectDir, transcriptPath, agentTranscriptPath), até 1024.
 //
 // Adiantado antes do G0a (plano, T5): os campos que dependem do T0 ficam em
 // funções próprias, lidas de forma defensiva, com o item V no comentário:
-// `promptOrigin` (V7), `agentLaunch` (V5) e `clientFromEntrypoint` (V11).
+// `promptOrigin` (V7), `agentLaunch` (V5), `clientFromEntrypoint` (V11) e, no
+// T6, `testOutputs` e o `testOk` de tests-detect.js (V3).
 
 import os from 'node:os';
 import { charLength, redact } from './redact.js';
@@ -31,6 +32,7 @@ import {
   textLine,
   toolDisplayName,
 } from './tools.js';
+import { parseTestSummary, testCommandInfo, testOk } from './tests-detect.js';
 
 /** Fato por hook (seção 2). Os 15 eventos assinados pelo plugin (ADR 0001). */
 export const HOOK_FACTS = Object.freeze({
@@ -114,7 +116,7 @@ const DEFAULT_HOME_DIR = defaultHomeDir();
  * @property {string|null} promptId
  * @property {string|null} projectDir      env.projectDir; se faltar, o cwd do payload
  * @property {'terminal'|'vscode'|null} client
- * @property {number} ts                   sentAt do encaminhador; se faltar, receivedAt
+ * @property {number} ts                   sentAt do encaminhador; se faltar, ou a mais de 5 min da chegada, receivedAt
  * @property {number} receivedAt
  * @property {string|null} transcriptPath  só para a sonda de contexto (T15); nunca vai ao painel
  */
@@ -141,6 +143,8 @@ const DEFAULT_HOME_DIR = defaultHomeDir();
  * @property {number|null} failed
  * @property {number|null} total
  * @property {string|null} framework
+ * @property {boolean} chained          cadeia `&&` com o teste no fim (seção 6); campo interno do fato, fora do evento canônico
+ * @property {true} [partial]           só quando `failed` é o mínimo da lista de falhas do node:test, sem resumo (B13); campo interno
  */
 
 /**
@@ -216,7 +220,7 @@ function buildFact(envelope, receivedAt, homeDir) {
     promptId: idValue(payload.prompt_id),
     projectDir,
     client: clientFromEntrypoint(env.entrypoint),
-    ts: isTimestamp(data.sentAt) ? /** @type {number} */ (data.sentAt) : arrival,
+    ts: eventTime(data.sentAt, arrival),
     receivedAt: arrival,
     transcriptPath: storedPath(payload.transcript_path),
   };
@@ -252,19 +256,21 @@ function buildFact(envelope, receivedAt, homeDir) {
         durationMs: duration(payload.duration_ms),
         linkedAgentId: link.linkedAgentId,
         launch: link.launch,
-        testResult: null, // T6
+        testResult: tool.category === 'test' ? testResult(common.kind, payload) : null,
       };
     }
-    case 'tool.fail':
+    case 'tool.fail': {
+      const tool = toolFields(payload, context);
       return {
         ...common,
         kind: common.kind,
-        ...toolFields(payload, context),
+        ...tool,
         durationMs: duration(payload.duration_ms),
         error: textLine(payload.error, LIMITS.error),
         interrupted: payload.is_interrupt === true,
-        testResult: null, // T6
+        testResult: tool.category === 'test' ? testResult(common.kind, payload) : null,
       };
+    }
     case 'permission.request': {
       const { category, target } = describeTool(payload.tool_name, payload.tool_input, context);
       return {
@@ -346,6 +352,29 @@ export function agentLaunch(toolResponse) {
 }
 
 /**
+ * [T0] V3: textos de onde sai o resumo do teste (seção 6, "Contagem": o fim do
+ * stdout ou do `error`). No PostToolUse, o `stdout` e depois o `stderr` do
+ * `tool_response` do Bash (o Jest escreve o resumo no stderr), ou o próprio
+ * `tool_response`, se for texto; no PostToolUseFailure, o `error`, que começa
+ * com `Exit code N` e traz a saída. Nada desses textos entra no fato: só os
+ * números do resumo.
+ * @param {'tool.post'|'tool.fail'} kind
+ * @param {Record<string, unknown>} payload
+ * @returns {string[]}
+ */
+export function testOutputs(kind, payload) {
+  if (kind === 'tool.fail') return typeof payload.error === 'string' ? [payload.error] : [];
+  const response = payload.tool_response;
+  if (typeof response === 'string') return [response];
+  if (!isPlainObject(response)) return [];
+  const fields = /** @type {Record<string, unknown>} */ (response);
+  /** @type {string[]} */
+  const texts = [];
+  for (const text of [fields.stdout, fields.stderr]) if (typeof text === 'string') texts.push(text);
+  return texts;
+}
+
+/**
  * V11: terminal ou VS Code, pelo `env.entrypoint` do envelope (valor de
  * `CLAUDE_CODE_ENTRYPOINT`, a candidata registrada pela sonda). `cli` é o
  * terminal; um valor com `vscode` (como `claude-vscode`) é a extensão. O resto
@@ -367,6 +396,55 @@ export function clientFromEntrypoint(entrypoint) {
 
 /** @type {{ linkedAgentId: null, launch: null }} */
 const NO_LAUNCH = Object.freeze({ linkedAgentId: null, launch: null });
+
+/**
+ * `sentAt` mais longe que isto da chegada, para mais ou para menos, vira a hora
+ * de chegada (seção 1): um relógio errado ou um `sentAt` forjado não mantém a
+ * sessão viva além da limpeza (observação 5 do tester do T7).
+ */
+export const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * `ts` do fato: o `sentAt` do encaminhador, se for válido e estiver a até 5 min
+ * da chegada; senão, a hora de chegada.
+ * @param {unknown} sentAt
+ * @param {number} arrival
+ * @returns {number}
+ */
+function eventTime(sentAt, arrival) {
+  if (!isTimestamp(sentAt)) return arrival;
+  const value = /** @type {number} */ (sentAt);
+  return Math.abs(value - arrival) <= MAX_CLOCK_SKEW_MS ? value : arrival;
+}
+
+/**
+ * `testResult` de um comando de teste (seção 2): `ok` pelo hook (V3, em
+ * `testOk`), as contagens do primeiro texto com resumo reconhecido (com os
+ * padrões do framework que o comando identifica), `chained` para a cadeia `&&`
+ * com o teste no fim e `partial` para a contagem mínima do B13 (seção 6).
+ * @param {'tool.post'|'tool.fail'} kind
+ * @param {Record<string, unknown>} payload
+ * @returns {TestResult}
+ */
+function testResult(kind, payload) {
+  const input = isPlainObject(payload.tool_input) ? /** @type {Record<string, unknown>} */ (payload.tool_input) : {};
+  const command = testCommandInfo(input.command);
+  let summary = parseTestSummary(null);
+  for (const text of testOutputs(kind, payload)) {
+    summary = parseTestSummary(text, command?.framework ?? null);
+    if (summary.framework !== null) break;
+  }
+  return {
+    ok: testOk(kind, summary),
+    passed: summary.passed,
+    failed: summary.failed,
+    total: summary.total,
+    framework: summary.framework,
+    chained: command?.kind === 'chained',
+    // Só na contagem mínima (B13): a forma dos outros resultados não muda.
+    ...(summary.partial === true ? { partial: /** @type {true} */ (true) } : {}),
+  };
+}
 
 /**
  * Título do pedido (seção 6): primeira linha, até 80, redigida. Pedido que

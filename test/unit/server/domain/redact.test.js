@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
 import { charLength, isSensitiveName, plainText, redact, redactAndCut, REDACTED } from '../../../../server/domain/redact.js';
+import { growthWithin } from '../../../integration/timing.js';
 
 const R = REDACTED;
 
@@ -40,6 +41,32 @@ const B10_INPUTS = {
   'token partido por ESC]': repeatTo('ghp_AAAA\x1B]BB'),
 };
 
+/** Formas malformadas da etapa 7 (T6), repetidas até o tamanho. */
+const T6_INPUTS = {
+  'ESC[ 9 (parâmetro depois de intermediário)': repeatTo('\x1B[ 9'),
+  'ESC[12 antes de ESC': repeatTo('\x1B[12'),
+  'ESC(B': repeatTo('\x1B(B'),
+  'ESCc': repeatTo('\x1Bc'),
+  'ESC e intermediários sem final': repeatTo('\x1B  ('),
+  'token partido por ESC(B': repeatTo('ghp_AAAA\x1B(BBB'),
+  'ESC( seguido de intermediários sem ESC': (size) => `\x1B${'('.repeat(size - 1)}`,
+  // Alternativa 4 de SEQ nos valores: milhares de `ESC(`, de ESC soltos e de ESC + espaço.
+  'valor com ESC(B': (size) => `API_KEY=${repeatTo('a\x1B(B')(size - 8)}`,
+  'valor com milhares de ESC(': (size) => `API_KEY=${repeatTo('\x1B(')(size - 8)}`,
+  'valor com milhares de ESC soltos': (size) => `API_KEY=${'\x1B'.repeat(size - 8)}`,
+  'valor com ESC e espaço': (size) => `API_KEY=${repeatTo('a\x1B ')(size - 8)}`,
+  'valor com ESC e intermediários sem final': (size) => `API_KEY=a\x1B${'('.repeat(size - 10)}`,
+  'Bearer com ESC(': (size) => `Bearer ${repeatTo('a\x1B(')(size - 7)}`,
+  // Classe do Bearer com qualquer caractere até espaço ou aspas (T6).
+  'Bearer com não ASCII': (size) => `Bearer ${repeatTo('aç,')(size - 7)}`,
+  'Bearer repetido': repeatTo('Bearer ç'),
+  'Bearer com ESC( antes de ç': (size) => `Bearer ${repeatTo('a\x1B(ç')(size - 7)}`,
+  'cabeçalho com ESC"': (size) => `X-Api-Key: ${repeatTo('a\x1B"')(size - 11)}`,
+  '-u sem : com ESC&': (size) => `-u ${repeatTo('a\x1B&')(size - 3)}`,
+  '--nome com ESC;': (size) => `--password ${repeatTo('a\x1B;')(size - 11)}`,
+  'pares com ESC( antes de ç': repeatTo('token=a\x1B(ç '),
+};
+
 // Metades de surrogate soltas (montadas por código, para o arquivo continuar UTF-8 válido).
 const HIGH = String.fromCharCode(0xdb40);
 const LOW = String.fromCharCode(0xdc41);
@@ -68,16 +95,18 @@ const POSITIVES = {
     ['Authorization: "x\x1B]0;y"\x07 resto', `Authorization: ${R} resto`],
     ['\x1B]0;título\x1B\\texto', 'texto'],
     ['BEL solto\x07 sai', 'BEL solto sai'],
-    // Etapa 7 depois da redação (18/10/2026): não come letras de tokens.
-    [`echo \x1B[ghp_${'A'.repeat(36)}`, `echo [${R}`],
-    [`\x1B[AKIA${'B'.repeat(16)}`, `[${R}`],
+    // Etapa 7 depois da redação (18/10/2026): não come letras de tokens. A CSI
+    // incompleta antes do ••• sai inteira (T6; antes sobrava o `[`).
+    [`echo \x1B[ghp_${'A'.repeat(36)}`, `echo ${R}`],
+    [`\x1B[AKIA${'B'.repeat(16)}`, R],
     // Token formado ao remover a sequência: as etapas 2 a 6 rodam de novo.
     [`gh\x1B[0mp_${'A'.repeat(36)}`, R],
     [`ghp_AAA\x1B${'A'.repeat(33)}`, R],
     [`AKIA\x1B[1;31m${'B'.repeat(16)}`, R],
     ['\x1B[1 qtexto', 'texto'],
-    ['\x1B[ \x1B[1 q texto', '[  texto'],
-    ['fim incompleto \x1B[12', 'fim incompleto [12'],
+    // CSI incompleta (antes de outro ESC ou no fim) sai inteira (T6; antes sobravam `[ ` e `[12`).
+    ['\x1B[ \x1B[1 q texto', ' texto'],
+    ['fim incompleto \x1B[12', 'fim incompleto '],
     ['\x1B]8;;https://exemplo.com\x1B\\link\x1B]8;;\x1B\\', 'link'],
     // OSC aberta: sai com o corpo até o espaço (etapa 7, 19/10/2026).
     ['\x1B]sem terminador', ' terminador'],
@@ -145,6 +174,45 @@ const POSITIVES = {
     ['echo oi \x1B]0;título fim', 'echo oi  fim'],
     // A CSI come o `A`; as partes se juntam num token completo, que a segunda passada redige.
     [`ghp_${'A'.repeat(10)}\x1B[A${'B'.repeat(25)}`, R],
+  ],
+  // T6, "Etapa 7 com sequências malformadas" (resíduo do T5, revisto em
+  // 19/10/2026): a etapa 7 usa a CSI da alternativa 1 de SEQ (completa ou
+  // incompleta) e não tira escapes do ECMA-35.
+  'etapa 7 com sequências malformadas': [
+    // O terminal ignora até o byte final: some o `9` e o primeiro `B`.
+    [`ghp_${'A'.repeat(20)}\x1B[ 9${'B'.repeat(16)}`, `${R}${'B'.repeat(15)}`],
+    // CSI incompleta antes de outro ESC: o terminal descarta o `[12`.
+    [`ghp_${'A'.repeat(20)}\x1B[12\x1B[0m${'B'.repeat(16)}`, `${R}${'B'.repeat(16)}`],
+    // Fora de valores, `(B` e `c` ficam visíveis: resíduo cosmético aceito.
+    [`ghp_${'A'.repeat(20)}\x1B(B${'B'.repeat(16)}`, `${R}(B${'B'.repeat(16)}`],
+    [`ghp_${'A'.repeat(20)}\x1Bc${'B'.repeat(16)}`, `${R}c${'B'.repeat(16)}`],
+    ['a\x1B(Bb \x1Bcfim', 'a(Bb cfim'],
+    // O vazamento da primeira versão (ESC + letra comia o prefixo do token) fica fechado.
+    ['cmd && \x1Bsk-ant-\x1B[0mZq7Wx3Rt9Lm2Pv8K', `cmd && ${R}`],
+    ['echo \x1Bgh\x1B[0mp_Zq7Wx3Rt9Lm2Pv8KHd4Nc6Yb1Fj5Gs0T', `echo ${R}`],
+    [`\x1Bghp_${'A'.repeat(36)}`, R],
+  ],
+  // T6: alternativa 4 de SEQ (escape do ECMA-35, completo ou incompleto, que
+  // inclui o ESC solto) dentro de valores. Antes, o `(` ou o espaço depois do ESC
+  // terminava o valor: `API_KEY=•••(Bdefsegredo`.
+  'escape do ECMA-35 dentro de valores': [
+    ...['\x1B(B', '\x1B ', '\x1B"', '\x1B&', '\x1B;', '\x1Bc', '\x1B(ç'].flatMap((seq) => [
+      [`API_KEY=abc${seq}defsegredo`, `API_KEY=${R}`],
+      [`setx API_KEY abc${seq}defsegredo`, `setx API_KEY ${R}`],
+      [`--password abc${seq}defsegredo`, `--password ${R}`],
+      [`X-Api-Key: abc${seq}defsegredo`, `X-Api-Key: ${R}`],
+      [`-u admin:abc${seq}defsegredo`, `-u ${R}`],
+      [`"client_secret": abc${seq}defsegredo`, `"client_secret": ${R}`],
+    ]),
+    // O valor do Bearer vai até o próximo espaço ou aspas, com qualquer caractere (T6).
+    ...['\x1B(B', '\x1B ', '\x1B"', '\x1B&', '\x1B;', '\x1Bc', '\x1B(ç', 'ç', ',', ')'].map((seq) => [`Bearer abc${seq}defsegredo`, `Bearer ${R}`]),
+    ['Bearer abc"def', `Bearer ${R}"def`],
+    ['x Bearer abc, y', `x Bearer ${R} y`],
+    // ESC no fim do valor, antes de quebra de linha e intermediário sem final.
+    ['API_KEY=abc\x1B', `API_KEY=${R}`],
+    ['API_KEY=abc\x1B\nfim', `API_KEY=${R}\nfim`],
+    ['Bearer abc\x1B(', `Bearer ${R}`],
+    ['API_KEY=abc\x1B((((B\x1B(\x1B(def', `API_KEY=${R}`],
   ],
   'chave privada': [
     ['antes -----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY----- depois', `antes ${R} depois`],
@@ -392,9 +460,11 @@ describe('redact: propriedades', () => {
     assert.equal(redact(42), '');
   });
 
-  // ADR 0010, complemento "teste de tempo da redação": oito entradas patológicas,
-  // 4 KiB e 32 KiB, melhor de 7 depois de um aquecimento; t(32 KiB) < 100 ms e
-  // t(32 KiB) / max(t(4 KiB), 1 ms) ≤ 32.
+  // ADR 0010, complementos "teste de tempo da redação" e "testes de tempo
+  // estáveis": entradas patológicas em 4 KiB e 32 KiB, melhor de 7 intercalado
+  // (growthWithin), t(32 KiB) / max(t(4 KiB), 1 ms) ≤ 32, com uma nova tentativa
+  // em caso de ruído. O limite absoluto fica só como teto largo (o padrão do
+  // growthWithin): 100 ms numa execução só falhava por ruído da máquina.
   it('o tempo cresce de forma linear (formato do ADR 0010), em redact e em redactAndCut', () => {
     const fill = (piece, size) => piece.repeat(Math.ceil(size / piece.length)).slice(0, size);
     const inputs = {
@@ -426,23 +496,14 @@ describe('redact: propriedades', () => {
       'ESC] seguido de trecho sem ESC': (size) => `API_KEY=a\x1B]${fill('b c ', size - 11)}`,
       // B10: começos sobrepostos (ADR 0010). Em todas, a expressão começa e falha várias vezes.
       ...B10_INPUTS,
-    };
-    const best = (fn, text) => {
-      fn(text);
-      let min = Infinity;
-      for (let i = 0; i < 7; i++) {
-        const started = performance.now();
-        fn(text);
-        min = Math.min(min, performance.now() - started);
-      }
-      return min;
+      // T6: sequências malformadas da etapa 7.
+      ...T6_INPUTS,
     };
     const slow = [];
     for (const [name, build] of Object.entries(inputs)) {
       for (const [label, fn] of [['redact', redact], ['redactAndCut', (text) => redactAndCut(text, 120)]]) {
-        const small = best(fn, build(4096));
-        const large = best(fn, build(32 * 1024));
-        if (large >= 100 || large / Math.max(small, 1) > 32) slow.push(`${label} ${name}: 4 KiB ${small.toFixed(2)} ms, 32 KiB ${large.toFixed(2)} ms`);
+        const growth = growthWithin(fn, build(4096), build(32 * 1024), { maxRatio: 32, n: 7 });
+        if (!growth.ok) slow.push(`${label} ${name}: ${growth.text}`);
       }
     }
     assert.deepEqual(slow, []);
@@ -454,6 +515,9 @@ describe('redact: propriedades', () => {
     assert.equal(plainText('a\tb'), 'a b');
     // A OSC aberta sai com o corpo até o espaço (etapa 7).
     assert.equal(plainText('ℹ pass 3 \x1B]0;corpo fim'), 'ℹ pass 3  fim');
+    // T6: CSI malformada sai inteira (`ESC[ 9x`, `ESC[12` no fim); do `tput sgr0`
+    // (`ESC(B ESC[m`) sobra o `(B`, resíduo cosmético aceito.
+    assert.equal(plainText('\x1B(B\x1B[m✓ 3 passed\x1B[ 9x \x1B[12'), '(B✓ 3 passed ');
     assert.equal(plainText(42), '');
   });
 
@@ -478,7 +542,7 @@ describe('redact: propriedades', () => {
     const pick = (list) => list[Math.floor(random() * list.length)];
     const SECRET = 'Zq7Wx3Rt9Lm2Pv8K';
     const PIECES = Array.from({ length: SECRET.length - 3 }, (_, i) => SECRET.slice(i, i + 4));
-    const SEQS = ['\x1B[1;', '\x1B[12', '\x1B[', '\x1B]', '\x1B]8;;x', '\x1B]0;', '\x1B]a,b', '\x1B', '\x1B[0m', '\x1B]0;t\x07', '\x1B[ q'];
+    const SEQS = ['\x1B[1;', '\x1B[12', '\x1B[', '\x1B]', '\x1B]8;;x', '\x1B]0;', '\x1B]a,b', '\x1B', '\x1B[0m', '\x1B]0;t\x07', '\x1B[ q', '\x1B[ 9', '\x1Bc', '\x1B(B', '\x1B ', '\x1B"', '\x1B&', '\x1B;', '\x1B('];
     // Formas de valor que aceitam SEQ (seção 10, etapa 6, regra 3), inclusive token dentro de par.
     const FORMS = [
       (s) => `API_KEY=${s}`, (s) => `password: ${s}`, (s) => `export DB_PASSWORD=${s}`, (s) => `$env:API_TOKEN = ${s}`,

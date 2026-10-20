@@ -627,8 +627,11 @@ describe('tick com o relógio voltando para trás', () => {
     });
     const session = view(state);
     checkSession(session, { feed: true });
-    assert.equal(session.lastEventAt, T0 + 215);
-    assert.equal(agentIn(session, T.id).startedAt, T0 + 100);
+    // Seção 1 (T6): sentAt a mais de 5 min da chegada vira a hora de chegada. Aqui só o
+    // terceiro fato (chegada T0 + 1) fica com o sentAt; os outros ficam com a chegada
+    // (T0 + 10 min, T0 − 5 min e T0 − 60 min), e o estado segue só os ts.
+    assert.equal(session.lastEventAt, T0 + 10 * MIN);
+    assert.equal(agentIn(session, T.id).startedAt, T0 - 60 * MIN);
   });
 
   it('fato com sentAt no futuro: diagnóstico da limpeza (horas pelo ts, ponto 12)', (t) => {

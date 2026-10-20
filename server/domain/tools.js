@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ESCAPE_SEQUENCES, charLength, plainText, redact, redactAndCut, stripInvisible } from './redact.js';
+import { detectTestCommand } from './tests-detect.js';
 
 /** @typedef {import('../../shared/contract.js').ToolCategory} ToolCategory */
 
@@ -55,7 +56,7 @@ export const CATEGORY_BY_TOOL = Object.freeze(
       ['Edit', 'edit'],
       ['MultiEdit', 'edit'],
       ['NotebookEdit', 'edit'],
-      // Bash e PowerShell ficam em `bash` até o T6, que acrescenta a categoria `test`.
+      // Bash e PowerShell com comando de teste viram `test` (describeTool, T6).
       ['Bash', 'bash'],
       ['PowerShell', 'bash'],
       ['BashOutput', 'bash'],
@@ -128,7 +129,7 @@ export function describeTool(toolName, toolInput, context = {}) {
     }
     case 'bash':
       return {
-        category,
+        category: isTestRun(name, input) ? 'test' : category,
         target: textLine(input.command, LIMITS.command),
         detail: textLine(input.description, LIMITS.description),
       };
@@ -145,6 +146,20 @@ export function describeTool(toolName, toolInput, context = {}) {
     default:
       return { category: 'other', target: identifier(toolName), detail: null };
   }
+}
+
+/** Ferramentas cujo comando pode ser de teste (seção 3, categoria `test`). */
+export const SHELL_TOOLS = Object.freeze(new Set(['Bash', 'PowerShell']));
+
+/**
+ * Bash ou PowerShell com comando de teste (seção 6). Com `run_in_background`
+ * continua `bash`, porque o resultado não vem no PostToolUse.
+ * @param {string} name                  nome cru da ferramenta
+ * @param {Record<string, unknown>} input
+ * @returns {boolean}
+ */
+function isTestRun(name, input) {
+  return SHELL_TOOLS.has(name) && input.run_in_background !== true && detectTestCommand(input.command);
 }
 
 /** Identificador exibido como está (seção 2, "Identificadores"). */

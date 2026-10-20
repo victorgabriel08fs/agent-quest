@@ -1,6 +1,7 @@
 // Normalizador (modelo de eventos, seções 2, 3 e 10): os 15 hooks, campos
-// comuns, itens a confirmar no T0 (V5, V7, V11), redação e limites de ponta a
-// ponta, minimização e robustez. Os payloads seguem a documentação dos hooks
+// comuns, itens a confirmar no T0 (V3, V5, V7, V11), redação e limites de ponta a
+// ponta, minimização, robustez e o T6 (categoria test, testResult e ts com relógio
+// fora). Os payloads seguem a documentação dos hooks
 // (docs/pesquisa/hooks-claude-code.md, seção 2); os cenários da sonda estão em
 // normalize-synthetic.test.js.
 
@@ -11,6 +12,7 @@ import { charLength, redact } from '../../../../server/domain/redact.js';
 import {
   HOOK_FACTS,
   MAX_BACKGROUND_TASKS,
+  MAX_CLOCK_SKEW_MS,
   MAX_STORED_PATH_CHARS,
   SYSTEM_PROMPT_TAGS,
   agentLaunch,
@@ -18,8 +20,11 @@ import {
   normalize,
   promptOrigin,
   promptTitle,
+  testOutputs,
 } from '../../../../server/domain/normalize.js';
 import { inputHash } from '../../../../server/domain/tools.js';
+import { apply, createState, tick } from '../../../../server/domain/state/index.js';
+import { IDLE_TTL_MS } from '../../../../server/domain/state/sessions.js';
 import { resolveRole } from '../../../../server/domain/roles.js';
 import { SHORT_HEAD_CHARS, SHORT_TAIL_CHARS, cutString } from '../../../../capture/plugins/agent-quest/scripts/forward.mjs';
 import { assertFactInvariants, prng } from './fact-checks.js';
@@ -246,7 +251,7 @@ describe('fato de cada hook (seção 2)', () => {
       ...common('PreToolUse', { agentId: AGENT, agentType: 'tester', agentTypeKey: 'tester' }),
       toolUseId: TOOL_USE,
       tool: 'Bash',
-      category: 'bash',
+      category: 'test', // T6: comando de teste
       target: 'npm test',
       detail: 'Rodar a suíte',
       inputHash: inputHash(input),
@@ -817,5 +822,129 @@ describe('minimização e robustez', () => {
       assertFactInvariants(fact, `iteração ${i}`);
     }
     assert.ok(facts > 1500, `poucos fatos gerados: ${facts}`);
+  });
+});
+
+describe('T6: categoria test, testResult e ts com relógio fora', () => {
+  const NODE_TEST_OK = 'ℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ duration_ms 52.3\n';
+  const NODE_TEST_FAIL = 'Exit code 1\n✖ soma (1.1ms)\n  AssertionError: CONTEUDO-DA-FALHA\nℹ tests 3\nℹ pass 2\nℹ fail 1\n';
+  const JEST_STDERR = 'PASS src/a.test.js\nTests:       4 passed, 4 total\nTime:        1 s\n';
+  const bashOk = (stdout, stderr = '') => ({ stdout, stderr, interrupted: false, isImage: false });
+
+  it('tool.post de comando de teste: testResult com ok e as contagens do stdout; nada da saída no fato', () => {
+    const input = { command: 'npm test', description: 'Rodar a suíte' };
+    const fact = run('PostToolUse', { tool_name: 'Bash', tool_input: input, tool_use_id: TOOL_USE, tool_response: bashOk(`SAIDA-DO-TESTE\n${NODE_TEST_OK}`), duration_ms: 900 });
+    assert.deepEqual(fact, {
+      ...common('PostToolUse'),
+      toolUseId: TOOL_USE,
+      tool: 'Bash',
+      category: 'test',
+      target: 'npm test',
+      detail: 'Rodar a suíte',
+      inputHash: inputHash(input),
+      background: false,
+      ...NO_AGENT_TOOL,
+      durationMs: 900,
+      linkedAgentId: null,
+      launch: null,
+      testResult: { ok: true, passed: 3, failed: 0, total: 3, framework: 'node:test', chained: false },
+    });
+    assert.doesNotMatch(JSON.stringify(fact), /SAIDA-DO-TESTE/);
+    assertFactInvariants(fact, 'tool.post de teste');
+  });
+
+  it('resumo no stderr (Jest) quando o stdout não tem; tool_response em texto também vale', () => {
+    const fact = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npx jest' }, tool_response: bashOk('> jest\n', JEST_STDERR) });
+    assert.deepEqual(fact.testResult, { ok: true, passed: 4, failed: 0, total: 4, framework: 'jest', chained: false });
+    const text = run('PostToolUse', { tool_name: 'PowerShell', tool_input: { command: 'npm test' }, tool_response: NODE_TEST_OK });
+    assert.deepEqual(text.testResult, { ok: true, passed: 3, failed: 0, total: 3, framework: 'node:test', chained: false });
+  });
+
+  it('tool.fail de comando de teste: ok false e as contagens do error', () => {
+    const fact = run('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'cd app && npm test' }, error: NODE_TEST_FAIL, duration_ms: 40 });
+    assert.equal(fact.category, 'test');
+    assert.equal(fact.error, 'Exit code 1');
+    assert.deepEqual(fact.testResult, { ok: false, passed: 2, failed: 1, total: 3, framework: 'node:test', chained: false });
+    assert.doesNotMatch(JSON.stringify(fact), /CONTEUDO-DA-FALHA/);
+    assertFactInvariants(fact, 'tool.fail de teste');
+  });
+
+  it('cadeia && com o teste no fim: categoria test e testResult.chained; com ; ou o teste no meio, bash', () => {
+    const chained = run('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'npm run build && npm test' }, error: 'Exit code 2\nerro de build' });
+    assert.equal(chained.category, 'test');
+    assert.deepEqual(chained.testResult, { ok: false, passed: null, failed: null, total: null, framework: null, chained: true });
+    const counted = run('PostToolUse', { tool_name: 'PowerShell', tool_input: { command: 'composer install && php artisan test' }, tool_response: bashOk(NODE_TEST_OK) });
+    assert.deepEqual(counted.testResult, { ok: true, passed: 3, failed: 0, total: 3, framework: 'node:test', chained: true });
+    for (const command of ['npm test && npm run build', 'npm run build; npm test', 'a || npm test']) {
+      const fact = run('PostToolUse', { tool_name: 'Bash', tool_input: { command }, tool_response: bashOk(NODE_TEST_OK) });
+      assert.deepEqual([fact.category, fact.testResult], ['bash', null], command);
+    }
+  });
+
+  it('framework identificado pelo comando: npx jest ignora a linha no formato do Playwright no stdout e usa o Jest do stderr', () => {
+    const fact = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npx jest' }, tool_response: bashOk('  3 passed (1.2s)\n', JEST_STDERR) });
+    assert.deepEqual(fact.testResult, { ok: true, passed: 4, failed: 0, total: 4, framework: 'jest', chained: false });
+    // Sem framework no comando (npm test), a ordem atual: o stdout vem primeiro.
+    const npm = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_response: bashOk('  3 passed (1.2s)\n', JEST_STDERR) });
+    assert.equal(npm.testResult.framework, 'playwright');
+  });
+
+  it('B13: node:test sem o resumo, com a lista de falhas depois do corte: failed mínimo e partial', () => {
+    const item = 'test at a.test.mjs:5:1\n✖ falha (0.9ms)\n  AssertionError: x\n';
+    const error = `Exit code 1\n✔ passa (0.1ms)\n…[cortado 9000 caracteres]…l 1\nℹ cancelled 0\n\n✖ failing tests:\n\n${item}`;
+    const fact = run('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'node --test' }, error });
+    assert.deepEqual(fact.testResult, { ok: false, passed: null, failed: 1, total: null, framework: 'node:test', chained: false, partial: true });
+  });
+
+  it('sem resumo reconhecido: ok pelo hook e null nos números', () => {
+    const esc = run('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'pytest' }, error: 'Interrupted by user', is_interrupt: true });
+    assert.deepEqual(esc.testResult, { ok: false, passed: null, failed: null, total: null, framework: null, chained: false });
+    const empty = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'go test ./...' } });
+    assert.deepEqual(empty.testResult, { ok: true, passed: null, failed: null, total: null, framework: null, chained: false });
+  });
+
+  it('testResult null fora de comando de teste, com run_in_background e no Agent', () => {
+    const plain = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'echo oi' }, tool_response: bashOk(NODE_TEST_OK) });
+    assert.deepEqual([plain.category, plain.testResult], ['bash', null]);
+    const background = run('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test', run_in_background: true }, tool_response: { backgroundTaskId: 'b1' } });
+    assert.deepEqual([background.category, background.testResult], ['bash', null]);
+    const failed = run('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'node -e "process.exit(3)"' }, error: NODE_TEST_FAIL });
+    assert.equal(failed.testResult, null);
+    const agent = run('PostToolUse', { tool_name: 'Agent', tool_input: { subagent_type: 'tester', description: 'npm test' }, tool_response: { status: 'completed' } });
+    assert.equal(agent.testResult, null);
+  });
+
+  it('PreToolUse e PermissionRequest do comando de teste têm a categoria test', () => {
+    const input = { command: 'npx playwright test' };
+    assert.equal(run('PreToolUse', { tool_name: 'Bash', tool_input: input }).category, 'test');
+    assert.equal(run('PermissionRequest', { tool_name: 'Bash', tool_input: input }).category, 'test');
+  });
+
+  it('testOutputs ([T0] V3): stdout e stderr do Post, texto do Post, error do Failure', () => {
+    assert.deepEqual(testOutputs('tool.post', { tool_response: { stdout: 'a', stderr: 'b', interrupted: false } }), ['a', 'b']);
+    assert.deepEqual(testOutputs('tool.post', { tool_response: { stdout: 1, stderr: null } }), []);
+    assert.deepEqual(testOutputs('tool.post', { tool_response: 'saída' }), ['saída']);
+    assert.deepEqual(testOutputs('tool.post', {}), []);
+    assert.deepEqual(testOutputs('tool.fail', { error: 'Exit code 1', tool_response: { stdout: 'x' } }), ['Exit code 1']);
+    assert.deepEqual(testOutputs('tool.fail', { error: 42 }), []);
+  });
+
+  it(`ts: sentAt a até ${MAX_CLOCK_SKEW_MS / 60_000} min da chegada fica; mais longe, para mais ou para menos, vira a chegada`, () => {
+    for (const offset of [0, 1, -1, MAX_CLOCK_SKEW_MS, -MAX_CLOCK_SKEW_MS]) {
+      assert.equal(run('Stop', {}, { sentAt: RECEIVED_AT + offset }).ts, RECEIVED_AT + offset, String(offset));
+    }
+    for (const offset of [MAX_CLOCK_SKEW_MS + 1, -MAX_CLOCK_SKEW_MS - 1, 24 * 60 * 60 * 1000, -RECEIVED_AT + 1]) {
+      assert.equal(run('Stop', {}, { sentAt: RECEIVED_AT + offset }).ts, RECEIVED_AT, String(offset));
+    }
+    assert.equal(MAX_CLOCK_SKEW_MS, 5 * 60 * 1000);
+  });
+
+  it('vetor do critério: sentAt 24 h no futuro não mantém a sessão além das 6 h', () => {
+    const state = createState();
+    const fact = run('UserPromptSubmit', { prompt: 'oi' }, { sentAt: RECEIVED_AT + 24 * 60 * 60 * 1000 });
+    assert.equal(fact.ts, RECEIVED_AT);
+    apply(state, fact, RECEIVED_AT);
+    assert.deepEqual(tick(state, RECEIVED_AT + IDLE_TTL_MS - 1).removed, []);
+    assert.deepEqual(tick(state, RECEIVED_AT + IDLE_TTL_MS).removed, [SESSION]);
   });
 });

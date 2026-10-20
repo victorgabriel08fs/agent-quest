@@ -20,9 +20,10 @@
 //   6. pares nome-valor com nome sensível (separadores :=, ?=, +=, =>, =, :;
 //      `"nome": "valor"`, `'nome' => 'valor'`, `setx NOME valor`,
 //      `--nome valor`, `--nome=valor`);
-//   7. sequências ANSI (CSI do ECMA-48 e OSC) e qualquer ESC ou BEL que sobrar,
-//      depois da redação, para não comer letras de tokens (`ESC[ghp_…` vira `[•••`);
-//      se saiu algo, as etapas 2 a 6 rodam de novo (no máximo duas passadas).
+//   7. sequências ANSI (CSI completa ou incompleta e OSC) e qualquer ESC ou BEL
+//      que sobrar, depois da redação, para não comer letras de tokens
+//      (`ESC[ghp_…` vira `•••`); se saiu algo, as etapas 2 a 6 rodam de novo (no
+//      máximo duas passadas).
 //
 // Propriedades: idempotente; nunca lança exceção; tempo linear. As expressões
 // só começam no início de uma sequência de caracteres de nome (lookbehind),
@@ -45,16 +46,24 @@ const CONTROLS = /(\x1B\][^\x07\x1B]*\x07)|[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\
 const OSC_BODY_CONTROLS = /[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F-\x9F]/g;
 const TAB = /\t/g;
 
-// 7. Sequências ANSI (18/10/2026), depois da redação: CSI na gramática do
-// ECMA-48 (parâmetros 0x30–0x3F, intermediários 0x20–0x2F, final 0x40–0x7E),
-// OSC completa (até BEL ou ESC \) e OSC aberta com o corpo até o próximo ESC,
-// BEL, espaço em branco ou fim (19/10/2026, a mesma forma da alternativa 3 de
-// SEQ: um terminal esconderia esse corpo, e o painel não mostra mais de um
-// token partido do que o terminal mostraria); depois, qualquer ESC ou BEL que
-// sobrar. Cada tentativa para no próximo ESC (o corpo da OSC aberta, também no
-// espaço), então o tempo é linear. Exportada para o normalizador saber quais
-// espaços em branco a redação remove (fronteiras de leitura).
-export const ESCAPE_SEQUENCES = /\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)|\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*/g;
+// 7. Sequências ANSI, depois da redação. Princípio: o painel não mostra mais de
+// um token partido do que um terminal mostraria. Nesta ordem:
+//   - CSI completa ou incompleta, a mesma da alternativa 1 de SEQ (T6, resíduo
+//     do T5): todos os bytes 0x20–0x3F e o final, se houver; `ESC[ 9` e `ESC[12`
+//     antes de outro ESC saem inteiros, como o terminal os descarta;
+//   - OSC completa (até BEL ou ESC \);
+//   - OSC aberta com o corpo até o próximo ESC, BEL, espaço em branco ou fim (a
+//     mesma forma da alternativa 3 de SEQ);
+//   - depois, qualquer ESC ou BEL que sobrar.
+// Sem escape do ECMA-35 (revisto no T6): tirar ESC + letra comeria a primeira
+// letra de um prefixo de token colado no ESC (`ESCsk-ant-…` viraria `k-ant-…`), e
+// a segunda passada não o reconheceria. Fora de valores, o `(B` de `ESC(B` e o
+// `c` de `ESCc` ficam visíveis (resíduo cosmético aceito); dentro de valores, a
+// alternativa 4 de SEQ os absorve.
+// Cada tentativa para no próximo ESC (o corpo da OSC aberta, também no espaço),
+// então o tempo é linear. Exportada para o normalizador saber quais espaços em
+// branco a redação remove (fronteiras de leitura).
+export const ESCAPE_SEQUENCES = /\x1B\[[\x20-\x3F]*(?:[\x40-\x7E]|(?![\x20-\x7E]))|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)|\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*/g;
 // ESC de sequência incompleta e BEL que sobrar. O BEL só chega aqui se fechava
 // uma OSC (etapa 1) e a redação quebrou a sequência, por exemplo engolindo o ESC
 // dentro de um valor redigido; ele sai com o resto da OSC (B6 do tester).
@@ -73,8 +82,14 @@ const LEFTOVER = /[\x07\x1B]/g;
 //   3. OSC aberta (sem terminador, B11 do tester): o `ESC]` e o corpo até o
 //      próximo ESC, BEL, espaço em branco ou fim; o lookahead final força o corpo
 //      máximo. Um espaço continua terminando o valor.
-//   4. ESC solto: todo ESC que não começa `[` nem `]`.
-// A etapa 7 continua removendo só o que o ECMA-48 reconhece (ESCAPE_SEQUENCES).
+//   4. escape do ECMA-35, completo ou incompleto, que inclui o ESC solto (T6):
+//      o ESC, os intermediários 0x20–0x2F e o final 0x30–0x7E, se houver; se
+//      depois do ESC vier algo fora do ASCII imprimível (ESC, fim, `ç`), só o
+//      ESC. Assim `ESC(B`, `ESCc` e ESC + espaço, `"`, `&` ou `;` não terminam o
+//      valor. Encurtar os intermediários deixaria um intermediário como próximo,
+//      e as duas saídas falham.
+// Depois do ESC, `[` leva à alternativa 1, `]` à 2 ou à 3 e qualquer outro
+// caractere à 4. A etapa 7 (ESCAPE_SEQUENCES) usa as mesmas CSI e OSC, sem a 4.
 //
 // Linearidade por construção (B10 do tester; seção 10, etapa 6), regras para
 // toda expressão das etapas 3 a 6:
@@ -89,8 +104,8 @@ const LEFTOVER = /[\x07\x1B]/g;
 const CSI = /\x1B\[[\x20-\x3F]*(?:[\x40-\x7E]|(?![\x20-\x7E]))/.source;
 const OSC = /\x1B\][^\x07\x1B]*(?:\x07|\x1B\x5C)/.source;
 const OSC_OPEN = /\x1B\](?![^\x07\x1B]*(?:\x07|\x1B\x5C))[^\x07\x1B\s]*(?![^\x07\x1B\s])/.source;
-const LONE_ESC = /\x1B(?![\[\]])/.source;
-const SEQ = `${CSI}|${OSC}|${OSC_OPEN}|${LONE_ESC}`;
+const ECMA35_ESCAPE = /\x1B(?![\[\]])[\x20-\x2F]*(?:[\x30-\x7E]|(?![\x20-\x7E]))/.source;
+const SEQ = `${CSI}|${OSC}|${OSC_OPEN}|${ECMA35_ESCAPE}`;
 /** Um elemento de valor: uma sequência ANSI ou um caractere da classe `x` (sem ESC). */
 const unit = (/** @type {string} */ x) => `(?:${SEQ}|${x})`;
 
@@ -148,7 +163,10 @@ const USER_OPTION = new RegExp(`(?<![^\\s"'])(?:(-u)([ \\t]*)|(--user)([ \\t]+|=
 const HEADER_QUOTED = /•••|"(?:\\[^\r\n]|[^"\\\r\n])*"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?/.source;
 const HEADER_VALUE = `${HEADER_QUOTED}|${unit(/\\[^\r\n]|[^\r\n"'\\\x1B]/.source)}+`;
 const HEADER = new RegExp(`(?<![A-Za-z0-9-])((?:proxy-)?authorization|set-cookie|cookie|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-(?:key|token|secret))(["']?[ \\t]*:[ \\t]*)(?:${HEADER_VALUE})`, 'gi');
-const BEARER = new RegExp(`(?<![A-Za-z0-9_-])(bearer)[ \\t]+${unit('[A-Za-z0-9._~+/-]')}+=*`, 'gi');
+// O valor do Bearer vai até o próximo espaço em branco ou aspas, com qualquer
+// caractere, inclusive não ASCII (revisto no T6: com a classe ASCII, um `ç`
+// terminava o valor e o resto aparecia). Sem exigência depois do laço: linear.
+const BEARER = new RegExp(`(?<![A-Za-z0-9_-])(bearer)[ \\t]+${unit(/[^\s"'\x1B]/.source)}+`, 'gi');
 
 // 6. Pares nome-valor, `setx NOME valor` e `--nome valor`: uma busca global só
 // da cabeça (nome e separador), o teste de sensibilidade do nome e, para nome

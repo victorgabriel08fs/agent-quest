@@ -950,7 +950,7 @@ describe('[T0] V5: atividade por tipo (seção 9) e label do main', () => {
     const list = activityScenario();
     const at = (n) => view(play(list.slice(0, n)).state);
     assert.deepEqual(pickActivity(agentIn(at(4), T.id).activity), { kind: 'start', category: null, tool: null, target: null, detail: null, state: 'running' });
-    assert.deepEqual(pickActivity(agentIn(at(5), T.id).activity), { kind: 'tool', category: 'bash', tool: 'Bash', target: 'npm test', detail: 'Rodar a suíte', state: 'running' });
+    assert.deepEqual(pickActivity(agentIn(at(5), T.id).activity), { kind: 'tool', category: 'test', tool: 'Bash', target: 'npm test', detail: 'Rodar a suíte', state: 'running' });
     assert.equal(agentIn(at(6), T.id).activity.state, 'failed');
     assert.deepEqual(pickActivity(agentIn(at(3), 'main').activity), { kind: 'delegate', category: null, tool: 'Agent', target: 'Explore', detail: 'Mapear em segundo plano', state: 'running' });
     assert.equal(agentIn(at(7), 'main').activity.state, 'done', 'segundo plano: done logo no lançamento');

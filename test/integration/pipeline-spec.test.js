@@ -1048,8 +1048,8 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     assert.deepEqual(byKind('agent.started').data, { agentType: 'tester', role: 'tes', label: 'Rodar a suíte', parentKey: 'main' });
     assert.deepEqual(byKind('tool.started', 0).data, { toolUseId: T_READ, tool: 'Read', category: 'read', target: 'CLAUDE.md', detail: null });
     assert.deepEqual(byKind('tool.finished').data, { toolUseId: T_READ, tool: 'Read', category: 'read', durationMs: 12 });
-    assert.deepEqual(byKind('tool.started', 1).data, { toolUseId: T_BASH, tool: 'Bash', category: 'bash', target: 'npm test', detail: 'Rodar os testes' });
-    assert.deepEqual(byKind('tool.failed').data, { toolUseId: T_BASH, tool: 'Bash', category: 'bash', target: 'npm test', error: 'Exit code 1', interrupted: false });
+    assert.deepEqual(byKind('tool.started', 1).data, { toolUseId: T_BASH, tool: 'Bash', category: 'test', target: 'npm test', detail: 'Rodar os testes' });
+    assert.deepEqual(byKind('tool.failed').data, { toolUseId: T_BASH, tool: 'Bash', category: 'test', target: 'npm test', error: 'Exit code 1', interrupted: false });
     assert.deepEqual(byKind('agent.finished').data, { outcome: 'done' });
     within(byKind('session.started').ts, 'SessionStart');
     within(byKind('agent.delegated').ts, 'PreToolUse Agent');
@@ -1084,7 +1084,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
         },
         {
           key: TESTER.id, agentId: TESTER.id, agentType: 'tester', role: 'tes', label: 'Rodar a suíte', status: 'idle', finished: true, background: false, parentKey: 'main',
-          activity: { kind: 'tool', category: 'bash', tool: 'Bash', target: 'npm test', detail: 'Rodar os testes', state: 'failed', at: bash.ts },
+          activity: { kind: 'tool', category: 'test', tool: 'Bash', target: 'npm test', detail: 'Rodar os testes', state: 'failed', at: bash.ts },
           waitingFor: null, health: { ok: 1, total: 2 }, context: null, startedAt: byKind('agent.started').ts, lastEventAt: byKind('agent.finished').ts,
         },
       ],
