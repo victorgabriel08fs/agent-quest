@@ -102,6 +102,7 @@ const FEED_KIND_SET = new Set(FEED_KINDS);
  * @property {{ open: number, lastRun: import('../../../shared/contract.js').TestRun|null }} bugs
  * @property {number} bugsCrushed
  * @property {import('./quests.js').Compaction|null} compaction
+ * @property {import('./quests.js').Closing|null} closing   ticket anterior em fechamento (A-T8-1)
  * @property {import('./permissions.js').Approval[]} approvals   pedidos de aprovação pendentes
  */
 
@@ -165,6 +166,7 @@ export function createSession(id, fact) {
     bugs: { open: 0, lastRun: null },
     bugsCrushed: 0,
     compaction: null,
+    closing: null,
     approvals: [],
   };
 }

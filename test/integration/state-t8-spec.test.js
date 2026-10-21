@@ -92,10 +92,15 @@ describe('[T0] V8: ticket do pedido do usuário', () => {
     const tracker = new Tracker();
     const result = play(s.events, { tracker });
     const finished = of(result.events, 'quest.finished').map((e) => [e.data.n, e.data.outcome, e.data.error]);
-    assert.deepEqual(finished, [[1, 'done', null], [2, 'failed', 'overloaded'], [3, 'interrupted', null], [4, 'interrupted', null], [5, 'interrupted', null]]);
-    assert.deepEqual(kinds(result.steps[5].events), [['quest.finished', 'main'], ['quest.started', 'main']], 'novo pedido: fecha o anterior e abre o novo');
+    assert.deepEqual([...finished].sort((a, b) => a[0] - b[0]), [[1, 'done', null], [2, 'failed', 'overloaded'], [3, 'interrupted', null], [4, 'interrupted', null], [5, 'interrupted', null]]);
+    assert.equal(new Set(finished.map(([n]) => n)).size, 5, 'um único quest.finished por ticket');
+    // A-T8-1: o pedido novo põe o ticket anterior em fechamento (2 s pela chegada) e já abre o novo.
+    assert.deepEqual(kinds(result.steps[5].events), [['quest.started', 'main']], 'novo pedido: abre o novo; o anterior fica em fechamento');
     assert.deepEqual(kinds(result.steps[6].events), [['quest.finished', 'main'], ['session.idle', null]]);
-    assert.deepEqual(kinds(result.steps[8].events), [['quest.finished', 'main'], ['session.ended', null]]);
+    assert.equal(result.steps[6].events[0].data.n, 4, 'o idle_prompt fecha o ticket aberto (D)');
+    // O SessionEnd fecha o que estava em fechamento (C) e o aberto (E), antes do session.ended.
+    assert.deepEqual(kinds(result.steps[8].events), [['quest.finished', 'main'], ['quest.finished', 'main'], ['session.ended', null]]);
+    assert.deepEqual(result.steps[8].events.slice(0, 2).map((e) => [e.data.n, e.data.outcome]), [[3, 'interrupted'], [5, 'interrupted']]);
     const session = view(result.state);
     assert.equal(session.counters.questsDone, 1, 'só o done conta');
     assert.equal(session.quest.status, 'interrupted');
@@ -116,7 +121,10 @@ describe('[T0] V8: ticket do pedido do usuário', () => {
     const tracker = new Tracker();
     const result = play(s.events, { tracker });
     const started = of(result.events, 'quest.started').map((e) => [e.data.n, e.data.title, e.data.implicit]);
-    assert.deepEqual(started, [[1, 'Tarefa em andamento', true], [2, 'Pedido P', false], [3, 'Tarefa em andamento', true]]);
+    // A ferramenta do main depois do Stop (sem pedido novo) é atraso e não abre o ticket 3 (A-T8-1, regra 3).
+    assert.deepEqual(started, [[1, 'Tarefa em andamento', true], [2, 'Pedido P', false]]);
+    assert.deepEqual(kinds(result.steps.at(-2).events), [['tool.started', 'main']]);
+    assert.equal(view(result.state).quest.n, 2);
     assert.deepEqual(kinds(result.steps[3].events), [['tool.started', 'main']], 'o atraso entra no feed, sem abrir ticket');
     assert.deepEqual(kinds(result.steps[7].events), [['tool.started', 'main']], 'promptId de ticket encerrado não reabre');
     assert.equal(of(result.events, 'quest.finished').find((e) => e.data.n === 1).data.actions, 1, 'o atraso não conta ações');
@@ -672,13 +680,17 @@ describe('[T0] V12: interrupção com Esc', () => {
     s.pre(200, b);
     s.prompt(5000, 'B'); // Esc antes: nenhum Stop
     const result = play(s.events);
-    assert.deepEqual(kinds(lastStep(result)), [['agent.finished', T.id], ['quest.phase', T.id], ['quest.finished', 'main'], ['quest.started', 'main']]);
+    assert.deepEqual(kinds(lastStep(result)), [['agent.finished', T.id], ['quest.phase', T.id], ['quest.started', 'main']]);
     assert.equal(lastStep(result)[0].data.outcome, 'unknown');
-    assert.equal(lastStep(result)[2].data.outcome, 'interrupted');
+    // Sem Stop atrasado em 2 s (pela chegada), o ticket anterior termina interrupted no tick.
+    assert.deepEqual(tick(result.state, T0 + 5000 + 1999).events, []);
+    const late = tick(result.state, T0 + 5000 + 2000).events;
+    assert.deepEqual(kinds(late), [['quest.finished', 'main']]);
+    assert.deepEqual([late[0].data.n, late[0].data.outcome], [1, 'interrupted']);
     checkState(result.state);
   });
 
-  it('Stop atrasado do turno anterior (ts antes do início do ticket aberto) não encerra o ticket novo nem deixa o main ocioso', { todo: 'achado do tester (T8): o Stop não confere o ts contra o início do ticket aberto, como o turnEndedWithoutStop' }, () => {
+  it('Stop atrasado do turno anterior (ts antes do início do ticket aberto) não encerra o ticket novo nem deixa o main ocioso', () => {
     const s = script();
     s.prompt(0, 'Pedido A');
     s.tool(1000, 'Read', { file_path: `${PROJECT}\\a.md` });
@@ -918,5 +930,169 @@ describe('desempenho do T8: 1 000 fatos (ADR 0010, complemento de 19/10/2026)', 
     t.diagnostic(`1 000 fatos: ${ms.toFixed(1)} ms; razão contra 125 fatos: ${ratio.toFixed(1)}`);
     assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
     assert.ok(ratio <= 32, `razão ${ratio.toFixed(1)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A-T8-1: Stop atrasado e fechamento adiado (seção 6, "Stop atrasado"; T8, ajuste pós-aprovação)
+// ---------------------------------------------------------------------------
+
+describe('A-T8-1: Stop atrasado do turno anterior e ticket em fechamento', () => {
+  /** Turno A e pedido B na fila; `order` dá os índices na ordem de chegada; `arrive` sobrescreve a chegada. */
+  function queued() {
+    const s = script();
+    s.prompt(0, 'Pedido A'); // 0
+    s.tool(1000, 'Read', { file_path: `${PROJECT}\\a.md` }); // 1, 2
+    s.stop(10_000); // 3
+    s.prompt(10_030, 'Pedido B, que estava na fila'); // 4
+    s.tool(12_000, 'Read', { file_path: `${PROJECT}\\b.md` }); // 5, 6
+    return s.events;
+  }
+  const finishedOf = (events) => of(events, 'quest.finished').map((e) => [e.data.n, e.data.outcome]);
+
+  it('vetor do plano: Stop de A (ts 10 000) depois do pedido B (ts 10 030): A done, B aberto com o main trabalhando, um único quest.finished de A', () => {
+    const l = queued();
+    const tracker = new Tracker();
+    const result = play([l[0], l[1], l[2], l[4], l[3], l[5], l[6]], { tracker });
+    assert.deepEqual(kinds(result.steps[3].events), [['quest.started', 'main']], 'B começa; A fica em fechamento');
+    assert.deepEqual(finishedOf(result.steps[4].events), [[1, 'done']], 'o Stop atrasado fecha A como done');
+    assert.deepEqual(finishedOf(result.events), [[1, 'done']]);
+    const session = view(result.state);
+    assert.deepEqual([session.quest.n, session.quest.status, session.quest.actions], [2, 'open', 1]);
+    assert.equal(agentIn(session, 'main').status, 'working');
+    assert.equal(session.counters.questsDone, 1);
+    assert.deepEqual(tick(result.state, T0 + 60_000).events.filter((e) => e.kind === 'quest.finished'), [], 'nada mais fecha depois');
+    checkState(result.state);
+  });
+
+  it('StopFailure atrasado fecha A como failed, com o erro; B segue aberto', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    s.stopFailure(10_000, 'rate_limit');
+    s.prompt(10_030, 'B');
+    const l = s.events;
+    const result = play([l[0], l[2], l[1]]);
+    assert.deepEqual(of(result.events, 'quest.finished').map((e) => [e.data.n, e.data.outcome, e.data.error]), [[1, 'failed', 'rate_limit']]);
+    assert.equal(view(result.state).quest.status, 'open');
+  });
+
+  it('sem Stop em 2 s: A termina interrupted no próximo fato depois do prazo ou no tick (relógio injetado), não antes', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    s.prompt(5000, 'B');
+    const base = play(s.events);
+    assert.deepEqual(tick(base.state, T0 + 6999).events, [], 'antes do prazo, nada');
+    const byTick = tick(base.state, T0 + 7000).events;
+    assert.deepEqual(finishedOf(byTick), [[1, 'interrupted']]);
+    assert.equal(byTick[0].data.durationMs, 5000, 'o fim é a hora do pedido que o substituiu');
+    // Pelo próximo fato (de qualquer tipo) depois do prazo.
+    const t = script();
+    t.prompt(0, 'A');
+    t.prompt(5000, 'B');
+    t.tool(9000, 'Read', { file_path: `${PROJECT}\\c.md` });
+    const byFact = play(t.events);
+    assert.deepEqual(finishedOf(byFact.steps[2].events), [[1, 'interrupted']]);
+    assert.deepEqual(kinds(byFact.steps[2].events)[0], ['quest.finished', 'main'], 'o fechamento sai antes dos eventos do fato');
+  });
+
+  it('Stop atrasado que chega depois do prazo de 2 s não fecha mais nada: A já terminou interrupted, e não há segundo quest.finished', () => {
+    const l = queued();
+    const late = { ...l[3], arrive: 10_030 + 2500 };
+    const result = play([l[0], l[1], l[2], l[4], late]);
+    assert.deepEqual(finishedOf(result.events), [[1, 'interrupted']]);
+    assert.equal(view(result.state).quest.status, 'open');
+    assert.equal(agentIn(view(result.state), 'main').status, 'working', 'o Stop atrasado não deixa o main ocioso');
+  });
+
+  it('terceiro pedido dentro do prazo: A termina interrupted na hora, B entra em fechamento; o Stop atrasado de B o fecha done', () => {
+    const s = script();
+    s.prompt(0, 'A'); // 0
+    s.prompt(1000, 'B'); // 1
+    s.stop(1500); // 2: Stop de B
+    s.prompt(1530, 'C'); // 3
+    const l = s.events;
+    const result = play([l[0], l[1], l[3], l[2]]);
+    assert.deepEqual(finishedOf(result.steps[2].events), [[1, 'interrupted']], 'C chega com B aberto e A ainda em fechamento');
+    assert.deepEqual(finishedOf(result.steps[3].events), [[2, 'done']]);
+    assert.deepEqual(finishedOf(result.events).sort((a, b) => a[0] - b[0]), [[1, 'interrupted'], [2, 'done']]);
+    assert.deepEqual([view(result.state).quest.n, view(result.state).quest.status], [3, 'open']);
+  });
+
+  it('Stop com ts anterior ao início do ticket em fechamento não o fecha (fica para o prazo)', () => {
+    const s = script();
+    s.prompt(1000, 'A'); // 0
+    s.prompt(5000, 'B'); // 1
+    s.stop(500); // 2: de antes de A
+    const result = play(s.events);
+    assert.deepEqual(result.steps[2].events, []);
+    assert.deepEqual(finishedOf(tick(result.state, T0 + 5000 + 2000).events), [[1, 'interrupted']]);
+  });
+
+  it('SessionEnd com um ticket em fechamento: fecha o em fechamento e o aberto, antes do session.ended; nada depois', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    s.prompt(5000, 'B');
+    s.sessionEnd(5100);
+    const result = play(s.events);
+    assert.deepEqual(kinds(result.steps[2].events), [['quest.finished', 'main'], ['quest.finished', 'main'], ['session.ended', null]]);
+    assert.deepEqual(finishedOf(result.steps[2].events), [[1, 'interrupted'], [2, 'interrupted']]);
+    assert.deepEqual(tick(result.state, T0 + 60_000).events, []);
+  });
+
+  it('ticket em waiting_background: o pedido novo o fecha na hora como interrupted (não entra em fechamento)', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    s.stop(100, [{ id: 'tarefa', type: 'local_bash', status: 'running', agent_type: null }]);
+    s.prompt(200, 'B');
+    const result = play(s.events);
+    assert.deepEqual(kinds(result.steps[2].events), [['quest.finished', 'main'], ['quest.started', 'main']]);
+    assert.deepEqual(tick(result.state, T0 + 10_000).events.filter((e) => e.kind === 'quest.finished'), []);
+  });
+
+  it('fatos do ticket em fechamento (com o prompt_id dele) não o reabrem nem contam no novo; o pedido dele repetido não muda nada', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    const pa = s.promptId();
+    s.prompt(5000, 'B');
+    const result = play(s.events);
+    const t = script();
+    t.hook(5010, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: `${PROJECT}\\a.md` }, tool_use_id: 'toolu_01DoA', prompt_id: pa });
+    t.hook(5020, 'UserPromptSubmit', { prompt: 'A', prompt_id: pa });
+    const more = play(t.events, { state: result.state });
+    assert.deepEqual(kinds(more.steps[0].events), [['tool.started', 'main']]);
+    assert.deepEqual(more.steps[1].events, []);
+    const session = view(result.state);
+    assert.deepEqual([session.quest.n, session.quest.actions], [2, 0]);
+    assert.deepEqual(finishedOf(tick(result.state, T0 + 7000).events), [[1, 'interrupted']]);
+  });
+
+  it('evento atrasado do main depois do Stop, sem ticket aberto, não abre ticket implícito; o pedido seguinte abre', () => {
+    const s = script();
+    s.prompt(0, 'A');
+    s.stop(1000);
+    s.tool(3000, 'Read', { file_path: `${PROJECT}\\x.md` });
+    s.prompt(5000, 'B');
+    const result = play(s.events);
+    assert.deepEqual(kinds(result.steps[2].events), [['tool.started', 'main']]);
+    assert.deepEqual(of(result.events, 'quest.started').map((e) => e.data.n), [1, 2]);
+  });
+
+  it('permutação com a corrida: embaralhar dentro de 200 ms dá o mesmo estado final e um único quest.finished por ticket', (t) => {
+    const l = queued();
+    const random = rng(20261021);
+    const baseline = finalState(l, 30_000);
+    let failed = 0;
+    for (let i = 0; i < 300; i++) {
+      const order = jitterOrder(l, random);
+      const result = play(order);
+      tick(result.state, T0 + 30_000);
+      const diffs = diffPaths(getSessionStates(result.state, { feed: false }).map(withoutFeed), baseline);
+      const ns = of(result.events, 'quest.finished').map((e) => e.data.n);
+      assert.equal(new Set(ns).size, ns.length, 'quest.finished repetido');
+      if (diffs.length) failed++;
+    }
+    t.diagnostic(`${failed} de 300 com estado final diferente`);
+    assert.equal(failed, 0);
+    assert.deepEqual([baseline[0].quest.n, baseline[0].quest.status, baseline[0].counters.questsDone], [2, 'open', 1]);
   });
 });

@@ -218,7 +218,7 @@ describe('fim do turno, novo pedido e ordem trocada', () => {
     assert.equal(session.counters.pendingApprovals, 0);
   });
 
-  it('novo pedido do usuário com pedido pendente do main: unknown antes de encerrar o ticket', () => {
+  it('novo pedido do usuário com pedido pendente do main: unknown antes do ticket novo (o anterior fica em fechamento, A-T8-1)', () => {
     const scn = scenario('aprovacao-novo-pedido', 'pedido sem resposta e novo pedido', (b) => {
       b.sessionStart();
       b.prompt('Gerar o build');
@@ -230,7 +230,6 @@ describe('fim do turno, novo pedido e ordem trocada', () => {
     const result = run(scn);
     assertEvents(result.steps.at(-1).events, [
       ['permission.resolved', 'main', { outcome: 'unknown', by: 'inferred' }],
-      ['quest.finished', 'main', { outcome: 'interrupted' }],
       ['quest.started', 'main', { n: 2 }],
     ], { kinds: null });
     assert.equal(agentOf(view(result.state), 'main').status, 'working');

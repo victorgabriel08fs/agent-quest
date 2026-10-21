@@ -53,6 +53,13 @@ export const REOPEN_WINDOW_MS = 30 * 60 * 1000;
 /** Tamanho do título do primeiro ticket no rótulo da sessão (seção 7). */
 export const LABEL_TITLE_CHARS = 48;
 
+/**
+ * Prazo do ticket em fechamento (A-T8-1, seção 6, "Stop atrasado"), pela hora
+ * de chegada: um Stop atrasado do turno anterior que chegue nesse prazo fecha o
+ * ticket como `done` (ou `failed`); senão, ele termina `interrupted`.
+ */
+export const CLOSING_GRACE_MS = 2000;
+
 /** Ids de tickets encerrados lembrados por sessão (seção 8, regra 5). */
 export const MAX_CLOSED_QUESTS = 200;
 
@@ -98,6 +105,15 @@ const FINISHED_TASK_STATUS = new Set(['completed', 'complete', 'done', 'failed',
  * @property {{ open: number, lastRun: TestRun|null }} bugs
  * @property {number} bugsCrushed
  * @property {Compaction|null} compaction
+ * @property {Closing|null} closing      ticket anterior em fechamento (A-T8-1)
+ */
+
+/**
+ * Ticket que um pedido novo do usuário deixou em fechamento (A-T8-1).
+ * @typedef {object} Closing
+ * @property {Quest} quest
+ * @property {number} ts                  `ts` do pedido novo: o fim do ticket se ele terminar `interrupted`
+ * @property {number} until               hora de chegada (relógio do servidor) em que o prazo vence
  */
 
 /**
@@ -133,7 +149,7 @@ export function questKeyOf(fact) {
  */
 export function isKnownPrompt(table, fact) {
   const key = questKeyOf(fact);
-  return key !== null && (table.quest?.id === key || table.closedQuests.has(key));
+  return key !== null && (table.quest?.id === key || table.closing?.quest.id === key || table.closedQuests.has(key));
 }
 
 /**
@@ -169,6 +185,19 @@ export function hasActiveBackgroundTasks(tasks) {
  */
 export function turnEndedWithoutStop(quest, ts) {
   return quest !== null && quest.status === 'open' && ts >= quest.startedAt;
+}
+
+/**
+ * A-T8-1 (seção 6, "Stop atrasado"): Stop ou StopFailure com `ts` anterior ao
+ * início do ticket aberto é do turno anterior, que chegou depois do pedido
+ * seguinte por corrida entre processos. A mesma comparação de `ts` do
+ * `turnEndedWithoutStop`.
+ * @param {Quest|null} quest             o ticket atual
+ * @param {number} ts                    ts do Stop
+ * @returns {boolean}
+ */
+export function isLateStop(quest, ts) {
+  return quest !== null && isQuestOpen(quest) && ts < quest.startedAt;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +265,21 @@ export function startQuest(table, { id, title, implicit, ts }, emit) {
 export function finishQuest(table, outcome, ts, emit, error = null) {
   const quest = openQuestOf(table);
   if (!quest) return false;
+  closeQuest(table, quest, outcome, ts, emit, error);
+  return true;
+}
+
+/**
+ * Encerra um ticket (o atual ou o que está em fechamento) e emite
+ * `quest.finished`.
+ * @param {QuestTable} table
+ * @param {Quest} quest
+ * @param {'done'|'failed'|'interrupted'} outcome
+ * @param {number} ts
+ * @param {Emit} emit
+ * @param {string|null} error
+ */
+function closeQuest(table, quest, outcome, ts, emit, error) {
   quest.status = outcome;
   quest.endedAt = Math.max(ts, quest.startedAt);
   quest.error = outcome === 'failed' ? error : null;
@@ -256,6 +300,64 @@ export function finishQuest(table, outcome, ts, emit, error = null) {
     durationMs: quest.endedAt - quest.startedAt,
     actions: quest.actions,
   }, ts);
+}
+
+// ---------------------------------------------------------------------------
+// Ticket em fechamento (A-T8-1, seção 6, "Stop atrasado")
+// ---------------------------------------------------------------------------
+
+/**
+ * Pedido novo do usuário com o ticket `open`: em vez de fechar na hora, o
+ * ticket fica em fechamento por CLOSING_GRACE_MS (pela hora de chegada),
+ * enquanto o ticket novo já começa. Um que já estava em fechamento termina
+ * `interrupted` antes. Ticket em `waiting_background` já teve o Stop dele e
+ * fecha na hora (`finishQuest`).
+ * @param {QuestTable} table
+ * @param {number} ts                    ts do pedido novo
+ * @param {number} now                   hora de chegada do pedido
+ * @param {Emit} emit
+ * @returns {boolean}                    true se o ticket ficou em fechamento
+ */
+export function deferQuestClose(table, ts, now, emit) {
+  const quest = table.quest;
+  if (quest === null || quest.status !== 'open') return false;
+  settleClosing(table, Infinity, emit);
+  table.closing = { quest, ts, until: now + CLOSING_GRACE_MS };
+  return true;
+}
+
+/**
+ * Prazo vencido (no próximo fato ou no `tick`): o ticket em fechamento
+ * termina `interrupted`, com o fim na hora do pedido que o substituiu.
+ * @param {QuestTable} table
+ * @param {number} now                   hora de chegada (ou do `tick`); Infinity encerra já
+ * @param {Emit} emit
+ * @returns {boolean}                    true se encerrou
+ */
+export function settleClosing(table, now, emit) {
+  const closing = table.closing;
+  if (closing === null || now < closing.until) return false;
+  table.closing = null;
+  closeQuest(table, closing.quest, 'interrupted', closing.ts, emit, null);
+  return true;
+}
+
+/**
+ * Stop atrasado (`isLateStop`) dentro do prazo e com `ts` entre o início do
+ * ticket em fechamento e o do novo: o ticket em fechamento termina `done`, ou
+ * `failed` no StopFailure. Sempre um único `quest.finished` por ticket.
+ * @param {QuestTable} table
+ * @param {'done'|'failed'} outcome
+ * @param {number} ts                    ts do Stop
+ * @param {Emit} emit
+ * @param {string|null} [error]
+ * @returns {boolean}                    true se encerrou
+ */
+export function closeWithLateStop(table, outcome, ts, emit, error = null) {
+  const closing = table.closing;
+  if (closing === null || ts < closing.quest.startedAt || ts >= closing.ts) return false;
+  table.closing = null;
+  closeQuest(table, closing.quest, outcome, ts, emit, outcome === 'failed' ? error : null);
   return true;
 }
 
@@ -301,20 +403,23 @@ export function reopenForSystem(table, ts) {
 
 /**
  * O ticket de uma atividade (seção 6): o aberto; sem ticket aberto, um
- * implícito. Null quando o fato é de um ticket já encerrado, que não reabre
- * (seção 8, regra 5): pelo `promptId` dele ou, sem `promptId`, pelo `ts`
- * até o fim do último ticket (a atividade aconteceu durante ele e chegou
- * atrasada).
+ * implícito. Null quando o fato é de um ticket já encerrado ou em fechamento,
+ * que não reabre (seção 8, regra 5): pelo `promptId` dele ou, sem `promptId`,
+ * pelo `ts` até o fim do último ticket (a atividade aconteceu durante ele e
+ * chegou atrasada). Evento atrasado de agente que não volta a trabalhar
+ * (`implicit: false`; seção 8, regra 4) nunca abre implícito (A-T8-1).
  * @param {QuestTable} table
  * @param {Fact} fact
  * @param {Emit} emit
+ * @param {{ implicit?: boolean }} [options]   `implicit: false`: sem ticket aberto, não abre um
  * @returns {Quest|null}
  */
-export function questForActivity(table, fact, emit) {
+export function questForActivity(table, fact, emit, { implicit = true } = {}) {
   const key = questKeyOf(fact);
-  if (key !== null && table.closedQuests.has(key)) return null;
+  if (key !== null && (table.closedQuests.has(key) || table.closing?.quest.id === key)) return null;
   const open = openQuestOf(table);
   if (open) return open;
+  if (!implicit) return null;
   const last = table.quest;
   if (last !== null && last.endedAt !== null && fact.ts <= last.endedAt) return null;
   return startQuest(table, { id: key, title: IMPLICIT_TITLE, implicit: true, ts: fact.ts }, emit);

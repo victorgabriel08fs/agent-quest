@@ -99,8 +99,9 @@ describe('fatos fora de ordem e duplicados', () => {
     const s = script({ promptIds: false });
     s.prompt(0, 'Pedido');
     const result = play([s.events[0], { ...s.events[0], at: 10 }]);
-    assert.deepEqual(kinds(result.steps[1].events), [['quest.finished', 'main'], ['quest.started', 'main']]);
-    assert.equal(result.steps[1].events[0].data.outcome, 'interrupted');
+    assert.deepEqual(kinds(result.steps[1].events), [['quest.started', 'main']]);
+    const closed = tick(result.state, T0 + 10 + 2000).events;
+    assert.deepEqual(closed.map((e) => [e.kind, e.data.n, e.data.outcome]), [['quest.finished', 1, 'interrupted']]);
     const withId = script();
     withId.prompt(0, 'Pedido');
     assert.deepEqual(play([withId.events[0], { ...withId.events[0], at: 10 }]).steps[1].events, [], 'com prompt_id, nada muda (guarda 1)');
@@ -242,8 +243,9 @@ describe('SubagentStop sem SubagentStart', () => {
     s.start(10, T);
     s.tool(20, 'Read', { file_path: `${PROJECT}\\a.md` }, T);
     const result = play(s.events);
-    // Sem ticket nenhum, o SubagentStop não abre ticket; a ferramenta atrasada abre um implícito (seção 6).
-    assert.deepEqual(kinds(result.events), [['agent.started', T.id], ['agent.finished', T.id], ['quest.started', 'main'], ['tool.started', T.id], ['tool.finished', T.id]]);
+    // Nem o SubagentStop nem a ferramenta atrasada do agente encerrado abrem ticket (A-T8-1, regra 3).
+    assert.deepEqual(kinds(result.events), [['agent.started', T.id], ['agent.finished', T.id], ['tool.started', T.id], ['tool.finished', T.id]]);
+    assert.equal(view(result.state).quest, null);
     const t = agentIn(view(result.state), T.id);
     assert.equal(t.label, 'tester');
     assert.equal(t.status, 'idle');

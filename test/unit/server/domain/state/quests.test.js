@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { apply, createState, getSessionState, getSessionStates, tick } from '../../../../../server/domain/state/index.js';
 import {
+  CLOSING_GRACE_MS,
   COMPACT_PAIR_MS,
   IMPLICIT_TITLE,
   REOPEN_WINDOW_MS,
@@ -13,6 +14,7 @@ import {
   beginCompaction,
   completeCompaction,
   hasActiveBackgroundTasks,
+  isLateStop,
   isSystemPrompt,
   questKeyOf,
   turnEndedWithoutStop,
@@ -104,22 +106,25 @@ describe('[T0] V8: ticket do pedido ao Stop', () => {
 });
 
 describe('fim do ticket: novo pedido, StopFailure, SessionEnd e idle_prompt', () => {
-  it('novo pedido do usuário com ticket aberto: interrupted, e o seguinte ganha n = 2', () => {
+  it('novo pedido do usuário com ticket aberto: o seguinte ganha n = 2, e o anterior termina interrupted depois do prazo de fechamento (A-T8-1)', () => {
     const scn = scenario('dois-pedidos', 'pedido sem Stop e outro pedido', (b) => {
       b.sessionStart();
       b.prompt('Primeiro pedido');
       b.tool('Read', readClaude);
       b.prompt('Segundo pedido');
+      b.wait(CLOSING_GRACE_MS);
       b.tool('Read', readClaude);
       b.stop();
     });
     const result = run(scn);
     assertEvents(result.events, [
       ['quest.started', 'main', { questId: promptIdOf(scn, 1), n: 1, title: 'Primeiro pedido' }],
-      ['quest.finished', 'main', { questId: promptIdOf(scn, 1), n: 1, outcome: 'interrupted', actions: 1 }],
       ['quest.started', 'main', { questId: promptIdOf(scn, 2), n: 2, title: 'Segundo pedido' }],
+      ['quest.finished', 'main', { questId: promptIdOf(scn, 1), n: 1, outcome: 'interrupted', actions: 1 }],
       ['quest.finished', 'main', { questId: promptIdOf(scn, 2), n: 2, outcome: 'done', actions: 1 }],
     ], { kinds: T8_KINDS });
+    // O fim do anterior é a hora do pedido que o substituiu.
+    assert.equal(result.events.find((event) => event.kind === 'quest.finished').data.durationMs, timeOf(result, 4) - timeOf(result, 1));
     const session = view(result.state);
     assert.equal(session.counters.questsDone, 1, 'interrompido não conta como entregue');
     assert.equal(session.label, 'Primeiro pedido', 'o rótulo é o título do primeiro ticket');
@@ -246,7 +251,7 @@ describe('ticket implícito e promptId de ticket encerrado (seção 6; seção 8
     assert.equal(agentOf(session, 'main').activity.tool, 'Grep');
   });
 
-  it('fato sem promptId depois do ticket encerrado abre um implícito', () => {
+  it('ferramenta do main sem promptId depois do Stop é atraso (regra 4): não abre implícito (A-T8-1)', () => {
     const scn = scenario('sem-prompt-id', 'ferramenta sem prompt_id depois do Stop', (b) => {
       b.sessionStart();
       b.prompt('Pedido');
@@ -254,31 +259,33 @@ describe('ticket implícito e promptId de ticket encerrado (seção 6; seção 8
       b.raw('PreToolUse', { tool_name: 'Read', tool_input: readClaude, tool_use_id: 'toolu_01semPromptId0000000000', prompt_id: undefined });
     });
     const result = run(scn);
-    assertEvents(result.steps.at(-1).events, [
-      ['quest.started', 'main', { n: 2, title: IMPLICIT_TITLE, implicit: true }],
-      ['tool.started', 'main'],
-    ], { kinds: null });
+    assertEvents(result.steps.at(-1).events, [['tool.started', 'main']], { kinds: null });
+    assert.equal(view(result.state).quest.n, 1);
   });
 
-  it('atividade sem promptId com ts até o fim do ticket (chegou atrasada) não abre implícito', () => {
+  it('subagente em segundo plano ainda trabalhando: atividade sem promptId com ts até o fim do ticket não abre implícito; depois do fim, abre', () => {
     const sid = 'sessao-atraso';
+    const BG = 'a00000000000000bg';
     const base = (kind, hook, ts, fields) => ({
       kind, hook, sessionId: sid, agentId: null, agentType: null, agentTypeKey: null, promptId: null,
       projectDir: PROJECT, client: 'terminal', ts, receivedAt: ts, transcriptPath: null, ...fields,
     });
     const pre = (toolUseId, ts) => base('tool.pre', 'PreToolUse', ts, {
-      toolUseId, tool: 'Read', category: 'read', target: 'a.md', detail: null, inputHash: null,
+      agentId: BG, toolUseId, tool: 'Read', category: 'read', target: 'a.md', detail: null, inputHash: null,
       background: false, subagentType: null, subagentTypeKey: null, description: null,
     });
     const state = createState();
     const t0 = 1_760_000_000_000;
     apply(state, base('prompt.submit', 'UserPromptSubmit', t0, { promptId: 'p-1', title: 'Pedido', origin: 'user', sessionTitle: null }), t0);
-    apply(state, base('turn.stop', 'Stop', t0 + 100, { backgroundTasks: [] }), t0 + 100);
+    apply(state, base('subagent.start', 'SubagentStart', t0 + 10, { agentId: BG, agentType: 'Explore', agentTypeKey: 'Explore' }), t0 + 10);
+    // Listado como tarefa já encerrada: segue em segundo plano, e o ticket fecha em done.
+    apply(state, base('turn.stop', 'Stop', t0 + 100, { backgroundTasks: [{ id: BG, type: 'local_agent', status: 'completed', agentType: 'Explore', agentTypeKey: 'Explore' }] }), t0 + 100);
+    assert.equal(getSessionState(state, sid).quest.status, 'done');
     const late = apply(state, pre('toolu_01atrasada', t0 + 90), t0 + 120);
-    assertEvents(late.events, [['tool.started', 'main']], { kinds: null });
+    assertEvents(late.events, [['tool.started', BG]], { kinds: null });
     assert.equal(getSessionState(state, sid).quest.n, 1);
     const after = apply(state, pre('toolu_01depois', t0 + 200), t0 + 200);
-    assertEvents(after.events, [['quest.started', 'main', { n: 2, implicit: true }], ['tool.started', 'main']], { kinds: null });
+    assertEvents(after.events, [['quest.started', 'main', { n: 2, implicit: true }], ['tool.started', BG]], { kinds: null });
   });
 
   it('evento atrasado depois do SessionEnd não abre ticket', () => {
@@ -517,6 +524,149 @@ describe('etapas (seção 6, "Etapa")', () => {
   });
 });
 
+describe('A-T8-1: Stop atrasado do turno anterior e ticket em fechamento (seção 6)', () => {
+  const sid = 'sessao-a-t8-1';
+  const T0 = 1_760_000_000_000;
+  const base = (kind, hook, ts, fields) => ({
+    kind, hook, sessionId: sid, agentId: null, agentType: null, agentTypeKey: null, promptId: null,
+    projectDir: PROJECT, client: 'terminal', ts, receivedAt: ts, transcriptPath: null, ...fields,
+  });
+  const prompt = (ts, promptId) => base('prompt.submit', 'UserPromptSubmit', ts, { promptId, title: `Pedido ${promptId}`, origin: 'user', sessionTitle: null });
+  const stop = (ts) => base('turn.stop', 'Stop', ts, { backgroundTasks: [] });
+  const failure = (ts) => base('turn.fail', 'StopFailure', ts, { error: 'rate_limit' });
+  const read = (ts, toolUseId, fields = {}) => base('tool.pre', 'PreToolUse', ts, {
+    toolUseId, tool: 'Read', category: 'read', target: 'a.md', detail: null, inputHash: null,
+    background: false, subagentType: null, subagentTypeKey: null, description: null, ...fields,
+  });
+  /** Aplica [fato, chegada] em ordem e devolve os eventos de cada um. */
+  const play = (state, steps) => steps.map(([fact, at]) => apply(state, fact, at).events);
+  const finished = (events) => events.flat().filter((event) => event.kind === 'quest.finished');
+
+  it('vetor 1: Stop de A (ts 10 000) chega depois do pedido B (ts 10 030): A termina done, B segue aberto com o main trabalhando, um único quest.finished para A', () => {
+    const state = createState();
+    const steps = play(state, [
+      [prompt(T0, 'A'), T0],
+      [read(T0 + 1000, 'toolu_01a', { promptId: 'A' }), T0 + 1000],
+      [prompt(T0 + 10_030, 'B'), T0 + 10_040],
+      [stop(T0 + 10_000), T0 + 10_070],
+    ]);
+    assertEvents(steps[2], [['quest.started', 'main', { questId: 'B', n: 2 }]], { kinds: null });
+    assertEvents(steps[3], [['quest.finished', 'main', { questId: 'A', n: 1, outcome: 'done', durationMs: 10_000, actions: 1 }]], { kinds: null });
+    let session = getSessionState(state, sid);
+    assert.equal(session.quest.n, 2);
+    assert.equal(session.quest.status, 'open');
+    assert.equal(agentOf(session, 'main').status, 'working');
+    assert.equal(session.counters.questsDone, 1);
+    // Depois do prazo, nada mais sai para A.
+    const later = [...tick(state, T0 + 20_000).events, ...apply(state, read(T0 + 20_000, 'toolu_01b'), T0 + 20_000).events];
+    assert.deepEqual(finished([later]), []);
+    session = getSessionState(state, sid);
+    assert.equal(session.quest.actions, 1, 'a ferramenta sem promptId conta no ticket B');
+  });
+
+  it('StopFailure atrasado no prazo: A termina failed, com o tipo de erro', () => {
+    const state = createState();
+    const steps = play(state, [[prompt(T0, 'A'), T0], [prompt(T0 + 5000, 'B'), T0 + 5000], [failure(T0 + 4990), T0 + 5100]]);
+    assertEvents(steps[2], [['quest.finished', 'main', { questId: 'A', outcome: 'failed', error: 'rate_limit' }]], { kinds: null });
+    assert.equal(agentOf(getSessionState(state, sid), 'main').status, 'working');
+  });
+
+  it('vetor 2: sem Stop em 2 s, A termina interrupted no próximo fato, antes dos eventos dele', () => {
+    const state = createState();
+    const steps = play(state, [
+      [prompt(T0, 'A'), T0],
+      [prompt(T0 + 5000, 'B'), T0 + 5000],
+      [read(T0 + 6000, 'toolu_01b', { promptId: 'B' }), T0 + 5000 + CLOSING_GRACE_MS - 1],
+      [read(T0 + 8000, 'toolu_01c', { promptId: 'B' }), T0 + 5000 + CLOSING_GRACE_MS],
+    ]);
+    assert.deepEqual(finished([steps[2]]), [], 'ainda no prazo');
+    assertEvents(steps[3], [
+      ['quest.finished', 'main', { questId: 'A', outcome: 'interrupted', durationMs: 5000 }],
+      ['tool.started', 'main'],
+    ], { kinds: null });
+    // O Stop de A que chega depois do prazo não muda nada.
+    assert.deepEqual(apply(state, stop(T0 + 4000), T0 + 9000).events, []);
+    assert.equal(getSessionState(state, sid).quest.status, 'open');
+  });
+
+  it('Stop atrasado com ts antes do início de A (de um turno ainda mais antigo) não fecha A, que termina interrupted no tick', () => {
+    const state = createState();
+    play(state, [[prompt(T0, 'A'), T0], [prompt(T0 + 5000, 'B'), T0 + 5000]]);
+    assert.deepEqual(apply(state, stop(T0 - 10), T0 + 5010).events, []);
+    assertEvents(tick(state, T0 + 5000 + CLOSING_GRACE_MS).events, [['quest.finished', 'main', { questId: 'A', outcome: 'interrupted' }]], { kinds: null });
+  });
+
+  it('Stop atrasado sem ticket em fechamento (A já em waiting_background fecha na hora) não fecha o ticket aberto', () => {
+    const state = createState();
+    play(state, [
+      [prompt(T0, 'A'), T0],
+      [base('turn.stop', 'Stop', T0 + 100, { backgroundTasks: [{ id: 'tarefa', type: 'local_agent', status: 'running', agentType: null, agentTypeKey: null }] }), T0 + 100],
+    ]);
+    const steps = play(state, [[prompt(T0 + 5000, 'B'), T0 + 5000], [stop(T0 + 4000), T0 + 5050]]);
+    assertEvents(steps[0], [['quest.finished', 'main', { questId: 'A', outcome: 'interrupted' }], ['quest.started', 'main']], { kinds: null });
+    assert.deepEqual(steps[1], []);
+    assert.equal(getSessionState(state, sid).quest.status, 'open');
+  });
+
+  it('terceiro pedido no prazo: A termina interrupted antes de B entrar em fechamento; cada ticket com um único quest.finished', () => {
+    const state = createState();
+    const steps = play(state, [[prompt(T0, 'A'), T0], [prompt(T0 + 1000, 'B'), T0 + 1000], [prompt(T0 + 1500, 'C'), T0 + 1500]]);
+    assertEvents(steps[2], [['quest.finished', 'main', { questId: 'A', outcome: 'interrupted' }], ['quest.started', 'main', { questId: 'C' }]], { kinds: null });
+    const rest = [apply(state, stop(T0 + 1200), T0 + 1600).events, tick(state, T0 + 10_000).events];
+    assert.deepEqual(finished(rest).map((event) => [event.data.questId, event.data.outcome]), [['B', 'done']]);
+  });
+
+  it('SessionEnd com ticket em fechamento: o anterior e o atual terminam interrupted, antes do session.ended', () => {
+    const state = createState();
+    play(state, [[prompt(T0, 'A'), T0], [prompt(T0 + 1000, 'B'), T0 + 1000]]);
+    const events = apply(state, base('session.end', 'SessionEnd', T0 + 1100, { reason: 'clear' }), T0 + 1100).events;
+    assertEvents(events, [
+      ['quest.finished', 'main', { questId: 'A', outcome: 'interrupted' }],
+      ['quest.finished', 'main', { questId: 'B', outcome: 'interrupted' }],
+      ['session.ended', null],
+    ], { kinds: null });
+  });
+
+  it('fato atrasado do ticket em fechamento (promptId de A) não conta no ticket novo; o pedido A repetido não abre outro', () => {
+    const state = createState();
+    play(state, [[prompt(T0, 'A'), T0], [prompt(T0 + 1000, 'B'), T0 + 1000]]);
+    apply(state, read(T0 + 900, 'toolu_01atraso', { promptId: 'A' }), T0 + 1050);
+    assert.deepEqual(apply(state, prompt(T0, 'A'), T0 + 1060).events, []);
+    const session = getSessionState(state, sid);
+    assert.equal(session.quest.id, 'B');
+    assert.equal(session.quest.actions, 0);
+  });
+
+  it('vetor 3: ferramenta atrasada de agente encerrado, sem ticket aberto, não abre ticket', () => {
+    const W = agent('encerrado-a-t8-1', 'Explore');
+    const scn = scenario('atraso-encerrado', 'subagente encerrado e ferramenta atrasada', (b) => {
+      b.sessionStart();
+      b.prompt('Explorar');
+      const call = b.delegation('Explore', 'Explorar');
+      b.pre(call);
+      b.start(W);
+      b.stopAgent(W);
+      b.returned(call, W);
+      b.stop();
+      b.raw('PreToolUse', { tool_name: 'Read', tool_input: readClaude, tool_use_id: 'toolu_01atrasoEncerrado', prompt_id: undefined }, W);
+    });
+    const result = run(scn);
+    assertEvents(result.steps.at(-1).events, [['tool.started', W.id]], { kinds: null });
+    const session = view(result.state);
+    assert.equal(session.quest.n, 1);
+    assert.equal(session.quest.status, 'done');
+    assert.equal(agentOf(session, W.id).finished, true);
+  });
+
+  it('isLateStop: a mesma comparação de ts do turnEndedWithoutStop', () => {
+    const quest = /** @type {any} */ ({ status: 'open', startedAt: 1000 });
+    assert.equal(isLateStop(quest, 999), true);
+    assert.equal(isLateStop(quest, 1000), false);
+    assert.equal(isLateStop(/** @type {any} */ ({ ...quest, status: 'done' }), 999), false);
+    assert.equal(isLateStop(null, 999), false);
+  });
+});
+
 describe('[T0] V12: interrupção com Esc', () => {
   const T = agent('tester-esc', 'tester');
   const BG = agent('dev-esc-fundo', 'dev-backend');
@@ -535,14 +685,15 @@ describe('[T0] V12: interrupção com Esc', () => {
     b.prompt('Segundo');
   });
 
-  it('o novo pedido libera o primeiro plano e encerra o ticket como interrupted', () => {
+  it('o novo pedido libera o primeiro plano; o ticket fica em fechamento e termina interrupted no tick depois de 2 s', () => {
     const result = run(scn);
     assertEvents(result.steps.at(-1).events, [
       ['agent.finished', T.id, { outcome: 'unknown' }],
       ['quest.phase', T.id, { phase: 'test', state: 'done' }],
-      ['quest.finished', 'main', { n: 1, outcome: 'interrupted' }],
       ['quest.started', 'main', { n: 2, title: 'Segundo' }],
     ], { kinds: null });
+    assert.deepEqual(tick(result.state, result.end + CLOSING_GRACE_MS - 1).events, [], 'ainda no prazo');
+    assertEvents(tick(result.state, result.end + CLOSING_GRACE_MS).events, [['quest.finished', 'main', { n: 1, outcome: 'interrupted' }]], { kinds: null });
     const session = view(result.state);
     assert.equal(agentOf(session, T.id).finished, true);
     assert.equal(agentOf(session, BG.id).status, 'working', 'o segundo plano segue');

@@ -75,15 +75,19 @@ import {
   SYSTEM_RETURN_TITLE,
   activatePhase,
   beginCompaction,
+  closeWithLateStop,
   completeCompaction,
   completePhase,
+  deferQuestClose,
   finishQuest,
+  isLateStop,
   isKnownPrompt,
   isSystemPrompt,
   questForActivity,
   questKeyOf,
   recordTestRun,
   reopenForSystem,
+  settleClosing,
   startQuest,
   stopQuest,
   testResultOf,
@@ -173,6 +177,7 @@ const UNKNOWN_WAIT = Object.freeze({ tool: '', category: /** @type {const} */ ('
  * @property {Session} session
  * @property {CanonicalEvent[]} events
  * @property {Emit} out                   emite um evento desta sessão (para quests.js e permissions.js)
+ * @property {number} now                 hora de chegada do fato, ou a do `tick` (prazo do ticket em fechamento)
  */
 
 /**
@@ -260,7 +265,9 @@ export function apply(state, fact, now) {
       newProjects.push(project.key);
     }
   }
-  const ctx = contextOf(state, session, events);
+  const ctx = contextOf(state, session, events, now);
+  // Ticket em fechamento com o prazo vencido (A-T8-1): interrupted antes do fato.
+  settleClosing(session, now, ctx.out);
   (HANDLERS[fact.kind] ?? onOther)(ctx, fact);
   prune(ctx, fact.ts);
   session.status = sessionStatus(session, now);
@@ -292,8 +299,8 @@ export function tick(state, now) {
       removed.push(id);
       continue;
     }
-    const ctx = contextOf(state, session, events);
-    let dirty = false;
+    const ctx = contextOf(state, session, events, now);
+    let dirty = settleClosing(session, now, ctx.out);
     for (const agent of session.agents.values()) {
       if (!isStale(agent, now)) continue;
       dirty = true;
@@ -444,6 +451,7 @@ function onSessionEnd(ctx, fact) {
   resolveApprovals(session, () => true, INFERRED, fact.ts, ctx.out);
   main.status = 'idle';
   main.turnEnded = true;
+  settleClosing(session, Infinity, ctx.out);
   finishQuest(session, 'interrupted', fact.ts, ctx.out);
   session.ended = true;
   session.endedAt = fact.ts;
@@ -457,8 +465,8 @@ function onSessionEnd(ctx, fact) {
  *   último encerrado há menos de 30 min, sem evento, ou abre um implícito.
  * - Pedido do usuário: os pedidos de aprovação do `main` viram `unknown`; se o
  *   turno anterior acabou sem Stop (Esc, V12), os subagentes em primeiro plano
- *   são liberados; o ticket aberto ou em espera termina `interrupted`; abre o
- *   ticket novo.
+ *   são liberados; o ticket aberto fica em fechamento por 2 s (A-T8-1) e o em
+ *   espera termina `interrupted`; abre o ticket novo.
  * - Pedido que já tem ticket (duplicata ou atraso, V8): nada muda, nem o status
  *   do `main` (seção 8, regras 4 e 5).
  * @param {Context} ctx
@@ -478,7 +486,9 @@ function onPrompt(ctx, fact) {
   }
   resolveApprovals(session, (approval) => approval.agentKey === MAIN_KEY, INFERRED, fact.ts, ctx.out);
   if (turnEndedWithoutStop(session.quest, fact.ts)) releaseForeground(ctx, [], fact.ts);
-  finishQuest(session, 'interrupted', fact.ts, ctx.out);
+  // A-T8-1: o ticket aberto fica em fechamento (um Stop atrasado ainda pode
+  // fechá-lo como done); o em waiting_background fecha na hora.
+  if (!deferQuestClose(session, fact.ts, ctx.now, ctx.out)) finishQuest(session, 'interrupted', fact.ts, ctx.out);
   agent.turnEnded = false;
   markWorking(agent);
   startQuest(session, { id: questKeyOf(fact), title: fact.title, implicit: false, ts: fact.ts }, ctx.out);
@@ -514,7 +524,7 @@ function onTool(ctx, fact) {
   // O ticket antes do agente: o `quest.started` implícito vem antes do
   // `agent.started`, e a etapa do agente novo já cai nele. Sessão encerrada
   // não ganha ticket com evento atrasado.
-  const quest = record || session.ended ? null : questForActivity(session, fact, ctx.out);
+  const quest = record || session.ended ? null : questForActivity(session, fact, ctx.out, { implicit: bringsBack(session, fact) });
   const agent = record ? agentFor(ctx, fact, record.agentKey) : actor(ctx, fact);
   if (!record && fact.kind === 'tool.pre' && fact.toolUseId !== null && reviveAgent(agent)) {
     activatePhase(session, agent.role, agent.key, fact.ts, ctx.out);
@@ -803,13 +813,22 @@ function onSubagentStop(ctx, fact) {
  * `agent.finished(unknown)`, haja ou não tarefa em segundo plano (seção 6; T7,
  * ponto 5). Os de segundo plano continuam. Depois, o ticket: Stop sem tarefa
  * em segundo plano ativa → `done`; com tarefa ativa → `waiting_background`,
- * sem evento (V13); StopFailure → `failed`, com o tipo de erro (T8).
+ * sem evento (V13); StopFailure → `failed`, com o tipo de erro (T8). Stop
+ * atrasado do turno anterior só pode fechar o ticket em fechamento (A-T8-1).
  * @param {Context} ctx
  * @param {import('../normalize.js').TurnStopFact|import('../normalize.js').TurnFailFact} fact
  */
 function onTurnEnd(ctx, fact) {
   const main = actor(ctx, fact);
   if (main.key !== MAIN_KEY) return;
+  // A-T8-1: Stop do turno anterior, chegado depois do pedido seguinte. Não mexe
+  // no ticket aberto, no main nem nas aprovações do turno novo; só pode fechar
+  // o ticket em fechamento.
+  if (isLateStop(ctx.session.quest, fact.ts)) {
+    if (fact.kind === 'turn.stop') closeWithLateStop(ctx.session, 'done', fact.ts, ctx.out);
+    else closeWithLateStop(ctx.session, 'failed', fact.ts, ctx.out, fact.error);
+    return;
+  }
   resolveApprovals(ctx.session, (approval) => approval.agentKey === MAIN_KEY, INFERRED, fact.ts, ctx.out);
   main.status = 'idle';
   main.turnEnded = true;
@@ -862,11 +881,12 @@ function onCompactPost(ctx, fact) {
  * @param {State} state
  * @param {Session} session
  * @param {CanonicalEvent[]} events
+ * @param {number} now
  * @returns {Context}
  */
-function contextOf(state, session, events) {
+function contextOf(state, session, events, now) {
   /** @type {Context} */
-  const ctx = { state, session, events, out: (agentKey, kind, data, ts) => emit(ctx, agentKey, kind, data, ts) };
+  const ctx = { state, session, events, now, out: (agentKey, kind, data, ts) => emit(ctx, agentKey, kind, data, ts) };
   return ctx;
 }
 
@@ -913,6 +933,21 @@ function agentFor(ctx, fact, key) {
   }, fact.ts);
   activatePhase(session, agent.role, key, fact.ts, ctx.out);
   return agent;
+}
+
+/**
+ * O primeiro evento de uma chamada devolve o agente a "trabalhando"? Não para
+ * subagente encerrado (salvo a volta depois dos 15 min) nem para o `main`
+ * depois do Stop (seção 8, regra 4). Atraso desses não abre ticket implícito
+ * (A-T8-1). Agente ainda desconhecido conta como atividade nova.
+ * @param {Session} session
+ * @param {ToolFact} fact
+ * @returns {boolean}
+ */
+function bringsBack(session, fact) {
+  const agent = session.agents.get(agentKeyOf(fact));
+  if (!agent || canWork(agent)) return true;
+  return fact.kind === 'tool.pre' && fact.toolUseId !== null && agent.finished && agent.revivable;
 }
 
 /**
