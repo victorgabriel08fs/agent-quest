@@ -266,6 +266,13 @@ Decisão em ADR 0007. Regras operacionais:
   - `StopFailure` → `failed`, com o tipo de erro;
   - novo pedido do usuário com ticket aberto, `idle_prompt` ou `SessionEnd` → `interrupted`. O Claude Code não dispara Stop quando o usuário interrompe com Esc.
 - Fato com `promptId` de ticket já encerrado atualiza agentes e feed, mas não reabre o ticket. Fato sem `promptId` vai para o ticket aberto.
+- **Stop atrasado** (A-T8-1, decidido em 20/10/2026). Um Stop (ou StopFailure) com `ts` menor que o `startedAt` do ticket aberto é do turno anterior: chegou depois do pedido seguinte por corrida entre processos. Isso é comum quando o usuário deixa a próxima mensagem na fila e o Claude Code a envia logo depois do Stop. Esse Stop não fecha o ticket aberto e não deixa o `main` `idle`.
+- **Desfecho do ticket anterior nesse caso: `done`.** Para não emitir dois `quest.finished`, um pedido novo do usuário não fecha o ticket aberto na hora: ele fica **em fechamento** por até 2 s (medidos pela hora de chegada), enquanto o ticket novo já começa (`quest.started`).
+  - Se nesse intervalo chegar um Stop com `ts` entre o `startedAt` do ticket anterior e o do novo, sai `quest.finished(done)`, ou `failed` se for StopFailure.
+  - Senão, ao vencer o prazo, no próximo fato ou no `tick`, sai `quest.finished(interrupted)`, como antes.
+  - O feed pode mostrar o início do ticket novo antes do fim do anterior, o que é aceito.
+- **Atraso não abre ticket implícito:** um evento atrasado de agente encerrado (seção 8, regra 4), que não devolve o agente a "trabalhando", nunca abre ticket implícito, mesmo sem ticket aberto.
+- **PermissionDenied de outra chamada:** sai `permission.resolved(denied)` para a chamada negada, e o agente continua `waiting` se tiver outro pedido pendente. São duas chamadas diferentes, e isso é o comportamento certo (observação do tester do T8, sem mudança).
 - Atividade sem ticket aberto (por exemplo, servidor iniciado no meio de um turno) cria um ticket implícito, "Tarefa em andamento".
 - `actions` conta `tool.started` e `agent.delegated` do ticket.
 
