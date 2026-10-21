@@ -337,6 +337,27 @@ describe('POST /hooks: aceitos e contadores', () => {
     assert.equal(health.events.received, 4);
   });
 
+  it('o PermissionRequest repetido em até 5 s é aceito: fica fora da deduplicação (seção 8, 19/10/2026)', async () => {
+    const app = await startApp();
+    const payload = { hook_event_name: 'PermissionRequest', session_id: 'sessao-teste', tool_name: 'Bash', tool_input: { command: 'npm run build' } };
+    const send = (at) => {
+      app.clock.now = at;
+      return app.post(envelope(payload, { sentAt: at }));
+    };
+    assert.equal((await send(T0)).status, 204);
+    assert.equal((await send(T0 + 500)).status, 204);
+    const health = await app.health();
+    assert.equal(health.events.accepted, 2);
+    assert.equal(health.events.deduped, 0);
+    // Os outros hooks continuam deduplicados.
+    const other = envelope().payload;
+    app.clock.now = T0 + 600;
+    await app.post(envelope(other));
+    app.clock.now = T0 + 700;
+    await app.post(envelope(other));
+    assert.equal((await app.health()).events.deduped, 1);
+  });
+
   it('responde 204 antes de processar; o processador recebe o envelope e a hora de chegada', async () => {
     const pending = [];
     const seen = [];

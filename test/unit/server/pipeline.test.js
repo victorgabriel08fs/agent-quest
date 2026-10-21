@@ -121,7 +121,8 @@ describe('ligação de ponta a ponta: envelope → normalize → apply → updat
     assert.ok(feed(delegation).every((accepted) => accepted === true));
     const withEvent = messages.filter((message) => message.event);
     assert.deepEqual(withEvent.map((message) => message.event.kind), [
-      'session.started', 'agent.delegated', 'agent.started', 'tool.started', 'tool.finished', 'agent.finished',
+      'session.started', 'quest.started', 'agent.delegated', 'agent.started', 'quest.phase',
+      'tool.started', 'tool.finished', 'agent.finished', 'quest.phase', 'quest.finished',
     ]);
     assertNumbering(messages);
     // O estado de cada update é o da sessão depois do fato.
@@ -132,9 +133,10 @@ describe('ligação de ponta a ponta: envelope → normalize → apply → updat
 
   it('sessão alterada sem evento recebe update com event: null, pelo mesmo sequence', () => {
     const { feed, messages } = setup();
-    feed(scenario('sem-evento', 'Notification e prompt', (b) => {
-      b.notice('idle_prompt');
-      b.prompt('Pedido');
+    // Notification de tipo fora da lista e PreCompact mudam a sessão sem evento (T8).
+    feed(scenario('sem-evento', 'Notification e PreCompact', (b) => {
+      b.notice('outro_tipo');
+      b.raw('PreCompact', { trigger: 'auto' });
       b.sessionStart();
     }));
     assert.deepEqual(messages.map((message) => [message.seq, message.event?.kind ?? null]), [
@@ -172,7 +174,8 @@ describe('ligação de ponta a ponta: envelope → normalize → apply → updat
     });
     feed(scenario('erro-antes', 'sessão', (b) => b.sessionStart()));
     fail = true;
-    const [envelope] = scenarioEnvelopes(scenario('erro', 'prompt', (b) => b.prompt('x')), { start: START + 10 });
+    // Um fato sem evento: o que o reducer numerou antes de falhar se perderia (ver o B1 abaixo).
+    const [envelope] = scenarioEnvelopes(scenario('erro', 'Notification', (b) => b.notice('outro_tipo')), { start: START + 10 });
     assert.throws(() => pipeline.handleEnvelope(envelope.envelope, { receivedAt: envelope.receivedAt }), TypeError);
     assert.deepEqual(messages.map((message) => [message.seq, message.event?.kind ?? null]), [[1, 'session.started'], [2, null]]);
     // O próximo evento segue numerado.
@@ -243,10 +246,11 @@ describe('tick periódico', () => {
     setClock(last + STALE_AGENT_MS);
     intervals.fire();
     const afterStale = messages.slice(before);
-    assert.deepEqual(afterStale.map((message) => [message.type, message.event?.kind ?? null]), [['update', 'agent.finished']]);
+    // T8: o fim do último tester fecha a etapa de testes.
+    assert.deepEqual(afterStale.map((message) => [message.type, message.event?.kind ?? null]), [['update', 'agent.finished'], ['update', 'quest.phase']]);
     setClock(last + IDLE_TTL_MS);
     intervals.fire();
-    assert.deepEqual(messages.slice(before + 1).map((message) => [message.type, message.sessionId ?? message.session?.id]), [['session-removed', SID]]);
+    assert.deepEqual(messages.slice(before + 2).map((message) => [message.type, message.sessionId ?? message.session?.id]), [['session-removed', SID]]);
     assertNumbering(messages);
     assert.equal(pipeline.sessionCount(), 0);
     assert.deepEqual(pipeline.snapshot(), { seq: messages.at(-1).seq, sessions: [] });
@@ -484,12 +488,16 @@ describe('servidor real no mesmo processo (startServer)', () => {
         tool_input: { file_path: `${PROJECT}\\CLAUDE.md` },
       });
       assert.equal(res.status, 204);
+      // Sem pedido antes, a ferramenta abre um ticket implícito (T8), no update anterior.
+      const implicit = await sse.waitFor((message) => message.event === 'update' && message.data.event?.kind === 'quest.started');
+      assert.equal(implicit.data.event.data.implicit, true);
+      assert.equal(implicit.data.seq, hello.data.seq + 1);
       const update = await sse.waitFor((message) => message.event === 'update' && message.data.event?.kind === 'tool.started');
       assert.equal(update.data.event.data.toolUseId, toolUseId);
       assert.equal(update.data.event.data.target, 'CLAUDE.md');
       assert.equal(update.id, `${hello.data.runId}:${update.data.seq}`);
       assert.equal(update.data.event.id, update.id);
-      assert.equal(update.data.seq, hello.data.seq + 1);
+      assert.equal(update.data.seq, hello.data.seq + 2);
       // O roster com o leitor injetado chega num update sem evento, logo depois.
       const roster = await sse.waitFor((message) => message.event === 'update' && message.data.event === null);
       assert.equal(roster.data.seq, update.data.seq + 1);
@@ -508,6 +516,38 @@ describe('servidor real no mesmo processo (startServer)', () => {
       // Envelope que o normalizador descarta: 204, e conta como ignored.
       assert.equal((await post(server, { hook_event_name: 'Desconhecido', session_id: SID })).status, 204);
       await waitUntil(async () => JSON.parse((await request(server.port, { path: '/api/health' })).body).events.ignored === 1);
+      sse.close();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('PermissionRequest fora da deduplicação: nova tentativa em menos de 5 s gera o segundo pedido; a duplicata verdadeira continua com um', async () => {
+    const server = await start();
+    try {
+      const sse = await openEvents(server.port);
+      await sse.waitFor((message) => message.event === 'snapshot');
+      const input = { command: 'npm run build', description: 'Build' };
+      const pre = (id) => ({ hook_event_name: 'PreToolUse', session_id: SID, tool_name: 'Bash', tool_use_id: id, tool_input: input });
+      const ask = { hook_event_name: 'PermissionRequest', session_id: SID, tool_name: 'Bash', tool_input: input };
+      const done = { hook_event_name: 'PostToolUse', session_id: SID, tool_name: 'Bash', tool_use_id: 'toolu_01segunda', tool_input: input, tool_response: { stdout: 'ok' } };
+      // Negado e tentado de novo (dois pedidos idênticos), mais uma entrega repetida do segundo.
+      for (const payload of [pre('toolu_01primeira'), ask, pre('toolu_01segunda'), ask, ask, done]) {
+        assert.equal((await post(server, payload)).status, 204);
+      }
+      await sse.waitFor((message) => message.data.event?.kind === 'tool.finished');
+      const permissions = sse.messages
+        .filter((message) => message.data.event?.kind.startsWith('permission.'))
+        .map((message) => [message.data.event.kind, message.data.event.data.outcome ?? null]);
+      assert.deepEqual(permissions, [
+        ['permission.requested', null],
+        ['permission.resolved', 'unknown'],
+        ['permission.requested', null],
+        ['permission.resolved', 'approved'],
+      ]);
+      const health = JSON.parse((await request(server.port, { path: '/api/health' })).body);
+      assert.equal(health.events.deduped, 0);
+      assert.equal(health.events.accepted, 6);
       sse.close();
     } finally {
       await server.close();

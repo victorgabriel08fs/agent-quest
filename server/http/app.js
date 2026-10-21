@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { Buffer } from 'node:buffer';
 import { setImmediate } from 'node:timers';
-import { createDedupe, payloadHash } from '../ingest/dedupe.js';
+import { createDedupe, payloadHash, skipsDedupe } from '../ingest/dedupe.js';
 import { MAX_BODY_BYTES, parseEnvelope } from '../ingest/envelope.js';
 import { QUEUE_LIMIT, createQueue } from '../ingest/queue.js';
 import { applySecurityHeaders, checkHookRequest, checkPanelRequest, isAllowedHost } from './security.js';
@@ -214,7 +214,8 @@ export function createApp({
     res.end();
 
     lastEventAt = receivedAt;
-    if (dedupe.isDuplicate(hash, receivedAt)) {
+    // O PermissionRequest não passa pela deduplicação (seção 8, "Duplicatas").
+    if (!skipsDedupe(envelope.payload) && dedupe.isDuplicate(hash, receivedAt)) {
       counters.deduped++;
       return;
     }

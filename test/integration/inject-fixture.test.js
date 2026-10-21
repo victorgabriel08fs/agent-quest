@@ -24,7 +24,10 @@ import { newState, run } from '../unit/server/domain/state/scenarios.js';
 import { cleanupTemps, newTemp, readJson } from './capture-helpers.js';
 import { killTree, launchNpm, launchServer, minimalEnv, request, waitFor } from './server-helpers.js';
 
-/** Estado sem o que depende da hora ou da execução: horas, ids e seq. */
+/**
+ * Estado sem o que depende da hora ou da execução: horas, ids e seq. Do T8, as
+ * horas do ticket, a do último run de testes e a duração no quest.finished.
+ */
 function comparable(sessions) {
   return sessions.map((session) => ({
     ...session,
@@ -36,7 +39,11 @@ function comparable(sessions) {
       lastEventAt: 0,
       activity: agent.activity ? { ...agent.activity, at: 0 } : null,
     })),
-    feed: (session.feed ?? []).map(({ id, seq, ts, ...event }) => event),
+    quest: session.quest ? { ...session.quest, startedAt: 0, endedAt: session.quest.endedAt === null ? null : 0 } : null,
+    bugs: { ...session.bugs, lastRun: session.bugs.lastRun ? { ...session.bugs.lastRun, at: 0 } : null },
+    feed: (session.feed ?? []).map(({ id, seq, ts, ...event }) => (
+      event.kind === 'quest.finished' ? { ...event, data: { ...event.data, durationMs: 0 } } : event
+    )),
   }));
 }
 

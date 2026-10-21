@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import { FEED_KINDS } from '../../shared/contract.js';
 import {
   ACTIVITY_KEYS,
   AGENT_KEYS,
@@ -152,14 +153,17 @@ function parallelScenario({ withAgentId = true } = {}) {
 // ---------------------------------------------------------------------------
 
 describe('[T0] V1, V9: orquestrador delega a um subagente', () => {
-  it('agent.delegated, agent.started, ferramentas pelo agent_id e agent.finished, nessa ordem e com os dados da seção 3', () => {
+  it('agent.delegated, agent.started, ferramentas pelo agent_id e agent.finished, nessa ordem e com os dados da seção 3 (com os eventos do T8)', () => {
     const { list, c, read, grep, bash, mainRead } = delegationScenario();
     const tracker = new Tracker();
     const result = play(list, { tracker });
+    const questId = list[1].payload.prompt_id;
     const expected = [
       ['session.started', null, { source: 'startup', projectName: 'agents-quest' }],
+      ['quest.started', 'main', { questId, n: 1, title: 'Peça ao documentador para revisar o guia', implicit: false }],
       ['agent.delegated', 'main', { toolUseId: c.id, toType: 'documentador', toRole: 'doc', description: 'Revisar o guia de instalação', background: false }],
       ['agent.started', DOC.id, { agentType: 'documentador', role: 'doc', label: 'Revisar o guia de instalação', parentKey: 'main' }],
+      ['quest.phase', DOC.id, { questId, phase: 'docs', state: 'active' }],
       ['tool.started', DOC.id, { toolUseId: read.id, tool: 'Read', category: 'read', target: 'docs/guia.md', detail: null }],
       ['tool.finished', DOC.id, { toolUseId: read.id, tool: 'Read', category: 'read', durationMs: 12 }],
       ['tool.started', DOC.id, { toolUseId: grep.id, tool: 'Grep', category: 'search', target: 'npm start', detail: null }],
@@ -167,8 +171,10 @@ describe('[T0] V1, V9: orquestrador delega a um subagente', () => {
       ['tool.started', DOC.id, { toolUseId: bash.id, tool: 'Bash', category: 'bash', target: 'node -e "process.exit(1)"', detail: 'Conferir a saída' }],
       ['tool.failed', DOC.id, { toolUseId: bash.id, tool: 'Bash', category: 'bash', target: 'node -e "process.exit(1)"', error: 'Exit code 1', interrupted: false }],
       ['agent.finished', DOC.id, { outcome: 'done' }],
+      ['quest.phase', DOC.id, { questId, phase: 'docs', state: 'done' }],
       ['tool.started', 'main', { toolUseId: mainRead.id, target: 'docs/guia.md' }],
       ['tool.finished', 'main', { toolUseId: mainRead.id }],
+      ['quest.finished', 'main', { questId, n: 1, outcome: 'done', error: null, durationMs: 10_000, actions: 5 }],
     ];
     assert.deepEqual(kinds(result.events), expected.map(([kind, key]) => [kind, key]));
     expected.forEach(([kind, , data], i) => {
@@ -193,8 +199,12 @@ describe('[T0] V1, V9: orquestrador delega a um subagente', () => {
     assert.equal(main.finished, false);
     assert.deepEqual(main.health, { ok: 1, total: 1 });
     assert.deepEqual(session.feed.map((e) => e.kind), [
-      'session.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.started', 'tool.failed', 'agent.finished', 'tool.started',
+      'session.started', 'quest.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.started', 'tool.failed',
+      'agent.finished', 'quest.phase', 'tool.started', 'quest.finished',
     ]);
+    assert.equal(session.label, 'Peça ao documentador para revisar o guia', 'sem session_title, o rótulo é o título do primeiro ticket');
+    assert.deepEqual(session.quest.phases, { design: 'pending', code: 'pending', test: 'pending', docs: 'done' });
+    assert.deepEqual(session.counters, { questsDone: 1, bugsCrushed: 0, pendingApprovals: 0 });
   });
 
   it('durante a delegação os dois trabalham, e o main mostra a atividade delegate', () => {
@@ -368,8 +378,11 @@ describe('[T0] V1: servidor iniciado no meio da sessão', () => {
     const tracker = new Tracker();
     const result = play(s.events, { tracker });
     assert.deepEqual(result.steps[0].changed, [SID]);
-    assert.deepEqual(kinds(result.steps[0].events), [['agent.started', T.id], ['tool.started', T.id]]);
-    assert.deepEqual(result.steps[0].events[0].data, { agentType: 'tester', role: 'tes', label: 'tester', parentKey: null });
+    // T8: sem pedido, a atividade abre um ticket implícito, antes do agent.started; a etapa do tester fica active.
+    assert.deepEqual(kinds(result.steps[0].events), [['quest.started', 'main'], ['agent.started', T.id], ['quest.phase', T.id], ['tool.started', T.id]]);
+    assert.deepEqual(result.steps[0].events[0].data, { questId: 'ticket-1', n: 1, title: 'Tarefa em andamento', implicit: true });
+    assert.deepEqual(result.steps[0].events[1].data, { agentType: 'tester', role: 'tes', label: 'tester', parentKey: null });
+    assert.deepEqual(result.steps[0].events[2].data, { questId: 'ticket-1', phase: 'test', state: 'active' });
     assert.ok(!result.events.some((e) => e.kind === 'session.started'), 'sessão sob demanda não emite session.started (ponto 3)');
     const session = view(result.state);
     assert.equal(session.label, `Sessão ${SID.slice(0, 6)}`);
@@ -477,7 +490,7 @@ describe('[T0] V6: SubagentStop de agente interno', () => {
     s.tool(0, 'Read', { file_path: `${PROJECT}\\a.md` }, T);
     s.stopAgent(100, { id: T.id, type: '' });
     const result = play(s.events);
-    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', T.id]]);
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', T.id], ['quest.phase', T.id]]);
     assert.equal(result.steps.at(-1).events[0].data.outcome, 'done');
   });
 });
@@ -703,8 +716,11 @@ describe('[T0] V5, V13: fim do turno da sessão principal (primeiro plano)', () 
 
   it('Stop: primeiro plano recebe agent.finished(unknown); segundo plano, listado, lançado e filhos seguem', () => {
     const result = play(turn((s) => s.stop(1000, [{ id: LISTED.id, type: 'local_agent', status: 'running', description: 'Documentar', agent_type: 'documentador' }])));
-    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id]]);
+    // LISTED segue rodando em background_tasks: o ticket fica em waiting_background, sem evento (V13).
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id], ['quest.phase', FG.id]]);
     assert.equal(result.steps.at(-1).events[0].data.outcome, 'unknown');
+    assert.deepEqual(result.steps.at(-1).events[1].data.phase, 'code');
+    assert.equal(view(result.state).quest.status, 'waiting_background');
     const session = view(result.state);
     assert.equal(agentIn(session, 'main').status, 'idle');
     assert.equal(agentIn(session, FG.id).finished, true);
@@ -720,7 +736,11 @@ describe('[T0] V5, V13: fim do turno da sessão principal (primeiro plano)', () 
 
   it('StopFailure faz o mesmo, sem background_tasks', () => {
     const result = play(turn((s) => s.stopFailure(1000)));
-    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id], ['agent.finished', LISTED.id]]);
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id], ['quest.phase', FG.id], ['agent.finished', LISTED.id], ['quest.phase', LISTED.id], ['quest.finished', 'main']]);
+    const finished = result.steps.at(-1).events.at(-1).data;
+    assert.equal(finished.outcome, 'failed');
+    assert.equal(finished.error, 'rate_limit');
+    assert.equal(view(result.state).quest.status, 'failed');
     const session = view(result.state);
     assert.equal(agentIn(session, 'main').status, 'idle');
     for (const key of [BG.id, CHILD.id, ASYNC.id]) assert.equal(agentIn(session, key).status, 'working', key);
@@ -728,7 +748,8 @@ describe('[T0] V5, V13: fim do turno da sessão principal (primeiro plano)', () 
 
   it('em todo Stop, mesmo com tarefas em segundo plano rodando, os de primeiro plano são liberados (ponto 5)', () => {
     const result = play(turn((s) => s.stop(1000, [{ id: BG.id, type: 'local_agent', status: 'running', agent_type: 'tester' }])));
-    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id], ['agent.finished', LISTED.id]]);
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['agent.finished', FG.id], ['quest.phase', FG.id], ['agent.finished', LISTED.id], ['quest.phase', LISTED.id]]);
+    assert.equal(view(result.state).quest.status, 'waiting_background');
   });
 });
 
@@ -825,7 +846,9 @@ describe('tick com relógio injetado: 15 min, 30 min e 6 h', () => {
     assert.deepEqual(before.events, []);
     const at15 = tick(state, T0 + 1015 + 15 * MIN);
     tracker.consume(at15.events);
-    assert.deepEqual(kinds(at15.events), [['agent.finished', T.id]]);
+    // T8: era o único tester em execução, então a etapa de testes termina junto.
+    assert.deepEqual(kinds(at15.events), [['agent.finished', T.id], ['quest.phase', T.id]]);
+    assert.deepEqual(at15.events[1].data.state, 'done');
     assert.equal(at15.events[0].data.outcome, 'unknown');
     assert.equal(at15.events[0].ts, T0 + 1015 + 15 * MIN);
     assert.deepEqual(at15.changed, [SID]);
@@ -968,7 +991,7 @@ describe('[T0] V5: atividade por tipo (seção 9) e label do main', () => {
     s.pre(100, c);
     s.start(130, T);
     const result = play(s.events);
-    assert.deepEqual(kinds(result.events), [['agent.delegated', 'main'], ['agent.started', T.id]]);
+    assert.deepEqual(kinds(result.events), [['quest.started', 'main'], ['agent.delegated', 'main'], ['agent.started', T.id], ['quest.phase', T.id]]);
     assert.equal(agentIn(view(result.state), T.id).label, 'Testar pelo Task');
     assert.equal(agentIn(view(result.state), 'main').activity.tool, 'Task');
   });
@@ -1138,12 +1161,14 @@ describe('feed limitado a 200 por sessão', () => {
     assert.equal(a.feed.length, 200);
     assert.equal(a.feed[0].data.target, 'arquivo-100.md');
     assert.equal(a.feed.at(-1).data.target, 'arquivo-299.md');
-    assert.equal(b.feed.length, 150);
+    assert.equal(b.feed.length, 151, '150 tool.started e o quest.started implícito');
+    assert.equal(b.feed[0].kind, 'quest.started');
     for (const session of [a, b]) {
       assert.ok(session.feed.every((e) => e.kind !== 'tool.finished' && e.kind !== 'agent.started'));
       for (let i = 1; i < session.feed.length; i++) assert.ok(session.feed[i].ts >= session.feed[i - 1].ts);
     }
-    const feedEvents = result.events.filter((e) => e.sessionId === SID && ['session.started', 'tool.started'].includes(e.kind));
+    const isFeed = (e) => FEED_KINDS.includes(e.kind) && (e.kind !== 'quest.phase' || e.data.state === 'done');
+    const feedEvents = result.events.filter((e) => e.sessionId === SID && isFeed(e));
     assert.deepEqual(a.feed, feedEvents.slice(-200), 'o feed tem os mesmos eventos devolvidos pelo apply');
   });
 });

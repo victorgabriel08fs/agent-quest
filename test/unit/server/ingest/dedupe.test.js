@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEDUPE_WINDOW_MS, createDedupe, payloadHash } from '../../../../server/ingest/dedupe.js';
+import { DEDUPE_WINDOW_MS, NOT_DEDUPED_HOOKS, createDedupe, payloadHash, skipsDedupe } from '../../../../server/ingest/dedupe.js';
 
 const T0 = 1_760_000_000_000;
 
@@ -15,6 +15,19 @@ describe('payloadHash', () => {
     const hash = payloadHash({ session_id: 'segredo-123' });
     assert.match(hash, /^[A-Za-z0-9_-]{43}$/);
     assert.doesNotMatch(hash, /segredo/);
+  });
+});
+
+describe('skipsDedupe (seção 8, "Duplicatas", 19/10/2026)', () => {
+  it('só o PermissionRequest fica fora da deduplicação', () => {
+    assert.deepEqual(NOT_DEDUPED_HOOKS, ['PermissionRequest']);
+    assert.equal(skipsDedupe({ hook_event_name: 'PermissionRequest', session_id: 's' }), true);
+    for (const hook of ['PreToolUse', 'PostToolUse', 'PermissionDenied', 'Notification', 'permissionrequest', '']) {
+      assert.equal(skipsDedupe({ hook_event_name: hook }), false, hook);
+    }
+    for (const payload of [null, undefined, 'PermissionRequest', [], {}, { hook_event_name: ['PermissionRequest'] }]) {
+      assert.equal(skipsDedupe(payload), false, JSON.stringify(payload));
+    }
   });
 });
 

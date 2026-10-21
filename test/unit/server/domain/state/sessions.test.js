@@ -373,13 +373,14 @@ describe('numeração dos eventos (seção 9; T7, ponto 1)', () => {
     const state = newState({ sequence });
     const result = run(scn, { state });
     const ticked = tick(state, result.end + 15 * 60_000);
-    assert.equal(ticked.events.length, 1);
+    // T8: o fim do último tester fecha a etapa de testes.
+    assert.deepEqual(ticked.events.map((event) => event.kind), ['agent.finished', 'quest.phase']);
     const all = [...result.events, ...ticked.events];
     assertSeqContinuous(all);
     assert.equal(all[0].seq, 1);
     assert.equal(sequence.current(), all.length);
     for (const event of all) assertEventShape(event, { runId: 'run7' });
-    assert.equal(ticked.events[0].id, `run7:${all.length}`);
+    assert.equal(ticked.events[ticked.events.length - 1].id, `run7:${all.length}`);
   });
 
   it('o sequence é o mesmo que a ligação usa: um seq reservado fora do reducer não se repete', () => {

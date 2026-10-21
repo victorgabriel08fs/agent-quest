@@ -72,8 +72,10 @@ describe('[T0] V1, V9: orquestrador delega a um subagente', () => {
     assert.equal(main.status, 'idle');
     assert.equal(main.finished, false);
     assert.deepEqual(session.roster, ['orq', 'doc']);
+    // T8: o ticket abre no pedido e fecha no Stop; a etapa do documentador fecha quando ele termina.
     assert.deepEqual(session.feed.map((event) => event.kind), [
-      'session.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.failed', 'agent.finished',
+      'session.started', 'quest.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.failed',
+      'agent.finished', 'quest.phase', 'quest.finished',
     ]);
   });
 

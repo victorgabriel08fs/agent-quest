@@ -91,7 +91,7 @@ describe('ponto 1: o reducer numera cada evento ao criá-lo, pelo sequence injet
     const result = play(turn(), { state });
     const ticked = tick(state, T0 + 1015 + 15 * MIN);
     const events = [...result.events, ...ticked.events];
-    assert.deepEqual(kinds(ticked.events), [['agent.finished', T.id]]);
+    assert.deepEqual(kinds(ticked.events), [['agent.finished', T.id], ['quest.phase', T.id]]);
     assert.deepEqual(events.map((e) => e.seq), events.map((_, i) => 42 + i));
     for (const event of events) {
       assert.deepEqual(Object.keys(event), EVENT_KEYS);
@@ -208,8 +208,10 @@ describe('ponto 7: SessionEnd libera os agentes', () => {
     const tracker = new Tracker();
     const result = play(list, { tracker });
     const last = result.steps.at(-1).events;
-    assert.deepEqual(last.map((e) => e.kind).sort(), ['agent.finished', 'agent.finished', 'session.ended'].sort());
-    assert.equal(last.at(-1).kind, 'session.ended', 'session.ended por último');
+    // Cada subagente liberado fecha a etapa dele; depois o ticket aberto termina interrupted (T8) e sai session.ended.
+    assert.deepEqual(kinds(last), [['agent.finished', FG.id], ['quest.phase', FG.id], ['agent.finished', BG.id], ['quest.phase', BG.id], ['quest.finished', 'main'], ['session.ended', null]]);
+    assert.deepEqual(last.filter((e) => e.kind === 'quest.phase').map((e) => [e.data.phase, e.data.state]), [['test', 'done'], ['docs', 'done']]);
+    assert.equal(last[4].data.outcome, 'interrupted');
     assert.deepEqual(last.filter((e) => e.kind === 'agent.finished').map((e) => [e.agentKey, e.data.outcome]).sort(), [[BG.id, 'unknown'], [FG.id, 'unknown']].sort());
     const session = view(result.state);
     assert.equal(session.status, 'ended');
@@ -252,17 +254,19 @@ describe('ponto 8: volta depois do encerramento inferido pelos 15 min', () => {
     s.post(1100, old);
     const { state } = play(s.events);
     const ticked = tick(state, T0 + 1100 + 15 * MIN);
-    assert.deepEqual(kinds(ticked.events), [['agent.finished', T.id]]);
+    assert.deepEqual(kinds(ticked.events), [['agent.finished', T.id], ['quest.phase', T.id]]);
     return { state, old, s };
   }
 
-  it('tool.pre com toolUseId novo devolve o agente a working, com finished false, sem evento além do tool.started', () => {
+  it('tool.pre com toolUseId novo devolve o agente a working, com finished false; no feed só o tool.started (a etapa volta a active, T8)', () => {
     const { state } = inferred();
     const s = script();
     const fresh = s.call('Read', { file_path: `${PROJECT}\\volta.md` }, T);
     s.pre(16 * MIN + 2000, { ...fresh, id: 'toolu_01Volta000000000000000' });
     const result = play(s.events, { state });
-    assert.deepEqual(kinds(result.events), [['tool.started', T.id]]);
+    assert.deepEqual(kinds(result.events), [['quest.phase', T.id], ['tool.started', T.id]]);
+    assert.deepEqual(result.events[0].data.state, 'active');
+    assert.ok(!view(state).feed.some((e) => e.kind === 'quest.phase' && e.data.state === 'active'), 'active não vai para o feed');
     const t = agentIn(view(state), T.id);
     assert.equal(t.status, 'working');
     assert.equal(t.finished, false);
@@ -274,8 +278,9 @@ describe('ponto 8: volta depois do encerramento inferido pelos 15 min', () => {
     s.pre(16 * MIN + 2000, { id: 'toolu_01Volta000000000000001', tool: 'Read', input: { file_path: `${PROJECT}\\v.md` }, who: T });
     s.stopAgent(16 * MIN + 3000, T);
     const result = play(s.events, { state });
-    assert.deepEqual(kinds(result.events), [['tool.started', T.id], ['agent.finished', T.id]]);
-    assert.equal(result.events.at(-1).data.outcome, 'done');
+    assert.deepEqual(kinds(result.events), [['quest.phase', T.id], ['tool.started', T.id], ['agent.finished', T.id], ['quest.phase', T.id]]);
+    assert.equal(result.events[2].data.outcome, 'done');
+    assert.equal(result.events[3].data.state, 'done');
   });
 
   it('atrasos não devolvem: Post de chamada antiga, Pre repetido e Post sem Pre', () => {
@@ -379,7 +384,7 @@ describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
     }
 
     it('lê só os nomes .md do projeto e da pasta pessoal; ligado ao estado por newProjects e setAgentNames, os papéis entram no roster', async () => {
-      const { read } = reader.createAgentNamesReader({ homeDir: home });
+      const { read } = reader.createAgentNamesReader({ homeDir: home, timeoutMs: 10_000 });
       const s = script({ projectDir: project });
       s.prompt(0);
       const state = createState();
@@ -402,13 +407,13 @@ describe('ponto 10: a leitura de .claude/agents/ fica fora do domínio', () => {
 
     it('cache por pasta: cada pasta é listada uma vez; arquivo novo só aparece com um leitor novo (reinício)', async () => {
       const listed = [];
-      const { read } = reader.createAgentNamesReader({ homeDir: home, list: (folder) => { listed.push(folder); return reader.listAgentFiles(folder); } });
+      const { read } = reader.createAgentNamesReader({ homeDir: home, timeoutMs: 10_000, list: (folder) => { listed.push(folder); return reader.listAgentFiles(folder); } });
       await read(project);
       await read(project);
       assert.equal(listed.length, 2, 'projeto e pasta pessoal, uma vez cada');
       writeFileSync(path.join(project, '.claude', 'agents', 'dev-backend.md'), '');
       assert.ok(!(await read(project)).includes('dev-backend'));
-      assert.ok((await reader.createAgentNamesReader({ homeDir: home }).read(project)).includes('dev-backend'));
+      assert.ok((await reader.createAgentNamesReader({ homeDir: home, timeoutMs: 10_000 }).read(project)).includes('dev-backend'));
     });
 
     it('listagem que falha, que devolve lixo ou que lança: lista vazia, sem rejeitar', async () => {

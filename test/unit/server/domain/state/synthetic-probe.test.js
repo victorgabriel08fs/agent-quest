@@ -14,6 +14,17 @@ import { getSessionState, getSessionStates } from '../../../../../server/domain/
 import { loadFixtureScenarios, syntheticScenario } from '../scenarios.js';
 import { agentOf, assertAttribution, assertLinks, assertRunShape, run } from './scenarios.js';
 
+/** O evento sem o título do ticket. */
+const withoutTitle = (event) => (event.kind === 'quest.started' ? { ...event, data: { ...event.data, title: '' } } : event);
+
+/** A sessão sem os títulos de ticket (rótulo, ticket e feed). */
+const withoutTitles = (session) => ({
+  ...session,
+  label: '',
+  quest: session.quest && { ...session.quest, title: '' },
+  feed: session.feed.map(withoutTitle),
+});
+
 /** Pasta pessoal dos cenários sanitizados (o nome do usuário vira "usuario"). */
 const FIXTURE_HOME = 'C:\\Users\\usuario';
 
@@ -29,10 +40,20 @@ describe('SINTÉTICO: reducer sobre a sessão da sonda', () => {
 
   it('nenhum conteúdo real nem valor cru chega ao estado ou aos eventos', () => {
     const result = run(scn);
-    const all = JSON.stringify({ sessions: getSessionStates(result.state), events: result.events });
-    // O título do pedido nem entra no recorte (ticket é do T8).
+    const sessions = getSessionStates(result.state);
+    // O título do ticket é a primeira linha do pedido (seção 6, T8). Na sonda,
+    // o primeiro pedido leva SEGREDO-DO-PEDIDO nessa linha de propósito: a
+    // marca só pode aparecer no título do ticket, no quest.started e no rótulo
+    // da sessão, nunca no resto.
+    const all = JSON.stringify({ sessions: sessions.map(withoutTitles), events: result.events.map(withoutTitle) });
     for (const marker of CONTENT_MARKERS) assert.ok(!all.includes(marker), marker);
     assert.ok(!/TypeKey|toTypeKey|typeKey/.test(all));
+    const titles = result.events.filter((event) => event.kind === 'quest.started' && !event.data.implicit).map((event) => event.data.title);
+    assert.ok(titles.length > 0);
+    for (const title of titles) {
+      assert.ok(title.length <= 80 && !title.includes('\n'), title);
+      for (const marker of CONTENT_MARKERS.filter((item) => item !== 'SEGREDO-DO-PEDIDO')) assert.ok(!title.includes(marker), marker);
+    }
   });
 
   it('três sessões: terminal, depois do /clear e VS Code', () => {

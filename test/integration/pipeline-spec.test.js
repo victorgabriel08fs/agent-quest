@@ -683,15 +683,17 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     const S = sid(102);
     const W = { id: aid(102), type: 'tester' };
     const sequence = [
-      hook('Notification', S, { message: 'MENSAGEM-9A', notification_type: 'idle_prompt' }), // sessão sob demanda: update sem evento
-      hook('UserPromptSubmit', S, { prompt: 'Pedido de teste' }), // main trabalhando: update sem evento
+      hook('Notification', S, { message: 'MENSAGEM-9A', notification_type: 'auth_success' }), // sessão sob demanda: update sem evento (tipo fora da lista)
+      hook('UserPromptSubmit', S, { prompt: 'Pedido de teste' }), // T8: quest.started
       pre(S, tid('B1')),
       hook('SubagentStart', S, {}, W),
       pre(S, tid('B2'), W, 'Bash', { command: 'npm test', description: 'Rodar' }),
       hook('PostToolUseFailure', S, { tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_use_id: tid('B2'), error: 'Exit code 1' }, W),
+      hook('PreCompact', S, { trigger: 'auto' }), // atividade "compactando": update sem evento (T8)
       hook('SubagentStop', S, { last_assistant_message: 'RESPOSTA-9A' }, W),
       post(S, tid('B1')),
-      hook('Stop', S, { last_assistant_message: 'RESPOSTA-9A', background_tasks: [] }), // main ocioso: update sem evento
+      hook('Stop', S, { last_assistant_message: 'RESPOSTA-9A', background_tasks: [] }), // T8: quest.finished
+      hook('Notification', S, { message: 'MENSAGEM-9B', notification_type: 'auth_success' }), // só as horas: update sem evento (payload diferente do primeiro, senão a ingestão deduplica)
     ];
     for (const payload of sequence) assert.equal((await postHook(port, token, envelope(payload))).status, 204);
     await client.waitFor((m) => m.event === 'update' && m.data.session.id === S && m.data.session.agents[0].status === 'idle' && m.data.session.agents.length === 2 && m.data.session.agents[1].finished);
@@ -699,7 +701,7 @@ describe('T9a ligação: servidor real (node server/main.js --port 0) e HTTP rea
     const mine = client.numbered().filter((m) => m.data.session?.id === S);
     const kinds = mine.map((m) => m.data.event?.kind ?? null);
     assert.equal(kinds[0], null, 'sessão criada sob demanda chega por update sem evento');
-    assert.deepEqual(kinds.filter(Boolean), ['tool.started', 'agent.started', 'tool.started', 'tool.failed', 'agent.finished', 'tool.finished']);
+    assert.deepEqual(kinds.filter(Boolean), ['quest.started', 'tool.started', 'agent.started', 'quest.phase', 'tool.started', 'tool.failed', 'test.finished', 'agent.finished', 'quest.phase', 'tool.finished', 'quest.finished']);
     assert.ok(kinds.filter((k) => k === null).length >= 3, `updates sem evento: ${kinds}`);
     await caughtUp(client, state);
     assertSameAsState(replay(client.messages), state);
@@ -1033,13 +1035,18 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     const events = updates.map((m) => m.data.event).filter(Boolean);
     assert.deepEqual(events.map((e) => [e.kind, e.agentKey]), [
       ['session.started', null],
+      ['quest.started', 'main'],
       ['agent.delegated', 'main'],
       ['agent.started', TESTER.id],
+      ['quest.phase', TESTER.id],
       ['tool.started', TESTER.id],
       ['tool.finished', TESTER.id],
       ['tool.started', TESTER.id],
       ['tool.failed', TESTER.id],
+      ['test.finished', TESTER.id],
       ['agent.finished', TESTER.id],
+      ['quest.phase', TESTER.id],
+      ['quest.finished', 'main'],
     ]);
     const byKind = (kind, n = 0) => events.filter((e) => e.kind === kind)[n];
     const projectName = path.basename(projectDir);
@@ -1051,6 +1058,15 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     assert.deepEqual(byKind('tool.started', 1).data, { toolUseId: T_BASH, tool: 'Bash', category: 'test', target: 'npm test', detail: 'Rodar os testes' });
     assert.deepEqual(byKind('tool.failed').data, { toolUseId: T_BASH, tool: 'Bash', category: 'test', target: 'npm test', error: 'Exit code 1', interrupted: false });
     assert.deepEqual(byKind('agent.finished').data, { outcome: 'done' });
+    assert.deepEqual(byKind('quest.started').data, { questId: PROMPT_ID, n: 1, title: 'Peça ao tester para rodar a suíte', implicit: false });
+    assert.deepEqual(byKind('quest.phase', 0).data, { questId: PROMPT_ID, phase: 'test', state: 'active' });
+    assert.deepEqual(byKind('quest.phase', 1).data, { questId: PROMPT_ID, phase: 'test', state: 'done' });
+    assert.deepEqual({ ...byKind('test.finished').data, framework: null }, { toolUseId: T_BASH, ok: false, passed: null, failed: null, total: null, framework: null });
+    const finishedQuest = byKind('quest.finished');
+    assert.deepEqual({ ...finishedQuest.data, durationMs: 0 }, { questId: PROMPT_ID, n: 1, outcome: 'done', error: null, durationMs: 0, actions: 3 });
+    assert.equal(finishedQuest.data.durationMs, finishedQuest.ts - byKind('quest.started').ts);
+    within(byKind('quest.started').ts, 'UserPromptSubmit');
+    within(finishedQuest.ts, 'Stop');
     within(byKind('session.started').ts, 'SessionStart');
     within(byKind('agent.delegated').ts, 'PreToolUse Agent');
     within(byKind('agent.started').ts, 'SubagentStart');
@@ -1061,7 +1077,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     await caughtUp(sse, state);
     assertSameAsState(replay(sse.messages), state);
 
-    // O SessionState final contra a seção 9 (valores neutros da regra 2 do recorte).
+    // O SessionState final contra a seção 9, com ticket, etapa e bug do T8.
     assert.equal(state.sessions.length, 1);
     const session = state.sessions[0];
     const expectedKey = projectDir.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => `${d.toLowerCase()}:`);
@@ -1071,7 +1087,7 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
     assert.deepEqual(rest, {
       id: SID,
       project: { key: expectedKey, name: projectName, dir: projectDir },
-      label: `Sessão ${SID.slice(0, 6)}`,
+      label: 'Peça ao tester para rodar a suíte', // sem session_title, o título do primeiro ticket
       client: null,
       status: 'active',
       startedAt: byKind('session.started').ts,
@@ -1089,14 +1105,18 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
         },
       ],
       roster: ['orq', 'arq', 'dev', 'tes', 'doc'],
-      quest: null,
-      counters: { questsDone: 0, bugsCrushed: 0, pendingApprovals: 0 },
-      bugs: { open: 0, lastRun: null },
+      quest: {
+        id: PROMPT_ID, n: 1, title: 'Peça ao tester para rodar a suíte', implicit: false, status: 'done',
+        startedAt: byKind('quest.started').ts, endedAt: finishedQuest.ts,
+        phases: { design: 'pending', code: 'pending', test: 'done', docs: 'pending' }, actions: 3, error: null,
+      },
+      counters: { questsDone: 1, bugsCrushed: 0, pendingApprovals: 0 },
+      bugs: { open: 1, lastRun: { ok: false, passed: null, failed: null, total: null, framework: rest.bugs.lastRun?.framework ?? null, at: byKind('test.finished').ts } },
     });
     within(rest.lastEventAt, 'Stop');
     within(rest.agents[0].lastEventAt, 'Stop');
     // Feed: só FEED_KINDS, na ordem, com os eventos numerados de antes.
-    assert.deepEqual(feed.map((e) => e.kind), ['session.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.failed', 'agent.finished']);
+    assert.deepEqual(feed.map((e) => e.kind), ['session.started', 'quest.started', 'agent.delegated', 'tool.started', 'tool.started', 'tool.failed', 'test.finished', 'agent.finished', 'quest.phase', 'quest.finished']);
     assert.deepEqual(feed, events.filter(isFeed));
     for (const event of feed) assert.equal(event.id, `${replay(sse.messages).runId}:${event.seq}`);
     // Minimização: nada de pedido completo, conteúdo, saída, resposta do assistente nem transcript.
@@ -1254,8 +1274,11 @@ describe('Primeira luz: node server/main.js + encaminhador real (processo filho)
       const payload = common('PreToolUse', { tool_name: 'Read', tool_input: { file_path: path.join(projectDir, 'y.md') }, tool_use_id: 'toolu_01Depois9A' });
       if (!(await deliver(t, [payload], 'depois da volta'))) return; // pulado pela regra de carga
       const update = await rc.waitFor((m) => m.event === 'update' && m.data.event?.data?.toolUseId === 'toolu_01Depois9A', { from: at, timeoutMs: 30_000 });
-      assert.equal(update.data.seq, 1);
-      assert.equal(update.id, `${hello.data.runId}:1`);
+      const implicit = rc.messages.slice(at).find((m) => m.event === 'update' && m.data.seq === 1);
+      assert.equal(implicit.data.event.kind, 'quest.started', 'T8: a atividade sem ticket abre um implícito antes');
+      assert.equal(implicit.data.event.data.implicit, true);
+      assert.equal(update.data.seq, 2);
+      assert.equal(update.id, `${hello.data.runId}:2`);
       assert.equal(update.data.session.id, SID);
       assert.deepEqual(update.data.session.agents.map((a) => a.key), ['main'], 'o subagente da execução anterior não volta sozinho');
     } finally {
@@ -1396,8 +1419,8 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     assert.equal(health.events.accepted, 9);
     assert.equal(health.events.ignored, 7, 'os sete descartados pelo normalizador');
     assert.equal(health.sessions, 1);
-    assert.deepEqual(client.numbered().map((m) => m.data.event?.kind ?? null), ['tool.started'], 'só o válido gerou mensagem, com seq 1');
-    assert.equal(client.numbered()[0].data.seq, 1);
+    assert.deepEqual(client.numbered().map((m) => m.data.event?.kind ?? null), ['quest.started', 'tool.started'], 'só o válido gerou mensagens, com seq 1 e 2');
+    assert.deepEqual(client.numbered().map((m) => m.data.seq), [1, 2]);
     assert.deepEqual(local.logs, []);
   });
 
@@ -1438,9 +1461,10 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     from = mark();
     now = base + 16 * 60_000;
     intervals.fire();
-    await waitFor(() => since(from).length >= 1, { label: 'tick de 16 min' });
-    assert.deepEqual(describeMessages(since(from)), [['update', 'agent.finished', S1]]);
+    await waitFor(() => since(from).length >= 2, { label: 'tick de 16 min' });
+    assert.deepEqual(describeMessages(since(from)), [['update', 'agent.finished', S1], ['update', 'quest.phase', S1]]);
     assert.deepEqual(since(from)[0].data.event.data, { outcome: 'unknown' });
+    assert.deepEqual([since(from)[1].data.event.data.phase, since(from)[1].data.event.data.state], ['code', 'done']);
 
     // +31 min: S2, encerrada há 30 min, sai da memória.
     from = mark();
@@ -1659,9 +1683,10 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     while (pending.length) pending.shift()();
     await client.waitFor((m) => m.data?.event?.data?.toolUseId === tid('F199'));
     health = await getJson(port, '/api/health');
-    const ids = client.numbered().map((m) => m.data.event?.data?.toolUseId);
+    assert.equal(client.numbered()[0].data.event.kind, 'quest.started', 'T8: o primeiro fato que ficou abre o ticket implícito');
+    const ids = client.numbered().filter((m) => m.data.event?.kind === 'tool.started').map((m) => m.data.event.data.toolUseId);
     assert.deepEqual(ids, Array.from({ length: 50 }, (_, i) => tid(`F${150 + i}`)), 'os 50 mais recentes, na ordem');
-    assert.deepEqual(client.numbered().map((m) => m.data.seq), Array.from({ length: 50 }, (_, i) => i + 1));
+    assert.deepEqual(client.numbered().map((m) => m.data.seq), Array.from({ length: 51 }, (_, i) => i + 1));
     assert.equal(health.events.ignored, 0);
     assert.equal(health.sessions, 1);
     assertSameAsState(replay(client.messages), await getJson(port, '/api/state'));
@@ -1680,7 +1705,7 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
     const health = await local.health();
     assert.equal(health.events.deduped, 1);
     assert.equal(health.events.accepted, 2);
-    assert.deepEqual(client.numbered().map((m) => [m.data.event?.kind, m.data.event?.sessionId]), [['tool.started', sid(601)], ['tool.started', sid(602)]]);
+    assert.deepEqual(client.numbered().map((m) => [m.data.event?.kind, m.data.event?.sessionId]), [['quest.started', sid(601)], ['tool.started', sid(601)], ['quest.started', sid(602)], ['tool.started', sid(602)]]);
   });
 
   it('segredos, ANSI e conteúdo nos envelopes: nada disso, nenhum *Key cru, nenhum campo fora do contrato e nenhum texto que não seja ponto fixo de redact sai pelo SSE ou pelo /api/state', TEST, async (t) => {
@@ -1747,6 +1772,9 @@ describe('T9a ligação no mesmo processo (startServer com a opção pipeline)',
       'kind', 'category', 'tool', 'target', 'detail', 'state', 'at',
       'ts', 'agentKey', 'data',
       'source', 'projectName', 'reason', 'toolUseId', 'toType', 'toRole', 'description', 'outcome', 'durationMs', 'error', 'interrupted',
+      // T8
+      'n', 'title', 'implicit', 'endedAt', 'phases', 'design', 'code', 'test', 'docs', 'actions', 'questId', 'phase',
+      'passed', 'failed', 'framework', 'by', 'trigger',
     ]);
     const walk = (value, where) => {
       if (typeof value === 'string') {

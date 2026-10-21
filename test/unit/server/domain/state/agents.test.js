@@ -140,7 +140,8 @@ describe('[T0] V5: atividade por tipo (seção 9)', () => {
 
   it('tool: running no Pre, failed no Failure', () => {
     const running = view(run(scn, { until: 6 }).state);
-    assert.deepEqual(pick(agentOf(running, T.id).activity), { kind: 'tool', category: 'bash', tool: 'Bash', target: 'npm test', detail: 'Rodar a suíte', state: 'running' });
+    // `npm test` é comando de teste: categoria `test` (seção 3; detecção do T6).
+    assert.deepEqual(pick(agentOf(running, T.id).activity), { kind: 'tool', category: 'test', tool: 'Bash', target: 'npm test', detail: 'Rodar a suíte', state: 'running' });
     assert.equal(agentOf(view(run(scn, { until: 7 }).state), T.id).activity.state, 'failed');
   });
 

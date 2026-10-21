@@ -11,7 +11,7 @@
 // Nomes, pastas e ids são fictícios (o repositório é público).
 
 import assert from 'node:assert/strict';
-import { AGENT_STATUS, FEED_KINDS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from '../../shared/contract.js';
+import { AGENT_STATUS, EVENT_KINDS, FEED_KINDS, PHASES, QUEST_STATUS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from '../../shared/contract.js';
 import { normalize } from '../../server/domain/normalize.js';
 import { redact } from '../../server/domain/redact.js';
 import { apply, createState, getSessionState, getSessionStates, setAgentNames, tick } from '../../server/domain/state/index.js';
@@ -42,14 +42,21 @@ export const toolUseId = (n) => `toolu_01Tst${String(n).padStart(19, '0')}`;
 // Cenários: lista de { at, env, payload }, com `at` em ms desde T0
 // ---------------------------------------------------------------------------
 
+/** prompt_id fictícios, únicos no processo (V8: diferente a cada pedido). */
+let promptSeq = 0;
+export const promptUuid = () => `9a0e0000-0000-4000-8000-${String(++promptSeq).padStart(12, '0')}`;
+
 /**
  * Monta um cenário. Cada método acrescenta um evento no instante `at`.
- * @param {{ session?: string, projectDir?: string|null, entrypoint?: string|null }} [options]
+ * Com `promptIds` (padrão), cada pedido ganha um `prompt_id` novo, que vai em
+ * todos os eventos seguintes da mesma sessão, inclusive dos subagentes (V8).
+ * @param {{ session?: string, projectDir?: string|null, entrypoint?: string|null, promptIds?: boolean }} [options]
  */
-export function script({ session = sessionId(1), projectDir = PROJECT, entrypoint = 'cli' } = {}) {
+export function script({ session = sessionId(1), projectDir = PROJECT, entrypoint = 'cli', promptIds = true } = {}) {
   const events = [];
   let calls = 0;
   let current = { session, projectDir, entrypoint };
+  const promptOf = new Map();
 
   const s = {
     events,
@@ -58,6 +65,10 @@ export function script({ session = sessionId(1), projectDir = PROJECT, entrypoin
       current = { ...current, ...options };
       return s;
     },
+    /** prompt_id atual da sessão corrente (ou null). */
+    promptId() {
+      return promptOf.get(current.session) ?? null;
+    },
     hook(at, name, fields = {}, who = null) {
       const payload = {
         session_id: current.session,
@@ -65,8 +76,10 @@ export function script({ session = sessionId(1), projectDir = PROJECT, entrypoin
         cwd: current.projectDir,
         permission_mode: 'default',
         hook_event_name: name,
+        ...(promptIds && promptOf.has(current.session) ? { prompt_id: promptOf.get(current.session) } : {}),
         ...fields,
       };
+      if (payload.prompt_id === undefined) delete payload.prompt_id;
       if (who) {
         if (who.id !== undefined) payload.agent_id = who.id;
         if (who.type !== undefined) payload.agent_type = who.type;
@@ -80,7 +93,13 @@ export function script({ session = sessionId(1), projectDir = PROJECT, entrypoin
     sessionEnd(at, reason = 'prompt_input_exit') {
       return s.hook(at, 'SessionEnd', { reason });
     },
+    /** Pedido. `extra.prompt_id` fixa o id (ou `undefined` para não mandar nenhum). */
     prompt(at, text = 'Pedido fictício', extra = {}) {
+      if (promptIds) {
+        const id = 'prompt_id' in extra ? extra.prompt_id : promptUuid();
+        if (id === undefined || id === null) promptOf.delete(current.session);
+        else promptOf.set(current.session, id);
+      }
       return s.hook(at, 'UserPromptSubmit', { prompt: text, ...extra });
     },
     /** Chamada de ferramenta, ainda sem evento. */
@@ -130,6 +149,31 @@ export function script({ session = sessionId(1), projectDir = PROJECT, entrypoin
         agent_transcript_path: `${HOME}\\.claude\\projects\\C--Users-beltrana-Codigo\\${current.session}\\subagents\\agent-${who.id}.jsonl`,
         last_assistant_message: 'TEXTO-DO-ASSISTENTE',
       }, who);
+    },
+    /** PermissionRequest (sem tool_use_id, como o hook real) para uma chamada. */
+    permissionRequest(at, call, who = call.who) {
+      return s.hook(at, 'PermissionRequest', { tool_name: call.tool, tool_input: call.input, permission_suggestions: [] }, who);
+    },
+    /** PermissionDenied (modo automático) de uma chamada. */
+    permissionDenied(at, call) {
+      return s.hook(at, 'PermissionDenied', { tool_name: call.tool, tool_input: call.input, tool_use_id: call.id }, call.who);
+    },
+    notice(at, type, who = null) {
+      return s.hook(at, 'Notification', { message: 'MENSAGEM-DO-AVISO', notification_type: type }, who);
+    },
+    preCompact(at, trigger = 'auto', who = null) {
+      return s.hook(at, 'PreCompact', { trigger, custom_instructions: 'INSTRUCOES-PRIVADAS' }, who);
+    },
+    postCompact(at, trigger = 'auto', who = null) {
+      return s.hook(at, 'PostCompact', { trigger, compact_summary: 'RESUMO-PRIVADO' }, who);
+    },
+    /** Comando de teste que passa (Post) ou falha (Failure), com o texto de saída dado. */
+    testRun(at, command, { who = null, ok = true, output = '', interrupt = false } = {}) {
+      const c = s.call('Bash', { command, description: 'Rodar os testes' }, who);
+      s.pre(at, c);
+      if (ok) s.post(at + 50, c, { stdout: output, stderr: '', interrupted: false });
+      else s.fail(at + 50, c, `Exit code 1\n${output}`, { interrupt });
+      return c;
     },
     stop(at, backgroundTasks = []) {
       return s.hook(at, 'Stop', { stop_hook_active: false, last_assistant_message: 'TEXTO-DO-ASSISTENTE', background_tasks: backgroundTasks });
@@ -230,25 +274,45 @@ export const pickActivity = (activity) => {
 export const kinds = (events) => events.map((event) => [event.kind, event.agentKey]);
 
 // ---------------------------------------------------------------------------
-// Contrato (seções 3 e 9) e recorte (plano, regras 2 e 3)
+// Contrato (seções 3 e 9), com o T8: tickets, etapas, aprovações, bugs e compactação
 // ---------------------------------------------------------------------------
 
-/** Os 8 tipos que o reducer emite no recorte da Primeira luz (regra 3). */
+/**
+ * Tipos que o reducer emite a partir do T8: todos os da seção 3, menos o
+ * `context.usage`, que é do T15 (opcional).
+ */
+export const EMITTED_KINDS = Object.freeze(EVENT_KINDS.filter((kind) => kind !== 'context.usage'));
+
+/** Os 8 tipos do recorte da Primeira luz (T7). Usado para filtrar listas exatas do T7. */
 export const SLICE_KINDS = Object.freeze([
   'session.started', 'session.ended', 'agent.delegated', 'agent.started',
   'agent.finished', 'tool.started', 'tool.finished', 'tool.failed',
 ]);
 
+/** Tipos do T8, que não existiam no recorte. */
+export const T8_KINDS = Object.freeze(EMITTED_KINDS.filter((kind) => !SLICE_KINDS.includes(kind)));
+
+/** Só os tipos do recorte do T7 (para as listas exatas dos testes do T7). */
+export const sliceOnly = (events) => events.filter((event) => SLICE_KINDS.includes(event.kind));
+
 /** Chaves de `data` por tipo (seção 3). */
 export const DATA_KEYS = Object.freeze({
   'session.started': ['source', 'projectName'],
   'session.ended': ['reason'],
+  'session.idle': [],
+  'quest.started': ['questId', 'n', 'title', 'implicit'],
+  'quest.finished': ['questId', 'n', 'outcome', 'error', 'durationMs', 'actions'],
+  'quest.phase': ['questId', 'phase', 'state'],
   'agent.delegated': ['toolUseId', 'toType', 'toRole', 'description', 'background'],
   'agent.started': ['agentType', 'role', 'label', 'parentKey'],
   'agent.finished': ['outcome'],
   'tool.started': ['toolUseId', 'tool', 'category', 'target', 'detail'],
   'tool.finished': ['toolUseId', 'tool', 'category', 'durationMs'],
   'tool.failed': ['toolUseId', 'tool', 'category', 'target', 'error', 'interrupted'],
+  'test.finished': ['toolUseId', 'ok', 'passed', 'failed', 'total', 'framework'],
+  'permission.requested': ['tool', 'category', 'target'],
+  'permission.resolved': ['outcome', 'by'],
+  'context.compacted': ['trigger'],
 });
 
 /** CanonicalEvent da seção 3, na ordem do typedef. */
@@ -256,13 +320,20 @@ export const EVENT_KEYS = Object.freeze(['id', 'seq', 'ts', 'sessionId', 'agentK
 export const SESSION_KEYS = Object.freeze(['id', 'project', 'label', 'client', 'status', 'startedAt', 'lastEventAt', 'agents', 'roster', 'quest', 'counters', 'bugs']);
 export const AGENT_KEYS = Object.freeze(['key', 'agentId', 'agentType', 'role', 'label', 'status', 'finished', 'background', 'parentKey', 'activity', 'waitingFor', 'health', 'context', 'startedAt', 'lastEventAt']);
 export const ACTIVITY_KEYS = Object.freeze(['kind', 'category', 'tool', 'target', 'detail', 'state', 'at']);
+export const QUEST_KEYS = Object.freeze(['id', 'n', 'title', 'implicit', 'status', 'startedAt', 'endedAt', 'phases', 'actions', 'error']);
+export const TEST_RUN_KEYS = Object.freeze(['ok', 'passed', 'failed', 'total', 'framework', 'at']);
+
+/** Eventos da sessão, sem agente (seção 3). */
+const SESSION_EVENT_KINDS = new Set(['session.started', 'session.ended', 'session.idle']);
 
 /** Campos que são ids (opacos, não passam por redact no normalizador). */
-const ID_FIELDS = new Set(['id', 'key', 'sessionId', 'agentKey', 'agentId', 'parentKey', 'toolUseId']);
+const ID_FIELDS = new Set(['id', 'key', 'sessionId', 'agentKey', 'agentId', 'parentKey', 'toolUseId', 'questId']);
 
 const isTime = (value) => typeof value === 'number' && Number.isFinite(value);
 const isText = (value) => typeof value === 'string';
 const isTextOrNull = (value) => value === null || typeof value === 'string';
+const isCount = (value) => Number.isInteger(value) && value >= 0;
+const isCountOrNull = (value) => value === null || isCount(value);
 const sameSet = (actual, expected, label) => assert.deepEqual([...actual].sort(), [...expected].sort(), label);
 
 /** Nenhuma chave terminada em `Key` além de `agentKey` e `parentKey` (valor cru, seção 2). */
@@ -272,6 +343,7 @@ export function checkNoRawKeys(value, where = '$') {
   } else if (value !== null && typeof value === 'object') {
     for (const [key, item] of Object.entries(value)) {
       assert.ok(!/key$/i.test(key) || key === 'key' || key === 'agentKey' || key === 'parentKey', `${where}.${key}: chave interna fora do servidor`);
+      assert.ok(key !== 'chained' && key !== 'partial', `${where}.${key}: campo interno do testResult fora do servidor`);
       checkNoRawKeys(item, `${where}.${key}`);
     }
   }
@@ -289,8 +361,7 @@ export function checkFixedPoints(value, where = '$', field = null) {
 }
 
 /**
- * Forma de um evento canônico do recorte (seção 3). `numbered`: exige `id` e
- * `seq` (ponto 1 decidido em 19/10/2026: o reducer numera ao criar).
+ * Forma de um evento canônico (seção 3). `numbered`: exige `id` e `seq`.
  */
 export function checkEvent(event, { numbered = false } = {}) {
   const keys = Object.keys(event);
@@ -300,10 +371,10 @@ export function checkEvent(event, { numbered = false } = {}) {
     assert.ok(Number.isInteger(event.seq), 'evento sem seq');
     assert.ok(isText(event.id) && event.id.endsWith(`:${event.seq}`), `id ${event.id} não termina com :${event.seq}`);
   }
-  assert.ok(SLICE_KINDS.includes(event.kind), `tipo fora do recorte: ${event.kind}`);
+  assert.ok(EMITTED_KINDS.includes(event.kind), `tipo fora do contrato: ${event.kind}`);
   assert.ok(isTime(event.ts), 'ts');
   assert.ok(isText(event.sessionId), 'sessionId');
-  assert.equal(event.agentKey === null, event.kind.startsWith('session.'), `${event.kind}: agentKey ${event.agentKey}`);
+  assert.equal(event.agentKey === null, SESSION_EVENT_KINDS.has(event.kind), `${event.kind}: agentKey ${event.agentKey}`);
   sameSet(Object.keys(event.data), DATA_KEYS[event.kind], `${event.kind}: chaves de data`);
   const { data } = event;
   switch (event.kind) {
@@ -328,6 +399,41 @@ export function checkEvent(event, { numbered = false } = {}) {
       assert.ok(TOOL_CATEGORIES.includes(data.category), `categoria ${data.category}`);
       if (event.kind === 'tool.failed') assert.equal(typeof data.interrupted, 'boolean');
       break;
+    case 'quest.started':
+      assert.equal(event.agentKey, 'main');
+      assert.ok(isText(data.questId) && data.questId !== '');
+      assert.ok(Number.isInteger(data.n) && data.n >= 1, `n ${data.n}`);
+      assert.ok(isText(data.title), 'title');
+      assert.equal(typeof data.implicit, 'boolean');
+      break;
+    case 'quest.finished':
+      assert.equal(event.agentKey, 'main');
+      assert.ok(['done', 'failed', 'interrupted'].includes(data.outcome), `outcome ${data.outcome}`);
+      assert.ok(isTextOrNull(data.error));
+      if (data.outcome !== 'failed') assert.equal(data.error, null, 'error só em failed');
+      assert.ok(isCount(data.durationMs) && isCount(data.actions) && Number.isInteger(data.n) && data.n >= 1);
+      break;
+    case 'quest.phase':
+      assert.ok(PHASES.includes(data.phase), `phase ${data.phase}`);
+      assert.ok(['active', 'done'].includes(data.state), `state ${data.state}`);
+      assert.notEqual(event.agentKey, 'main', 'a etapa é do agente do papel, nunca do main');
+      break;
+    case 'test.finished':
+      assert.equal(typeof data.ok, 'boolean');
+      for (const field of ['passed', 'failed', 'total']) assert.ok(isCountOrNull(data[field]), `${field} ${data[field]}`);
+      assert.ok(isTextOrNull(data.framework));
+      break;
+    case 'permission.requested':
+      assert.ok(isText(data.tool) && TOOL_CATEGORIES.includes(data.category) && isTextOrNull(data.target));
+      break;
+    case 'permission.resolved':
+      assert.ok(['approved', 'denied', 'unknown'].includes(data.outcome), `outcome ${data.outcome}`);
+      assert.ok(['user', 'auto', 'inferred'].includes(data.by), `by ${data.by}`);
+      assert.deepEqual([data.outcome, data.by], { approved: ['approved', 'user'], denied: ['denied', 'auto'], unknown: ['unknown', 'inferred'] }[data.outcome]);
+      break;
+    case 'context.compacted':
+      assert.ok([null, 'manual', 'auto'].includes(data.trigger), `trigger ${data.trigger}`);
+      break;
     default:
   }
   checkNoRawKeys(event);
@@ -340,7 +446,8 @@ function checkParents(session) {
   for (const item of session.agents) {
     if (item.parentKey === null) continue;
     assert.notEqual(item.parentKey, item.key, `${item.key}: parentKey aponta para ele mesmo`);
-    assert.ok(byKey.has(item.parentKey), `${item.key}: parentKey ${item.parentKey} não existe na sessão`);
+    // Com o limite de agentes (T7), o pai pode ter saído do `agents`.
+    if (!byKey.has(item.parentKey)) continue;
     const seen = new Set([item.key]);
     let current = byKey.get(item.parentKey);
     while (current && current.parentKey !== null) {
@@ -351,9 +458,29 @@ function checkParents(session) {
   }
 }
 
+/** QuestState da seção 9. */
+function checkQuest(quest) {
+  sameSet(Object.keys(quest), QUEST_KEYS, 'chaves do quest');
+  assert.ok(isText(quest.id) && quest.id !== '');
+  assert.ok(Number.isInteger(quest.n) && quest.n >= 1);
+  assert.ok(isText(quest.title));
+  assert.equal(typeof quest.implicit, 'boolean');
+  assert.ok(QUEST_STATUS.includes(quest.status), `status do quest ${quest.status}`);
+  assert.ok(isTime(quest.startedAt));
+  const ended = ['done', 'failed', 'interrupted'].includes(quest.status);
+  assert.equal(quest.endedAt !== null, ended, `endedAt ${quest.endedAt} com status ${quest.status}`);
+  if (ended) assert.ok(quest.endedAt >= quest.startedAt, 'endedAt antes do startedAt');
+  sameSet(Object.keys(quest.phases), PHASES, 'etapas');
+  for (const value of Object.values(quest.phases)) assert.ok(['pending', 'active', 'done'].includes(value), `etapa ${value}`);
+  assert.ok(isCount(quest.actions));
+  assert.ok(isTextOrNull(quest.error));
+  if (quest.status !== 'failed') assert.equal(quest.error, null, 'error só em failed');
+}
+
 /**
- * Forma do SessionState (seção 9), valores neutros do recorte (regra 2) e
- * invariantes do estado.
+ * Forma do SessionState (seção 9) e invariantes do estado, com o T8:
+ * `pendingApprovals` nunca negativo e coerente com os agentes `waiting`;
+ * `bugs.open` coerente com o `lastRun`.
  */
 export function checkSession(session, { feed = null } = {}) {
   const keys = Object.keys(session);
@@ -365,11 +492,29 @@ export function checkSession(session, { feed = null } = {}) {
   for (const value of Object.values(session.project)) assert.ok(isText(value), 'project com valor que não é texto');
   assert.ok(isText(session.label) && session.label !== '', 'label vazio');
   assert.ok([null, 'terminal', 'vscode'].includes(session.client), `client ${session.client}`);
-  assert.ok(SESSION_STATUS.includes(session.status) && session.status !== 'waiting', `status ${session.status}`);
+  assert.ok(SESSION_STATUS.includes(session.status), `status ${session.status}`);
   assert.ok(isTime(session.startedAt) && isTime(session.lastEventAt) && session.startedAt <= session.lastEventAt, 'horas da sessão');
-  assert.equal(session.quest, null, 'quest neutro');
-  assert.deepEqual(session.counters, { questsDone: 0, bugsCrushed: 0, pendingApprovals: 0 });
-  assert.deepEqual(session.bugs, { open: 0, lastRun: null });
+  if (session.quest !== null) checkQuest(session.quest);
+
+  sameSet(Object.keys(session.counters), ['questsDone', 'bugsCrushed', 'pendingApprovals'], 'chaves de counters');
+  for (const value of Object.values(session.counters)) assert.ok(isCount(value), `contador ${value}`);
+  const waiting = session.agents.filter((item) => item.status === 'waiting');
+  assert.ok(session.counters.pendingApprovals >= waiting.length, 'pendingApprovals menor que os agentes aguardando');
+  assert.equal(session.counters.pendingApprovals > 0, waiting.length > 0, 'pendingApprovals sem agente aguardando, ou o contrário');
+  if (session.status !== 'ended') assert.equal(session.status === 'waiting', session.counters.pendingApprovals > 0, 'status waiting só com aprovação pendente');
+
+  sameSet(Object.keys(session.bugs), ['open', 'lastRun'], 'chaves de bugs');
+  assert.ok(isCount(session.bugs.open), `bugs.open ${session.bugs.open}`);
+  const run = session.bugs.lastRun;
+  if (run === null) {
+    assert.equal(session.bugs.open, 0, 'bugs sem nenhum run');
+  } else {
+    sameSet(Object.keys(run), TEST_RUN_KEYS, 'chaves do lastRun');
+    assert.equal(typeof run.ok, 'boolean');
+    for (const field of ['passed', 'failed', 'total']) assert.ok(isCountOrNull(run[field]));
+    assert.ok(isTextOrNull(run.framework) && isTime(run.at));
+    assert.equal(session.bugs.open, run.ok ? 0 : run.failed ?? 1, 'bugs.open incoerente com o lastRun');
+  }
 
   assert.ok(Array.isArray(session.roster) && session.roster[0] === 'orq', 'roster começa com orq');
   assert.deepEqual(session.roster, ROLES.filter((role) => session.roster.includes(role)), 'roster na ordem de ROLES, sem repetição');
@@ -388,14 +533,18 @@ export function checkSession(session, { feed = null } = {}) {
     assert.equal(item.role === 'orq', main, `papel de ${item.key}: ${item.role}`);
     assert.ok(ROLES.includes(item.role));
     assert.ok(isTextOrNull(item.agentType) && isText(item.label));
-    assert.ok(AGENT_STATUS.includes(item.status) && item.status !== 'waiting', `status ${item.status}`);
+    assert.ok(AGENT_STATUS.includes(item.status), `status ${item.status}`);
     assert.equal(typeof item.finished, 'boolean');
     assert.equal(typeof item.background, 'boolean');
     if (main) assert.equal(item.finished, false, 'main encerrado');
-    if (item.finished) assert.equal(item.status, 'idle', `${item.key} encerrado e trabalhando`);
+    if (item.finished) assert.equal(item.status, 'idle', `${item.key} encerrado e ${item.status}`);
     assert.ok(isTextOrNull(item.parentKey));
     if (main) assert.equal(item.parentKey, null);
-    assert.equal(item.waitingFor, null);
+    assert.equal(item.waitingFor !== null, item.status === 'waiting', `${item.key}: waitingFor e status`);
+    if (item.waitingFor !== null) {
+      sameSet(Object.keys(item.waitingFor), ['tool', 'category', 'target'], 'chaves de waitingFor');
+      assert.ok(isText(item.waitingFor.tool) && TOOL_CATEGORIES.includes(item.waitingFor.category) && isTextOrNull(item.waitingFor.target));
+    }
     assert.equal(item.context, null);
     sameSet(Object.keys(item.health), ['ok', 'total'], 'chaves de health');
     assert.ok(Number.isInteger(item.health.ok) && Number.isInteger(item.health.total));
@@ -404,13 +553,18 @@ export function checkSession(session, { feed = null } = {}) {
     const { activity } = item;
     if (activity !== null) {
       sameSet(Object.keys(activity), ACTIVITY_KEYS, 'chaves de activity');
-      assert.ok(['tool', 'delegate', 'start'].includes(activity.kind), `atividade ${activity.kind} (compact só no T8)`);
+      assert.ok(['tool', 'delegate', 'start', 'compact'].includes(activity.kind), `atividade ${activity.kind}`);
       assert.ok(['running', 'done', 'failed'].includes(activity.state));
       assert.ok(isTime(activity.at));
       assert.equal(activity.category === null, activity.kind !== 'tool', `categoria da atividade ${activity.kind}`);
       if (activity.category !== null) assert.ok(TOOL_CATEGORIES.includes(activity.category));
       if (activity.kind === 'delegate') assert.ok(['Agent', 'Task'].includes(activity.tool), `delegate com tool ${activity.tool}`);
       if (activity.kind === 'start') assert.deepEqual(pickActivity(activity), { kind: 'start', category: null, tool: null, target: null, detail: null, state: 'running' });
+      if (activity.kind === 'compact') {
+        assert.equal(activity.tool, null);
+        assert.equal(activity.target, null);
+        assert.ok([null, 'manual', 'auto'].includes(activity.detail), `compact com detail ${activity.detail}`);
+      }
       for (const field of ['tool', 'target', 'detail']) assert.ok(isTextOrNull(activity[field]));
     }
   }
@@ -419,6 +573,7 @@ export function checkSession(session, { feed = null } = {}) {
     assert.ok(Array.isArray(session.feed) && session.feed.length <= 200, `feed com ${session.feed?.length}`);
     for (const event of session.feed) {
       assert.ok(FEED_KINDS.includes(event.kind), `${event.kind} no feed`);
+      if (event.kind === 'quest.phase') assert.equal(event.data.state, 'done', 'quest.phase active no feed');
       assert.equal(event.sessionId, session.id);
     }
   }
@@ -441,14 +596,19 @@ export function checkState(state) {
  * Confere, evento a evento:
  * - `agent.started` uma vez por instância, antes de qualquer outro evento dela;
  * - entre dois `agent.finished` da mesma instância há um `tool.started` ou um
- *   `agent.delegated` dela
- *   (volta depois da inferência de 15 min, ponto 8);
+ *   `agent.delegated` dela (volta depois da inferência de 15 min, ponto 8);
  * - `tool.started` no máximo uma vez por `toolUseId`, e `tool.finished` ou
  *   `tool.failed` no máximo uma vez, depois do `tool.started` da mesma chamada
  *   e do mesmo agente;
  * - `agent.delegated` no máximo uma vez por `toolUseId`, que nunca é também
  *   de um `tool.started`;
- * - `session.ended` não se repete sem um `session.started` no meio;
+ * - `session.ended` não se repete sem um `session.started` no meio, e
+ *   `session.idle` não sai depois dele;
+ * - T8: `quest.started` com `n` crescente de 1 em 1 por sessão; `quest.finished`
+ *   e `quest.phase` só de ticket que começou; `test.finished` no máximo uma
+ *   vez por chamada, depois do `tool.started` dela, no mesmo agente;
+ *   `permission.resolved` que não é `denied` só com pedido pendente do agente
+ *   (o número de pendentes nunca fica negativo);
  * - o evento é da sessão do fato que o gerou.
  */
 export class Tracker {
@@ -461,7 +621,7 @@ export class Tracker {
   #session(id) {
     let entry = this.sessions.get(id);
     if (!entry) {
-      entry = { started: new Set(), finished: new Map(), tools: new Map(), delegated: new Set(), ended: false };
+      entry = { started: new Set(), finished: new Map(), tools: new Map(), delegated: new Set(), ended: false, questN: 0, quests: new Set(), tests: new Set(), pending: new Map() };
       this.sessions.set(id, entry);
     }
     return entry;
@@ -473,8 +633,9 @@ export class Tracker {
       if (fact) assert.equal(event.sessionId, fact.sessionId, 'evento em outra sessão que a do fato');
       const s = this.#session(event.sessionId);
       const who = event.agentKey;
-      if (who !== null && who !== 'main' && event.kind !== 'agent.started') {
-        assert.ok(s.started.has(who), `${event.kind} de ${who} antes do agent.started`);
+      if (who !== null && who !== 'main' && event.kind !== 'agent.started' && !s.started.has(who)) {
+        // Agente removido pelo limite e depois esquecido pelas lápides pode reaparecer só com eventos de permissão.
+        assert.fail(`${event.kind} de ${who} antes do agent.started`);
       }
       const id = event.data.toolUseId;
       switch (event.kind) {
@@ -490,7 +651,7 @@ export class Tracker {
           if (id !== null) {
             assert.ok(!s.tools.has(id), `tool.started repetido para ${id}`);
             assert.ok(!s.delegated.has(id), `${id} já era uma delegação`);
-            s.tools.set(id, { agentKey: who, closed: false });
+            s.tools.set(id, { agentKey: who, closed: false, category: event.data.category });
           }
           s.finished.set(who, false);
           break;
@@ -504,21 +665,59 @@ export class Tracker {
             call.closed = true;
           }
           break;
+        case 'test.finished':
+          if (id !== null) {
+            const call = s.tools.get(id);
+            assert.ok(call, `test.finished de ${id} sem tool.started`);
+            assert.equal(call.agentKey, who, `test.finished de ${id} em outro agente`);
+            assert.equal(call.category, 'test', `test.finished de ${id} numa chamada ${call.category}`);
+            assert.ok(!s.tests.has(id), `test.finished repetido para ${id}`);
+            s.tests.add(id);
+          }
+          break;
         case 'agent.delegated':
           if (id !== null) {
             assert.ok(!s.delegated.has(id), `agent.delegated repetido para ${id}`);
             assert.ok(!s.tools.has(id), `${id} já era uma ferramenta`);
             s.delegated.add(id);
           }
-          // tool.pre do Agent com id novo também devolve a instância (ponto 8).
           s.finished.set(who, false);
           break;
+        case 'quest.started':
+          assert.equal(event.data.n, s.questN + 1, `quest.started com n ${event.data.n} depois de ${s.questN}`);
+          s.questN = event.data.n;
+          s.quests.add(event.data.questId);
+          break;
+        case 'quest.finished':
+        case 'quest.phase':
+          assert.ok(s.quests.has(event.data.questId), `${event.kind} de um ticket que não começou: ${event.data.questId}`);
+          break;
+        case 'permission.requested': {
+          const [lo, hi] = s.pending.get(who) ?? [0, 0];
+          s.pending.set(who, [lo + 1, hi + 1]);
+          break;
+        }
+        case 'permission.resolved': {
+          // Pendentes possíveis do agente, entre um mínimo e um máximo: o `denied`
+          // sai mesmo sem pedido pendente (seção 4), e pode ou não resolver um.
+          const [lo, hi] = s.pending.get(who) ?? [0, 0];
+          if (event.data.outcome === 'denied') {
+            s.pending.set(who, [Math.max(0, lo - 1), hi]);
+          } else {
+            assert.ok(hi > 0, `permission.resolved(${event.data.outcome}) de ${who} sem pedido pendente`);
+            s.pending.set(who, [Math.max(0, lo - 1), hi - 1]);
+          }
+          break;
+        }
         case 'session.started':
           s.ended = false;
           break;
         case 'session.ended':
           assert.ok(!s.ended, 'session.ended repetido');
           s.ended = true;
+          break;
+        case 'session.idle':
+          assert.ok(!s.ended, 'session.idle depois do session.ended');
           break;
         default:
       }
@@ -616,6 +815,10 @@ const DIRS = [PROJECT, OTHER_PROJECT, 'c:\\users\\beltrana\\codigo\\agents-quest
 const TEXTS = ['Testar a ingestão', `token=${SECRET}`, 'curl -u admin:hunter2 http://x', 'PEDIDO-COMPLETO', '', null, 'a\nb', 'x'.repeat(5000), '/review agora', '<task-notification>fim</task-notification>'];
 /** Ids inválidos: ids são opacos (não passam por redact), então nunca carregam o segredo de teste. */
 const BAD_IDS = [null, 42, '', '   ', 'x y', {}, [], 'a\u0000b', 'x'.repeat(200), 'main'];
+/** Comandos de teste (T6), inclusive cadeias && e teste no meio, e resumos do node:test. */
+const COMMANDS = ['npm test', 'node --test', 'npm run build && npm test', 'npm test; echo fim', 'npx vitest run', 'git status'];
+const SUMMARIES = ['ℹ tests 5\nℹ pass 3\nℹ fail 2', 'ℹ tests 4\nℹ pass 4\nℹ fail 0', 'Tests:  1 failed, 2 passed, 3 total', 'nada reconhecido'];
+const FUZZ_PROMPTS = ['9a0e0000-0000-4000-8000-0000000fa001', '9a0e0000-0000-4000-8000-0000000fa002', '9a0e0000-0000-4000-8000-0000000fa003', '9a0e0000-0000-4000-8000-0000000fa004'];
 export const FORBIDDEN = ['QQQQQQQQQQQQ', 'hunter2', 'PEDIDO-SECRETO', 'SAIDA-SECRETA', 'TEXTO-DO-ASSISTENTE', 'CONTEUDO-SECRETO', '\x1b'];
 
 function randomValue(random, depth = 0) {
@@ -657,7 +860,7 @@ export function randomEnvelope(random, now, { toolFor = null } = {}) {
   maybe(0.8, () => {
     payload.tool_input = random() < 0.85
       ? {
-        file_path: pick(random, PATHS), command: pick(random, TEXTS), description: pick(random, TEXTS), subagent_type: pick(random, TYPES),
+        file_path: pick(random, PATHS), command: random() < 0.5 ? pick(random, COMMANDS) : pick(random, TEXTS), description: pick(random, TEXTS), subagent_type: pick(random, TYPES),
         run_in_background: random() < 0.25, pattern: pick(random, TEXTS), url: pick(random, ['https://u:p@h.example/x', 'nada', null]),
         prompt: 'PEDIDO-SECRETO', content: 'CONTEUDO-SECRETO', old_string: 'CONTEUDO-SECRETO',
       }
@@ -665,17 +868,20 @@ export function randomEnvelope(random, now, { toolFor = null } = {}) {
   });
   maybe(0.6, () => {
     payload.tool_response = random() < 0.8
-      ? { agentId: pick(random, [...agents, null, 42, 'main']), status: pick(random, ['completed', 'async_launched', 'x', null]), stdout: 'SAIDA-SECRETA' }
+      ? { agentId: pick(random, [...agents, null, 42, 'main']), status: pick(random, ['completed', 'async_launched', 'x', null]), stdout: `SAIDA-SECRETA
+${pick(random, SUMMARIES)}` }
       : randomValue(random);
   });
   maybe(0.4, () => {
     payload.background_tasks = random() < 0.8
-      ? Array.from({ length: Math.floor(random() * 4) }, () => ({ id: pick(random, [...agents, 'bash_1', null]), type: 'local_agent', status: pick(random, ['running', 'completed']), agent_type: pick(random, TYPES) }))
+      ? Array.from({ length: Math.floor(random() * 4) }, () => ({ id: pick(random, [...agents, 'bash_1', null]), type: 'local_agent', status: pick(random, ['running', 'completed', 'failed', 'killed', null, 'x']), agent_type: pick(random, TYPES) }))
       : randomValue(random);
   });
   maybe(0.3, () => { payload.source = pick(random, ['startup', 'resume', 'clear', 'compact', 'fork', 'x', null]); });
   maybe(0.3, () => { payload.reason = pick(random, ['clear', 'logout', 'other', 'x']); });
   maybe(0.3, () => { payload.prompt = pick(random, TEXTS); });
+  maybe(0.6, () => { payload.prompt_id = random() < 0.9 ? pick(random, FUZZ_PROMPTS) : pick(random, BAD_IDS); });
+  maybe(0.15, () => { payload.trigger = pick(random, ['manual', 'auto', 'x', null]); });
   maybe(0.2, () => { payload.session_title = pick(random, TEXTS); });
   maybe(0.3, () => { payload.error = pick(random, TEXTS); });
   maybe(0.2, () => { payload.is_interrupt = random() < 0.5; });

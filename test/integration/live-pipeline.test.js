@@ -135,7 +135,8 @@ describe('T9a integração: encaminhador real → servidor real → cliente SSE'
     assert.equal(message.data.event.agentKey, 'main');
     assert.deepEqual(
       (({ tool, category, target, detail }) => ({ tool, category, target, detail }))(message.data.event.data),
-      { tool: 'Bash', category: 'bash', target: 'npm test', detail: 'Rodar a suíte' },
+      // `npm test` é comando de teste: categoria `test` (seção 3; detecção do T6).
+      { tool: 'Bash', category: 'test', target: 'npm test', detail: 'Rodar a suíte' },
     );
     assert.equal(message.data.session.id, payload.session_id);
     assert.ok(!('feed' in message.data.session));

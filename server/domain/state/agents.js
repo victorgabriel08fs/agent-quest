@@ -52,7 +52,7 @@ const MAX_DEPTH = 16;
 /**
  * Agente em memória. Os campos do contrato (AgentState) mais os internos, que
  * nunca saem do servidor: `typeKey`, `activities`, `openCalls`,
- * `outcomes`, `delegation`, `turnEnded` e `revivable`.
+ * `outcomes`, `delegation`, `turnEnded`, `revivable` e `pending`.
  * @typedef {object} Agent
  * @property {string} key                 'main' ou o agent_id
  * @property {string|null} agentId
@@ -71,6 +71,8 @@ const MAX_DEPTH = 16;
  * @property {Delegation|null} delegation pedido Agent ligado a esta instância
  * @property {boolean} turnEnded          main: turno encerrado (Stop ou SessionEnd) até o próximo pedido (seção 8, regra 4)
  * @property {boolean} revivable          encerrado só pela inferência dos 15 min: um `tool.pre` novo o traz de volta (seção 6)
+ * @property {number} pending             pedidos de aprovação pendentes (permissions.js)
+ * @property {{ tool: string, category: import('../../../shared/contract.js').ToolCategory, target: string|null }|null} waitingFor
  * @property {number} startedAt
  * @property {number} lastEventAt
  */
@@ -207,6 +209,18 @@ export function isBackgroundLaunch(fact) {
 }
 
 /**
+ * V12: Failure de uma chamada interrompida pelo usuário (Esc), pelo
+ * `is_interrupt` do hook (`interrupted` no fato). Não conta na saúde: não é
+ * erro do agente (seção 6, "Saúde"). Teste interrompido também não gera run
+ * (seção 6, "Bug na cena").
+ * @param {ToolFact} fact
+ * @returns {boolean}
+ */
+export function interruptedByUser(fact) {
+  return fact.kind === 'tool.fail' && fact.interrupted === true;
+}
+
+/**
  * V13: o agente aparece em `background_tasks` do Stop, casado pelo `id` da
  * tarefa igual ao `agent_id`. Se o V13 for refutado, as tarefas passam a casar
  * por `agentTypeKey` (plano, T7), e muda só esta função.
@@ -302,6 +316,8 @@ function newAgent({ key, agentId, agentType, typeKey, role, status, ts }) {
     delegation: null,
     turnEnded: false,
     revivable: false,
+    pending: 0,
+    waitingFor: null,
     startedAt: ts,
     lastEventAt: ts,
   };
@@ -360,9 +376,12 @@ export function canWork(agent) {
   return !agent.finished && !agent.turnEnded;
 }
 
-/** @param {Agent} agent */
+/**
+ * Trabalhando, ou aguardando se tiver pedido de aprovação pendente (T8).
+ * @param {Agent} agent
+ */
 export function markWorking(agent) {
-  if (canWork(agent)) agent.status = 'working';
+  if (canWork(agent)) agent.status = agent.pending > 0 ? 'waiting' : 'working';
 }
 
 /**
@@ -680,7 +699,8 @@ function pickBy(map, wins, tieWins) {
 
 /**
  * Resultado de uma ação para a saúde. A janela guarda as HEALTH_WINDOW ações
- * de maior `ts`, para a ordem de chegada não mudar o resultado.
+ * de maior `ts`, para a ordem de chegada não mudar o resultado. Quem chama
+ * não registra a ação interrompida pelo usuário (`interruptedByUser`).
  * @param {Agent} agent
  * @param {boolean} ok
  * @param {number} ts
@@ -696,9 +716,9 @@ export function recordOutcome(agent, ok, ts) {
 // ---------------------------------------------------------------------------
 
 /**
- * AgentState do contrato (seção 9), com as chaves na ordem do contrato e os
- * valores neutros do recorte (`waitingFor` e `context` null). Nenhum campo
- * interno sai daqui, em especial o tipo cru.
+ * AgentState do contrato (seção 9), com as chaves na ordem do contrato.
+ * `waitingFor` vem do T8 (pedido de aprovação pendente); `context` fica null
+ * até o T15. Nenhum campo interno sai daqui, em especial o tipo cru.
  * @param {Agent} agent
  * @returns {AgentState}
  */
@@ -716,7 +736,7 @@ export function toAgentState(agent) {
     background: agent.background,
     parentKey: agent.parentKey,
     activity: agent.activity ? { ...agent.activity } : null,
-    waitingFor: null,
+    waitingFor: agent.waitingFor ? { ...agent.waitingFor } : null,
     health: { ok, total: agent.outcomes.length },
     context: null,
     startedAt: agent.startedAt,

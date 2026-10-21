@@ -15,6 +15,7 @@ import { redact, redactAndCut } from '../redact.js';
 import { resolveRole } from '../roles.js';
 import { LIMITS, canonicalPath } from '../tools.js';
 import { MAIN_KEY, createMainAgent, toAgentState } from './agents.js';
+import { LABEL_TITLE_CHARS, toQuestState } from './quests.js';
 
 /** Feed por sessão (visão geral, "Limites e valores padrão"). */
 export const FEED_LIMIT = 200;
@@ -69,6 +70,8 @@ const FEED_KIND_SET = new Set(FEED_KINDS);
  * @property {string|null} tool          nome, categoria e alvo do primeiro evento, usados
  * @property {import('../../../shared/contract.js').ToolCategory|null} category   nos eventos seguintes
  * @property {string|null} target
+ * @property {string|null} inputHash     para casar o PermissionRequest com a chamada (seção 6)
+ * @property {number} ts                 ts do primeiro evento
  */
 
 /**
@@ -91,6 +94,15 @@ const FEED_KIND_SET = new Set(FEED_KINDS);
  * @property {Map<string, CallRecord>} calls
  * @property {CanonicalEvent[]} feed
  * @property {number} internalIds
+ * @property {import('./quests.js').Quest|null} quest   ticket atual ou último (T8)
+ * @property {number} questCount
+ * @property {number} questsDone
+ * @property {Set<string>} closedQuests
+ * @property {string|null} firstQuestTitle
+ * @property {{ open: number, lastRun: import('../../../shared/contract.js').TestRun|null }} bugs
+ * @property {number} bugsCrushed
+ * @property {import('./quests.js').Compaction|null} compaction
+ * @property {import('./permissions.js').Approval[]} approvals   pedidos de aprovação pendentes
  */
 
 /**
@@ -145,6 +157,15 @@ export function createSession(id, fact) {
     calls: new Map(),
     feed: [],
     internalIds: 0,
+    quest: null,
+    questCount: 0,
+    questsDone: 0,
+    closedQuests: new Set(),
+    firstQuestTitle: null,
+    bugs: { open: 0, lastRun: null },
+    bugsCrushed: 0,
+    compaction: null,
+    approvals: [],
   };
 }
 
@@ -283,10 +304,10 @@ function mostRecent(agents) {
  * @param {Session} session
  * @param {Agent} agent
  * @param {string} callId
- * @param {{ tool: string|null, category: CallRecord['category'], target: string|null }} first   o primeiro evento da chamada
+ * @param {{ tool: string|null, category: CallRecord['category'], target: string|null, inputHash: string|null, ts: number }} first   o primeiro evento da chamada
  */
-export function openCall(session, agent, callId, { tool, category, target }) {
-  session.calls.set(callId, { agentKey: agent.key, open: true, delegation: category === null, tool, category, target });
+export function openCall(session, agent, callId, { tool, category, target, inputHash, ts }) {
+  session.calls.set(callId, { agentKey: agent.key, open: true, delegation: category === null, tool, category, target, inputHash, ts });
   agent.openCalls.add(callId);
   if (session.calls.size <= MAX_CALLS) return;
   const oldest = session.calls.entries().next().value;
@@ -336,15 +357,16 @@ export function pushFeed(session, event) {
 }
 
 /**
- * Status (seção 7): `ended` depois do SessionEnd; `active` com algum agente
- * trabalhando ou evento há menos de 2 min; senão `idle`. O `waiting` entra
- * com o T8.
+ * Status (seção 7): `ended` depois do SessionEnd; `waiting` com pedido de
+ * aprovação pendente; `active` com algum agente trabalhando ou evento há menos
+ * de 2 min; senão `idle`.
  * @param {Session} session
  * @param {number} now
  * @returns {SessionStatus}
  */
 export function sessionStatus(session, now) {
   if (session.ended) return 'ended';
+  if (session.approvals.length > 0) return 'waiting';
   for (const agent of session.agents.values()) {
     if (agent.status === 'working') return 'active';
   }
@@ -352,13 +374,15 @@ export function sessionStatus(session, now) {
 }
 
 /**
- * Rótulo (seção 7): `session_title`, senão "Sessão" com os 6 primeiros
- * caracteres do id. O título do primeiro ticket entra no T8.
+ * Rótulo (seção 7): `session_title`, senão o título do primeiro ticket (até
+ * 48 caracteres), senão "Sessão" com os 6 primeiros caracteres do id.
  * @param {Session} session
  * @returns {string}
  */
 export function sessionLabel(session) {
-  return session.title ?? `Sessão ${session.id.slice(0, LABEL_ID_CHARS)}`;
+  if (session.title) return session.title;
+  if (session.firstQuestTitle) return redactAndCut(session.firstQuestTitle, LABEL_TITLE_CHARS);
+  return `Sessão ${session.id.slice(0, LABEL_ID_CHARS)}`;
 }
 
 /**
@@ -401,10 +425,10 @@ export function orderedAgents(session) {
 }
 
 /**
- * SessionState do contrato (seção 9), com as chaves na ordem do contrato e os
- * valores neutros do recorte (plano, regra 2): `quest: null`, contadores
- * zerados e `bugs: { open: 0, lastRun: null }`. Sem projeto conhecido, os três
- * campos de `project` vão vazios.
+ * SessionState do contrato (seção 9), com as chaves na ordem do contrato.
+ * `quest`, `counters` e `bugs` vêm do T8: ticket atual ou último, tickets
+ * entregues, bugs esmagados, aprovações pendentes e o último run de testes.
+ * Sem projeto conhecido, os três campos de `project` vão vazios.
  * @param {Session} session
  * @param {{ feed?: boolean }} [options]   `feed: true` só no snapshot
  * @returns {SessionState}
@@ -421,9 +445,9 @@ export function toSessionState(session, { feed = false } = {}) {
     lastEventAt: session.lastEventAt,
     agents: orderedAgents(session).map(toAgentState),
     roster: rosterOf(session),
-    quest: null,
-    counters: { questsDone: 0, bugsCrushed: 0, pendingApprovals: 0 },
-    bugs: { open: 0, lastRun: null },
+    quest: toQuestState(session.quest),
+    counters: { questsDone: session.questsDone, bugsCrushed: session.bugsCrushed, pendingApprovals: session.approvals.length },
+    bugs: { open: session.bugs.open, lastRun: session.bugs.lastRun ? { ...session.bugs.lastRun } : null },
   };
   if (feed) state.feed = session.feed.slice();
   return state;

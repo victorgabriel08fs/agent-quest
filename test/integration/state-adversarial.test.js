@@ -39,6 +39,8 @@ import {
   rng,
   script,
   sessionId,
+  sliceOnly,
+  T8_KINDS,
   tick,
   view,
   withoutFeed,
@@ -91,6 +93,17 @@ describe('fatos fora de ordem e duplicados', () => {
       if (i > 0 && step.item.payload === result.steps[i - 1].item.payload) assert.deepEqual(step.events, [], `duplicado de ${step.item.payload.hook_event_name}`);
     }
     assert.deepEqual(settled(doubled), settled(list));
+  });
+
+  it('sem prompt_id (V8 refutado), o pedido repetido abre outro ticket: só a deduplicação da ingestão, de 5 s, segura essa duplicata', () => {
+    const s = script({ promptIds: false });
+    s.prompt(0, 'Pedido');
+    const result = play([s.events[0], { ...s.events[0], at: 10 }]);
+    assert.deepEqual(kinds(result.steps[1].events), [['quest.finished', 'main'], ['quest.started', 'main']]);
+    assert.equal(result.steps[1].events[0].data.outcome, 'interrupted');
+    const withId = script();
+    withId.prompt(0, 'Pedido');
+    assert.deepEqual(play([withId.events[0], { ...withId.events[0], at: 10 }]).steps[1].events, [], 'com prompt_id, nada muda (guarda 1)');
   });
 
   it('duplicados tardios (minutos depois, fora da janela de 5 s da deduplicação) não reabrem nada', () => {
@@ -214,9 +227,10 @@ describe('SubagentStop sem SubagentStart', () => {
     s.returned(520, c, T);
     const tracker = new Tracker();
     const result = play(s.events, { tracker });
-    assert.deepEqual(kinds(result.steps[2].events), [['agent.started', T.id], ['agent.finished', T.id]]);
+    assert.deepEqual(kinds(result.steps[2].events), [['agent.started', T.id], ['quest.phase', T.id], ['agent.finished', T.id], ['quest.phase', T.id]]);
     assert.equal(result.steps[2].events[0].data.label, 'Testar rápido');
-    assert.equal(result.steps[2].events[1].data.outcome, 'done');
+    assert.deepEqual(result.steps[2].events.filter((e) => e.kind === 'quest.phase').map((e) => e.data.state), ['active', 'done']);
+    assert.equal(result.steps[2].events[2].data.outcome, 'done');
     const t = agentIn(view(result.state), T.id);
     assert.equal(t.finished, true);
     assert.equal(t.parentKey, 'main');
@@ -228,7 +242,8 @@ describe('SubagentStop sem SubagentStart', () => {
     s.start(10, T);
     s.tool(20, 'Read', { file_path: `${PROJECT}\\a.md` }, T);
     const result = play(s.events);
-    assert.deepEqual(kinds(result.events), [['agent.started', T.id], ['agent.finished', T.id], ['tool.started', T.id], ['tool.finished', T.id]]);
+    // Sem ticket nenhum, o SubagentStop não abre ticket; a ferramenta atrasada abre um implícito (seção 6).
+    assert.deepEqual(kinds(result.events), [['agent.started', T.id], ['agent.finished', T.id], ['quest.started', 'main'], ['tool.started', T.id], ['tool.finished', T.id]]);
     const t = agentIn(view(result.state), T.id);
     assert.equal(t.label, 'tester');
     assert.equal(t.status, 'idle');
@@ -348,8 +363,11 @@ describe('aninhamento profundo', () => {
     const result = play(s.events, { tracker });
     const session = view(result.state);
     agents.forEach((w, i) => assert.equal(agentIn(session, w.id).parentKey, i === 0 ? 'main' : agents[i - 1].id, `nível ${i + 1}`));
-    assert.equal(result.steps.at(-1).events.length, 7);
-    assert.ok(result.steps.at(-1).events.every((e) => e.kind === 'agent.finished' && e.data.outcome === 'unknown'));
+    const stopEvents = result.steps.at(-1).events;
+    assert.equal(sliceOnly(stopEvents).length, 7);
+    assert.ok(sliceOnly(stopEvents).every((e) => e.kind === 'agent.finished' && e.data.outcome === 'unknown'));
+    assert.deepEqual(stopEvents.filter((e) => e.kind === 'quest.phase').map((e) => e.data.phase), ['design', 'code', 'test', 'docs']);
+    assert.deepEqual(kinds(stopEvents).at(-1), ['quest.finished', 'main']);
     assert.deepEqual(session.roster, ['orq', 'arq', 'dev', 'tes', 'doc', 'aux']);
     checkState(result.state);
   });
@@ -358,7 +376,8 @@ describe('aninhamento profundo', () => {
     const { s } = chain(12, { background: true });
     s.stop(5000);
     const result = play(s.events);
-    assert.deepEqual(result.steps.at(-1).events, []);
+    // Sem background_tasks no Stop, o ticket fecha done (V13); nenhum agente é liberado.
+    assert.deepEqual(kinds(result.steps.at(-1).events), [['quest.finished', 'main']]);
     assert.ok(view(result.state).agents.slice(1).every((a) => a.status === 'working'));
   });
 
@@ -672,7 +691,7 @@ describe('eventos depois do SessionEnd', () => {
     s.sessionStart(200, 'resume');
     s.prompt(300);
     const result = play(s.events);
-    assert.deepEqual(result.events.map((e) => e.kind), ['session.started', 'session.ended', 'session.started']);
+    assert.deepEqual(result.events.map((e) => e.kind), ['session.started', 'session.ended', 'session.started', 'quest.started']);
     assert.equal(view(result.state).status, 'active');
     assert.equal(agentIn(view(result.state), 'main').status, 'working');
   });
@@ -841,18 +860,22 @@ describe('invariantes: fatos gerados a partir de JSON aleatório passando pelo n
     checkState(state);
     const all = JSON.stringify({ sessions: getSessionStates(state, { feed: true }), events: emitted });
     for (const word of FORBIDDEN) assert.ok(!all.includes(word), `semente ${seed}: ${JSON.stringify(word.slice(0, 12))} chegou ao estado ou aos eventos`);
-    return { facts, events: emitted.length };
+    return { facts, events: emitted.length, kinds: emitted.map((e) => e.kind) };
   }
 
   it(`${SEEDS.length} sementes × ${STEPS} passos, com tick e relógio indo e voltando: nunca lança, e estado e fluxo de eventos seguem o contrato`, (t) => {
     let facts = 0;
     let events = 0;
+    const byKind = new Map();
     for (const seed of SEEDS) {
       const result = fuzz(seed, { coherent: true });
       facts += result.facts;
       events += result.events;
+      for (const kind of result.kinds) byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
     }
     t.diagnostic(`${facts} fatos válidos, ${events} eventos canônicos conferidos`);
+    t.diagnostic(`tipos do T8: ${T8_KINDS.map((kind) => `${kind} ${byKind.get(kind) ?? 0}`).join(', ')}`);
+    for (const kind of T8_KINDS) assert.ok((byKind.get(kind) ?? 0) > 0, `o fuzz não exercitou ${kind}`);
     assert.ok(facts > SEEDS.length * STEPS * 0.5, 'a maioria dos envelopes precisa virar fato');
   });
 

@@ -14,6 +14,26 @@ import { createHash } from 'node:crypto';
 export const DEDUPE_WINDOW_MS = 5000;
 
 /**
+ * Hooks que não passam pela deduplicação (seção 8, "Duplicatas", decidido em
+ * 19/10/2026). O PermissionRequest não tem `tool_use_id`: dois pedidos
+ * legítimos e idênticos, como um comando negado e tentado de novo, viravam um
+ * só, e o segundo "aguardando" sumia. As duplicatas verdadeiras (o plugin
+ * carregado duas vezes) caem na mesma chamada e ficam com a guarda do reducer.
+ */
+export const NOT_DEDUPED_HOOKS = Object.freeze(['PermissionRequest']);
+
+/**
+ * O payload fica fora da deduplicação?
+ * @param {unknown} payload
+ * @returns {boolean}
+ */
+export function skipsDedupe(payload) {
+  if (payload === null || typeof payload !== 'object') return false;
+  const hook = /** @type {Record<string, unknown>} */ (payload).hook_event_name;
+  return typeof hook === 'string' && NOT_DEDUPED_HOOKS.includes(hook);
+}
+
+/**
  * Hash do payload como chegou (mesma ordem de chaves). Dois encaminhadores com o
  * mesmo stdin produzem o mesmo texto.
  * @param {unknown} payload

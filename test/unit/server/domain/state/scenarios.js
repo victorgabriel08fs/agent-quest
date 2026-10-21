@@ -1,4 +1,4 @@
-// SINTÉTICO: cenários de hooks para o reducer de estado (T7), no formato do
+// SINTÉTICO: cenários de hooks para o reducer de estado (T7 e T8), no formato do
 // ADR 0010 (complemento "formato e sanitização dos cenários de hooks"):
 // { name, description, events: [{ dt, env, payload }] }. Os payloads seguem a
 // documentação dos hooks (docs/pesquisa/hooks-claude-code.md); não são
@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { AGENT_STATUS, FEED_KINDS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from '../../../../../shared/contract.js';
+import { AGENT_STATUS, EVENT_KINDS, FEED_KINDS, PHASES, QUEST_STATUS, ROLES, SESSION_STATUS, TOOL_CATEGORIES } from '../../../../../shared/contract.js';
 import { normalize } from '../../../../../server/domain/normalize.js';
 import { redact } from '../../../../../server/domain/redact.js';
 import { LIMITS, textLine } from '../../../../../server/domain/tools.js';
@@ -247,10 +247,15 @@ export function agentOf(session, key) {
 
 /**
  * Confere a sequência de eventos: `[kind, agentKey, dataParcial?]` por item.
+ * Por padrão, só os tipos do T7 (SLICE_KINDS): os eventos do T8 entram entre
+ * eles sem mudar a ordem dos do T7. `{ kinds: null }` confere todos;
+ * `{ kinds: [...] }`, só os tipos da lista.
  * @param {object[]} actual
  * @param {[string, string|null, object?][]} expected
+ * @param {{ kinds?: readonly string[]|null }} [options]
  */
-export function assertEvents(actual, expected) {
+export function assertEvents(actual, expected, { kinds = SLICE_KINDS } = {}) {
+  if (kinds !== null) actual = actual.filter((event) => kinds.includes(event.kind));
   assert.deepEqual(
     actual.map((event) => [event.kind, event.agentKey]),
     expected.map(([kind, key]) => [kind, key]),
@@ -315,14 +320,25 @@ export function assertLinks(scn, state) {
 }
 
 const SESSION_KEYS = ['id', 'project', 'label', 'client', 'status', 'startedAt', 'lastEventAt', 'agents', 'roster', 'quest', 'counters', 'bugs'];
+const QUEST_KEYS = ['id', 'n', 'title', 'implicit', 'status', 'startedAt', 'endedAt', 'phases', 'actions', 'error'];
+const TEST_RUN_KEYS = ['ok', 'passed', 'failed', 'total', 'framework', 'at'];
 const AGENT_KEYS = ['key', 'agentId', 'agentType', 'role', 'label', 'status', 'finished', 'background', 'parentKey', 'activity', 'waitingFor', 'health', 'context', 'startedAt', 'lastEventAt'];
 const ACTIVITY_KEYS = ['kind', 'category', 'tool', 'target', 'detail', 'state', 'at'];
 
-/** Tipos que o reducer emite no recorte da Primeira luz (plano, regra 3). */
+/** Tipos que o reducer emite no recorte da Primeira luz (plano, regra 3), os do T7. */
 export const SLICE_KINDS = [
   'session.started', 'session.ended', 'agent.delegated', 'agent.started',
   'agent.finished', 'tool.started', 'tool.finished', 'tool.failed',
 ];
+
+/** Tipos que chegam com o T8. */
+export const T8_KINDS = [
+  'session.idle', 'quest.started', 'quest.finished', 'quest.phase', 'test.finished',
+  'permission.requested', 'permission.resolved', 'context.compacted',
+];
+
+/** Tipos que o reducer emite a partir do T8: todos os da seção 3, menos `context.usage` (T15). */
+export const REDUCER_KINDS = EVENT_KINDS.filter((kind) => kind !== 'context.usage');
 
 /** Chaves de `data` por tipo (seção 3). */
 export const EVENT_DATA_KEYS = {
@@ -334,11 +350,21 @@ export const EVENT_DATA_KEYS = {
   'tool.started': ['toolUseId', 'tool', 'category', 'target', 'detail'],
   'tool.finished': ['toolUseId', 'tool', 'category', 'durationMs'],
   'tool.failed': ['toolUseId', 'tool', 'category', 'target', 'error', 'interrupted'],
+  'session.idle': [],
+  'quest.started': ['questId', 'n', 'title', 'implicit'],
+  'quest.finished': ['questId', 'n', 'outcome', 'error', 'durationMs', 'actions'],
+  'quest.phase': ['questId', 'phase', 'state'],
+  'test.finished': ['toolUseId', 'ok', 'passed', 'failed', 'total', 'framework'],
+  'permission.requested': ['tool', 'category', 'target'],
+  'permission.resolved': ['outcome', 'by'],
+  'context.compacted': ['trigger'],
 };
 
 const isTime = (value) => Number.isFinite(value) && value > 0;
 const isText = (value) => typeof value === 'string';
 const isTextOrNull = (value) => value === null || typeof value === 'string';
+const isCount = (value) => Number.isInteger(value) && value >= 0;
+const isCountOrNull = (value) => value === null || isCount(value);
 
 /** Nenhum valor cru (`*Key` do fato, `typeKey`, `toTypeKey`) aparece; `agentKey` e `parentKey` são do contrato. */
 export function assertNoRawKeys(value, where = 'raiz') {
@@ -353,15 +379,15 @@ export function assertNoRawKeys(value, where = 'raiz') {
 }
 
 /**
- * Forma de um evento canônico do recorte (seção 3): já numerado pelo
- * `sequence` (`id` = `runId:seq`) e congelado.
+ * Forma de um evento canônico (seção 3): já numerado pelo `sequence`
+ * (`id` = `runId:seq`) e congelado.
  */
 export function assertEventShape(event, { runId = LOCAL_RUN_ID } = {}) {
   assert.deepEqual(Object.keys(event), ['id', 'seq', 'ts', 'sessionId', 'agentKey', 'kind', 'data'], 'chaves do evento');
   assert.ok(Number.isInteger(event.seq) && event.seq > 0, `seq ${event.seq}`);
   assert.equal(event.id, `${runId}:${event.seq}`);
   assert.ok(Object.isFrozen(event) && Object.isFrozen(event.data), 'evento congelado');
-  assert.ok(SLICE_KINDS.includes(event.kind), `tipo fora do recorte: ${event.kind}`);
+  assert.ok(REDUCER_KINDS.includes(event.kind), `tipo que o reducer não emite: ${event.kind}`);
   assert.ok(isTime(event.ts));
   assert.ok(isText(event.sessionId));
   assert.ok(isTextOrNull(event.agentKey));
@@ -386,6 +412,44 @@ export function assertEventShape(event, { runId = LOCAL_RUN_ID } = {}) {
       assert.ok(TOOL_CATEGORIES.includes(data.category), `categoria ${data.category}`);
       if (event.kind === 'tool.failed') assert.equal(typeof data.interrupted, 'boolean');
       break;
+    case 'quest.started':
+      assert.equal(event.agentKey, 'main');
+      assert.ok(isText(data.questId) && data.questId !== '');
+      assert.ok(Number.isInteger(data.n) && data.n >= 1);
+      assert.ok(isText(data.title));
+      assert.equal(typeof data.implicit, 'boolean');
+      break;
+    case 'quest.finished':
+      assert.equal(event.agentKey, 'main');
+      assert.ok(Number.isInteger(data.n) && data.n >= 1);
+      assert.ok(['done', 'failed', 'interrupted'].includes(data.outcome), `desfecho ${data.outcome}`);
+      assert.ok(isTextOrNull(data.error));
+      if (data.outcome !== 'failed') assert.equal(data.error, null);
+      assert.ok(isCount(data.durationMs) && isCount(data.actions));
+      break;
+    case 'quest.phase':
+      assert.ok(PHASES.includes(data.phase), `etapa ${data.phase}`);
+      assert.ok(['active', 'done'].includes(data.state));
+      break;
+    case 'test.finished':
+      assert.equal(typeof data.ok, 'boolean');
+      for (const field of ['passed', 'failed', 'total']) assert.ok(isCountOrNull(data[field]), field);
+      assert.ok(isTextOrNull(data.framework));
+      break;
+    case 'permission.requested':
+      assert.ok(isText(data.tool));
+      assert.ok(TOOL_CATEGORIES.includes(data.category), `categoria ${data.category}`);
+      assert.ok(isTextOrNull(data.target));
+      break;
+    case 'permission.resolved':
+      assert.ok(
+        [['approved', 'user'], ['denied', 'auto'], ['unknown', 'inferred']].some(([outcome, by]) => data.outcome === outcome && data.by === by),
+        `resolução ${data.outcome}/${data.by}`,
+      );
+      break;
+    case 'context.compacted':
+      assert.ok([null, 'manual', 'auto'].includes(data.trigger));
+      break;
     default:
   }
   for (const value of Object.values(data)) {
@@ -394,7 +458,7 @@ export function assertEventShape(event, { runId = LOCAL_RUN_ID } = {}) {
   assertNoRawKeys(event);
 }
 
-/** Forma de um SessionState contra a seção 9, com os valores neutros do recorte (regra 2). */
+/** Forma de um SessionState contra a seção 9 (T8: `quest`, `counters`, `bugs` e `waitingFor` reais). */
 export function assertSessionShape(session, { feed = false } = {}) {
   assert.deepEqual(Object.keys(session), feed ? [...SESSION_KEYS, 'feed'] : SESSION_KEYS, 'chaves da sessão');
   assert.ok(isText(session.id));
@@ -402,12 +466,26 @@ export function assertSessionShape(session, { feed = false } = {}) {
   for (const value of Object.values(session.project)) assert.ok(isText(value));
   assert.ok(isText(session.label) && session.label !== '');
   assert.ok([null, 'terminal', 'vscode'].includes(session.client));
-  assert.ok(SESSION_STATUS.includes(session.status) && session.status !== 'waiting', `status ${session.status}`);
+  assert.ok(SESSION_STATUS.includes(session.status), `status ${session.status}`);
   assert.ok(isTime(session.startedAt) && isTime(session.lastEventAt));
   assert.ok(session.startedAt <= session.lastEventAt);
-  assert.equal(session.quest, null);
-  assert.deepEqual(session.counters, { questsDone: 0, bugsCrushed: 0, pendingApprovals: 0 });
-  assert.deepEqual(session.bugs, { open: 0, lastRun: null });
+  assertQuestShape(session.quest);
+  assert.deepEqual(Object.keys(session.counters), ['questsDone', 'bugsCrushed', 'pendingApprovals']);
+  for (const value of Object.values(session.counters)) assert.ok(isCount(value));
+  if (session.status !== 'ended') {
+    assert.equal(session.status === 'waiting', session.counters.pendingApprovals > 0, 'waiting com aprovação pendente');
+  }
+  assert.deepEqual(Object.keys(session.bugs), ['open', 'lastRun']);
+  assert.ok(isCount(session.bugs.open));
+  if (session.bugs.lastRun !== null) {
+    const run = session.bugs.lastRun;
+    assert.deepEqual(Object.keys(run), TEST_RUN_KEYS);
+    assert.equal(typeof run.ok, 'boolean');
+    for (const field of ['passed', 'failed', 'total']) assert.ok(isCountOrNull(run[field]), field);
+    assert.ok(isTextOrNull(run.framework) && isTime(run.at));
+    // O último run que mudou bugs decide bugs.open (seção 6): aprovado → 0; falhou → failed ?? 1.
+    assert.equal(session.bugs.open, run.ok ? 0 : run.failed ?? 1, 'bugs.open pelo último run');
+  }
 
   assert.equal(session.roster[0], 'orq');
   assert.deepEqual(session.roster, ROLES.filter((role) => session.roster.includes(role)), 'roster em ordem e sem repetição');
@@ -425,13 +503,19 @@ export function assertSessionShape(session, { feed = false } = {}) {
     assert.equal(agentState.role === 'orq', main, `papel de ${agentState.key}`);
     assert.ok(session.roster.includes(agentState.role), `papel ${agentState.role} fora do roster`);
     assert.ok(isText(agentState.label));
-    assert.ok(AGENT_STATUS.includes(agentState.status) && agentState.status !== 'waiting');
+    assert.ok(AGENT_STATUS.includes(agentState.status));
     assert.equal(typeof agentState.finished, 'boolean');
     assert.equal(typeof agentState.background, 'boolean');
     if (main) assert.equal(agentState.finished, false);
     if (agentState.finished) assert.equal(agentState.status, 'idle');
     assert.ok(isTextOrNull(agentState.parentKey));
-    assert.equal(agentState.waitingFor, null);
+    assert.equal(agentState.waitingFor !== null, agentState.status === 'waiting', `waitingFor de ${agentState.key}`);
+    if (agentState.waitingFor !== null) {
+      assert.deepEqual(Object.keys(agentState.waitingFor), ['tool', 'category', 'target']);
+      assert.ok(isText(agentState.waitingFor.tool) && isTextOrNull(agentState.waitingFor.target));
+      assert.ok(TOOL_CATEGORIES.includes(agentState.waitingFor.category));
+      assert.equal(session.status, 'waiting', 'agente aguardando deixa a sessão aguardando');
+    }
     assert.equal(agentState.context, null);
     assert.deepEqual(Object.keys(agentState.health), ['ok', 'total']);
     assert.ok(Number.isInteger(agentState.health.ok) && Number.isInteger(agentState.health.total));
@@ -440,7 +524,7 @@ export function assertSessionShape(session, { feed = false } = {}) {
     const { activity } = agentState;
     if (activity !== null) {
       assert.deepEqual(Object.keys(activity), ACTIVITY_KEYS);
-      assert.ok(['tool', 'delegate', 'start'].includes(activity.kind), `atividade ${activity.kind}`);
+      assert.ok(['tool', 'delegate', 'compact', 'start'].includes(activity.kind), `atividade ${activity.kind}`);
       assert.ok(activity.category === null || TOOL_CATEGORIES.includes(activity.category));
       assert.equal(activity.category === null, activity.kind !== 'tool');
       assert.ok(['running', 'done', 'failed'].includes(activity.state));
@@ -462,6 +546,27 @@ export function assertSessionShape(session, { feed = false } = {}) {
     }
   }
   assertNoRawKeys(session);
+}
+
+/** Forma de um QuestState (seção 9), ou null. */
+export function assertQuestShape(quest) {
+  if (quest === null) return;
+  assert.deepEqual(Object.keys(quest), QUEST_KEYS, 'chaves do ticket');
+  assert.ok(isText(quest.id) && quest.id !== '');
+  assert.ok(Number.isInteger(quest.n) && quest.n >= 1);
+  assert.ok(isText(quest.title));
+  assert.equal(redact(quest.title), quest.title, 'título redigido');
+  assert.equal(typeof quest.implicit, 'boolean');
+  assert.ok(QUEST_STATUS.includes(quest.status), `status do ticket ${quest.status}`);
+  assert.ok(isTime(quest.startedAt));
+  const closed = !['open', 'waiting_background'].includes(quest.status);
+  assert.equal(quest.endedAt !== null, closed, 'endedAt só no ticket encerrado');
+  if (closed) assert.ok(quest.endedAt >= quest.startedAt);
+  assert.deepEqual(Object.keys(quest.phases), ['design', 'code', 'test', 'docs']);
+  for (const phase of Object.values(quest.phases)) assert.ok(['pending', 'active', 'done'].includes(phase));
+  assert.ok(isCount(quest.actions));
+  assert.ok(isTextOrNull(quest.error));
+  if (quest.status !== 'failed') assert.equal(quest.error, null);
 }
 
 /** `seq` contínuo, começando no primeiro da lista. */
