@@ -2,7 +2,7 @@
 
 O servidor do Agent Quest roda na sua máquina. Ele recebe os eventos que a captura envia do Claude Code e serve o painel no navegador, sempre em `http://127.0.0.1`. Este guia mostra como iniciar, configurar e parar o servidor, e o que fazer com as mensagens mais comuns.
 
-> Este guia descreve o servidor como ele está agora, no recorte da "Primeira luz" da v1: ele recebe os eventos da captura, monta as sessões em memória e as envia ao painel ao vivo. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md); para a captura em detalhe, veja [Ligar, pausar e remover a captura](captura.md); para ler o painel, veja [O painel](painel.md).
+> Este guia descreve o servidor como ele está agora, a caminho da v1: ele recebe os eventos da captura, monta em memória as sessões, com tickets, aprovações e testes, e as envia ao painel ao vivo. Os trechos marcados com "nesta fase" mudam nas próximas entregas. Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md); para a captura em detalhe, veja [Ligar, pausar e remover a captura](captura.md); para ler o painel, veja [O painel](painel.md).
 
 ## Resumo rápido
 
@@ -390,7 +390,7 @@ A resposta nunca traz conteúdo de evento: só contagens e horários.
 | `startedAt` | Hora em que o servidor iniciou, em milissegundos desde 1970. Muda a cada reinício. |
 | `events.received` | Envios da captura que chegaram ao servidor (`POST /hooks`). Não conta pedidos com endereço (`Host`) inválido nem com outro método. |
 | `events.accepted` | Eventos aceitos e colocados na fila de processamento. |
-| `events.deduped` | Eventos repetidos: o mesmo conteúdo chegou de novo em até 5 segundos (por exemplo, com o plugin carregado duas vezes). Recebem resposta de sucesso, mas são descartados. |
+| `events.deduped` | Eventos repetidos: o mesmo conteúdo chegou de novo em até 5 segundos (por exemplo, com o plugin carregado duas vezes). Recebem resposta de sucesso, mas são descartados. O pedido de aprovação fica fora dessa regra, porque o mesmo pedido pode vir de novo de verdade (uma ação negada e tentada outra vez); as cópias dele são filtradas depois, no estado. |
 | `events.rejected` | Envios recusados: sem o token certo, vindos de um navegador, com tipo de conteúdo diferente de JSON, acima de 1 MiB, com envelope inválido ou com a conexão interrompida no meio. |
 | `events.dropped` | Eventos aceitos e depois descartados porque a fila passou de 10 000 itens (sai sempre o mais antigo). |
 | `events.ignored` | Eventos aceitos que o normalizador descartou (tipo de hook desconhecido, sem `session_id` ou com id fora do padrão) ou que deram erro no processamento (veja [Erros enquanto o servidor roda](#erros-enquanto-o-servidor-roda)). |
@@ -446,14 +446,18 @@ Exemplo abreviado de resposta (os `…` marcam o que foi omitido):
     {
       "id": "5f1c0a…",
       "project": { "key": "c:/Projetos/meu-app", "name": "meu-app", "dir": "C:\\Projetos\\meu-app" },
-      "label": "Sessão 5f1c0a",
+      "label": "Criar a tela de login",
       "status": "active",
       "agents": [{ "key": "main", "role": "orq", "status": "working", "…": "…" }],
       "roster": ["orq", "dev", "tes"],
-      "quest": null,
-      "counters": { "questsDone": 0, "bugsCrushed": 0, "pendingApprovals": 0 },
+      "quest": {
+        "n": 2, "title": "Corrigir o cálculo do frete", "status": "open", "actions": 14,
+        "phases": { "design": "pending", "code": "done", "test": "active", "docs": "pending" }, "…": "…"
+      },
+      "counters": { "questsDone": 1, "bugsCrushed": 3, "pendingApprovals": 0 },
+      "bugs": { "open": 0, "lastRun": { "ok": true, "passed": 42, "failed": 0, "total": 42, "framework": "node:test", "…": "…" } },
       "…": "…",
-      "feed": [{ "seq": 127, "kind": "tool.started", "…": "…" }]
+      "feed": [{ "seq": 127, "kind": "test.finished", "…": "…" }]
     }
   ]
 }
@@ -467,20 +471,24 @@ Cada evento aceito passa pelo normalizador, que tira o conteúdo e redige segred
 
 - **Uma sessão por `session_id`.** Ela aparece com o primeiro evento que chegar, mesmo que o servidor tenha sido iniciado no meio da sessão. Os subagentes ficam dentro da sessão de quem os chamou.
 - **Projeto:** a pasta do projeto do evento ou, sem ela, a pasta de trabalho (`cwd`). O nome é a última parte do caminho. Formas diferentes do mesmo caminho (`C:\Projetos\meu-app`, `c:/Projetos/meu-app` ou, no Git Bash, `/c/Projetos/meu-app`) contam como o mesmo projeto.
-- **Rótulo:** o título da sessão no Claude Code ou, sem ele, "Sessão" com os 6 primeiros caracteres do id.
-- **Status:** `active` com algum agente trabalhando ou com evento nos últimos 2 minutos; `idle` fora disso; `ended` depois do fim da sessão.
+- **Rótulo:** o título da sessão no Claude Code; sem ele, o título do primeiro ticket, com até 48 caracteres; antes do primeiro pedido, "Sessão" com os 6 primeiros caracteres do id.
+- **Status:** `waiting` com algum pedido de aprovação pendente; `active` com algum agente trabalhando ou com evento nos últimos 2 minutos; `idle` fora disso; `ended` depois do fim da sessão.
+- **Ticket (`quest`):** o pedido em andamento ou o último. Cada pedido seu abre um ticket, com a primeira linha dele como título, já redigida. Ele termina `done` no fim do turno, `failed` se o turno terminar em erro ou `interrupted` com um pedido novo, com o Claude Code parado esperando você ou com o fim da sessão. Com tarefa em segundo plano ainda rodando, fica em `waiting_background`. Atividade sem pedido aberto abre o ticket implícito "Tarefa em andamento".
+- **Etapas:** `design`, `code`, `test` e `docs`, uma por papel do time, ativas quando um agente do papel começa no ticket e concluídas quando o último deles termina.
+- **Aprovações:** um pedido de aprovação deixa o agente que pediu em `waiting`, com a ação em espera, até ela rodar, até o agente seguir para outra coisa ou até o turno acabar. `counters.pendingApprovals` conta os pendentes.
+- **Testes e bugs:** comandos de teste viram a categoria `test`, e o resultado vem do resumo do framework (só números: nada da saída). Um run que falha abre bugs (`bugs.open`, um por falha ou 1 sem contagem); o run seguinte aprovado os esmaga (`counters.bugsCrushed`). Teste interrompido não muda os bugs. Detalhes em [Testes e bugs](painel.md#testes-e-bugs), no guia do painel.
 - **Agentes:** cada sessão guarda até 100 agentes em andamento e os 50 encerrados mais recentes. Os mais antigos saem do estado, e eventos atrasados deles são ignorados.
 - **Atividade:** os 200 eventos mais recentes de cada sessão.
 - **Reiniciar o servidor apaga tudo** ([ADR 0005](../adr/0005-estado-em-memoria.md)). As sessões voltam com os próximos eventos.
 
-Nesta fase, o estado não tem tickets, etapas, aprovações nem bugs: chegam com o T8. Até lá, `quest` vem `null` e os contadores vêm zerados.
+As regras de ticket, aprovação, testes e compactação estão na seção 6 do [modelo de eventos](../arquitetura/modelo-de-eventos.md). Elas foram testadas com cenários sintéticos e ainda vão ser conferidas com os eventos reais da sessão de teste do T0.
 
 ### O relógio do estado
 
 A cada 5 segundos, o servidor revisa as sessões em memória:
 
 - recalcula o status: uma sessão sem ninguém trabalhando e sem eventos há 2 minutos passa de `active` para `idle`;
-- um subagente que consta como trabalhando, sem ferramenta em execução e sem eventos há 15 minutos, é dado como encerrado e vai para a copa. Se ele chamar uma ferramenta nova depois, volta a trabalhar. A sessão principal, nesse caso, só fica parada;
+- um subagente que consta como trabalhando, sem ferramenta em execução e sem eventos há 15 minutos, é dado como encerrado e vai para a copa. Se ele chamar uma ferramenta nova depois, volta a trabalhar. A sessão principal, nesse caso, só fica parada. Quem está aguardando a sua aprovação não entra nessa regra, porque a espera pode ser longa;
 - tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas. O painel recebe a remoção e tira a sessão do seletor.
 
 Isso compensa eventos que se perdem, como um Esc sem fim de turno ou uma sessão fechada à força. O relógio para quando o servidor encerra.
@@ -518,7 +526,7 @@ npm run inject -- <arquivo.json> --speed 4    # 4 vezes mais rápido
 
 - **Precisa do servidor no ar.** O injetor lê a porta e o token do `runtime.json` do diretório de dados e só envia para `127.0.0.1`. Sem servidor, ele avisa "O Agent Quest não está rodando" e não envia nada.
 - **O que ele mostra:** "Injetando N eventos de ... em http://127.0.0.1:<porta>/" e, no fim, "Pronto: N eventos aceitos.". Se algum envio for recusado, mostra quantos e quais, e sai com código 1.
-- **Repetir o mesmo cenário:** o servidor descarta o mesmo evento repetido em até 5 segundos (conta em `deduped` no `/api/health`), mesmo que o injetor o mostre como aceito. Depois disso, o evento chega, mas chamadas que o estado já viu, com o mesmo id, não geram atividade nova. Para ver o cenário do zero, reinicie o servidor.
+- **Repetir o mesmo cenário:** o servidor descarta o mesmo evento repetido em até 5 segundos (conta em `deduped` no `/api/health`, menos o pedido de aprovação), mesmo que o injetor o mostre como aceito. Depois disso, o evento chega, mas chamadas que o estado já viu, com o mesmo id, não geram atividade nova. Para ver o cenário do zero, reinicie o servidor.
 - **Sem misturar com as suas sessões.** O injetor manda para o servidor do diretório de dados em uso. Para não misturar o cenário com as sessões reais do painel, use um servidor isolado, com a mesma `AGENT_QUEST_HOME` temporária no terminal do servidor e no do injetor (veja [Usar outra pasta](#usar-outra-pasta-agent_quest_home)), e abra o endereço que esse servidor imprimir.
 
 ### De onde vem um cenário

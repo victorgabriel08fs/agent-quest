@@ -4,7 +4,7 @@ O painel é a página do Agent Quest no navegador. Ele mostra, ao vivo, o que ca
 
 Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, e o que ainda não está ligado.
 
-> **Situação nesta fase.** Com a captura ligada, o painel mostra as sessões reais ao vivo: seletor de sessão, equipe, cena e atividade acompanham cada evento do Claude Code. O ticket e as etapas ainda ficam vazios, e os indicadores de bugs, entregas e aprovações ficam em zero: chegam com o T6 e o T8 (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
+> **Situação nesta fase.** Com a captura ligada, o painel mostra as sessões reais ao vivo: ticket e etapas, equipe, aprovações pendentes, testes e bugs, a cena animada e a atividade com filtros acompanham cada evento do Claude Code. Ainda faltam o seletor agrupado por projeto e o modo discreto (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). As regras de ticket, aprovação e testes seguem o design e ainda vão ser conferidas com os eventos reais da sessão de teste do T0. Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
 
 ## Resumo rápido
 
@@ -27,10 +27,11 @@ Este guia explica como abrir o painel, o que cada área mostra com os dados ao v
 ## O que aparece ao vivo
 
 - **Seletor de sessão:** as sessões do Claude Code que o servidor conhece, de todos os projetos, porque a captura vale para todos. Cada sessão aparece com o primeiro evento dela, mesmo que o servidor tenha sido iniciado no meio da sessão.
-- **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", e a barra de saúde.
-- **Cena:** um token por agente na sala do seu papel, com o balão da ação atual, e a copa para quem terminou.
-- **Atividade:** delegações, ferramentas, falhas e fim de subagentes, em ordem, com comandos e caminhos já redigidos e relativos ao projeto.
-- **Topo:** a duração da sessão e o selo de conexão. Os outros indicadores ficam em zero até o T8.
+- **Ticket:** cada pedido seu vira um ticket, com título, situação, duração, ações e as etapas do time.
+- **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", e a barra de saúde.
+- **Cena:** um token por agente na sala do seu papel, com o balão da ação atual. Os agentes caminham até a copa quando terminam, a delegação voa como um envelope, as falhas dão um tranco, e os bugs abertos pelos testes aparecem na sala de testes.
+- **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto. Dá para filtrar por papel ou por agente.
+- **Topo:** a duração da sessão, os bugs esmagados, os tickets entregues, as aprovações pendentes e o selo de conexão.
 - Os dois temas, com alternância a qualquer momento, sem reabrir a conexão.
 
 Nos testes, um evento leva menos de meio segundo da captura até a conexão ao vivo do painel.
@@ -59,7 +60,7 @@ Aparecem quando há uma sessão escolhida. Os valores vêm do servidor ([ADR 000
 | Entregas | tickets entregues | quests concluídas | Pedidos encerrados com sucesso na sessão |
 | Aprovações | aprovações pendentes | pedidos de permissão | Pedidos de aprovação esperando por você; o indicador pisca quando há algum |
 
-A duração já vem da sessão real. Nesta fase, bugs, entregas e aprovações ficam em zero: esses valores chegam com o T8.
+Todos vêm da sessão real. O de bugs é uma aproximação: ele conta as falhas de um run de testes que o run seguinte, aprovado, zerou (veja [Testes e bugs](#testes-e-bugs)).
 
 ### Equipe
 
@@ -81,22 +82,53 @@ Em cada bloco:
 
 - **Uma linha por instância.** Cada subagente chamado é uma instância, com a descrição da delegação como rótulo, que aparece já no momento da delegação. Sem descrição, o rótulo é o tipo do agente. Convidados mostram também o tipo real do agente.
 - **"×N"** aparece quando há mais de uma instância do papel em andamento ao mesmo tempo, e conta só as que não terminaram. Dois subagentes em paralelo aparecem como duas instâncias, cada uma com as próprias ações.
-- **Linha de ação:** o que a instância está fazendo agora, na voz do tema. Por exemplo, "Editando `server/http/app.js`" no Escritório ou "Conjurando `git status`" na Guilda. Também mostra "Delegando: ..." ou, quando parada, "Tomando café na copa" (na Guilda, "Descansando na taverna"). A sessão principal parada mostra "Aguardando o próximo pedido". "Aguardando sua aprovação" chega com o T8. Até o T6, um comando de teste aparece como comando de terminal, por exemplo "Terminal: `npm test`".
-- **Barra de saúde** (Humor no Escritório, Vida na Guilda): ≈ a fração das últimas 10 ações sem erro. Passe o mouse para ver, por exemplo, "Humor ≈ 8 de 10 ações sem erro (últimas 10)".
-- **Instâncias encerradas** do pedido atual continuam visíveis, até 3 por papel. As demais viram "+N instâncias encerradas". As de pedidos anteriores saem do cartão. Até o T8 não há pedidos (tickets), então todas as encerradas contam como do pedido atual: aparecem as 3 mais recentes de cada papel, e as outras entram no "+N". O servidor guarda os 50 subagentes encerrados mais recentes de cada sessão; os mais antigos somem também do "+N".
+- **Linha de ação:** o que a instância está fazendo agora, na voz do tema. Por exemplo, "Editando `server/http/app.js`" no Escritório ou "Conjurando `git status`" na Guilda. Também mostra "Delegando: ...", "Rodando os testes" durante um comando de teste, "✋ Aguardando sua aprovação" quando o agente espera você ou, quando parada, "Tomando café na copa" (na Guilda, "Descansando na taverna"). A sessão principal parada mostra "Aguardando o próximo pedido".
+- **Barra de saúde** (Humor no Escritório, Vida na Guilda): ≈ a fração das últimas 10 ações sem erro. Um comando de teste conta uma vez, pelo resultado dos testes, e uma ação que você interrompeu não conta. Passe o mouse para ver, por exemplo, "Humor ≈ 8 de 10 ações sem erro (últimas 10)".
+- **Instâncias encerradas** do ticket atual continuam visíveis, até 3 por papel. As demais viram "+N instâncias encerradas". As de tickets anteriores saem do cartão. O servidor guarda os 50 subagentes encerrados mais recentes de cada sessão; os mais antigos somem também do "+N".
+- **Filtro da atividade:** o nome do papel e cada instância são botões. Clique para ver na atividade só aquele papel ou aquela instância; clique de novo para voltar a todos (veja [Filtros](#filtros)).
 
 O cabeçalho mostra quantos agentes estão ativos entre os presentes, como "2/3 ativos".
 
 ### Ticket e etapas
 
-O cartão do centro mostra o pedido em andamento (o ticket, ou quest na Guilda):
+Cada pedido que você faz ao Claude Code vira um ticket (quest, na Guilda). O cartão do centro mostra o ticket em andamento ou, entre um pedido e outro, o último:
 
 - número e situação: em andamento, aguardando tarefa em segundo plano, entregue, falhou ou interrompido;
-- título: a primeira linha do seu pedido, já redigida;
-- duração, número de ações e, se o pedido falhou, o tipo de erro;
-- **etapas**: Arquitetura, Desenvolvimento, QA e Documentação (na Guilda, Torre de Planos, Forja, Arena e Biblioteca). Cada uma acende quando o agente daquele papel começa no pedido e ganha ✓ quando ele termina. As etapas só aparecem quando o pedido envolve algum papel do time.
+- título: a primeira linha do seu pedido, já redigida; se o pedido começa com `/`, só o comando;
+- duração, número de ações (ferramentas e delegações) e, se o pedido falhou, o tipo de erro;
+- **etapas**: Arquitetura, Desenvolvimento, QA e Documentação (na Guilda, Torre de Planos, Forja, Arena e Biblioteca). Cada uma acende quando um agente daquele papel começa no ticket e ganha ✓ quando o último deles termina; uma delegação nova ao mesmo papel acende a etapa de novo. As etapas só aparecem quando o ticket envolve algum papel do time.
 
-Sem pedido em andamento, o cartão mostra "Sem ticket no momento" (ou "Nenhuma quest no quadro"). Nesta fase, é sempre assim: os tickets chegam com o T8.
+Como um ticket termina:
+
+| Situação | Quando |
+|---|---|
+| entregue | O Claude Code terminou o turno. |
+| aguardando tarefa em segundo plano | O turno terminou, mas uma tarefa em segundo plano ainda roda. O ticket fecha quando ela volta e o turno termina de vez. |
+| falhou | O turno terminou com erro, por exemplo da API. |
+| interrompido | O turno não terminou: você mandou um pedido novo antes do fim (por exemplo, depois de interromper com Esc), o Claude Code ficou parado esperando você ou a sessão terminou. |
+
+- **Ticket implícito:** atividade sem pedido aberto, como com o servidor iniciado no meio de um turno, abre o ticket "Tarefa em andamento".
+- **Antes do primeiro pedido da sessão,** o cartão mostra "Sem ticket no momento" (ou "Nenhuma quest no quadro").
+- **Cartão final:** quando um ticket é entregue, aparece por alguns segundos sobre a cena um cartão com o resumo (ações, agentes e duração), como "Ticket entregue!" no Escritório ou "Quest concluída!" na Guilda.
+
+### Aguardando aprovação
+
+Quando o Claude Code pede a sua aprovação para uma ação, o agente que pediu fica "✋ Aguardando sua aprovação", com a ação em espera. A sessão também fica aguardando, e o indicador de aprovações pendentes do topo sobe e pisca.
+
+- **Aprovado:** a ação roda, e a atividade mostra "Aprovado. ... segue o trabalho".
+- **Negado ou cancelado:** quando você nega, o Claude Code não avisa. O painel percebe quando o agente segue para outra ação, o turno termina ou chega um pedido novo, e mostra "negado ou cancelado".
+- **Negado pelo modo automático:** a atividade mostra "Pedido de ... negado".
+
+### Testes e bugs
+
+Os comandos de teste aparecem como teste, e não como comando de terminal: na equipe, "Rodando os testes"; na atividade, "roda a suíte de testes" com o comando.
+
+- **Comandos reconhecidos:** `npm test` e `npm run test…` (também com pnpm, yarn, bun e composer), `node --test`, Jest, Vitest, Mocha, AVA e Playwright (também com `npx`, `pnpm exec` e afins), pytest e `python -m unittest`, PHPUnit, Pest e `php artisan test`, `go test`, `cargo test`, `dotnet test`, Maven e Gradle. Valem com `cd <pasta> &&` e variáveis antes (`CI=true npm test`), e no fim de uma cadeia `&&`, como `npm run build && npm test`. Um comando em segundo plano continua como comando de terminal, porque o resultado não volta.
+- **Resultado:** quando o comando termina, a atividade mostra os testes verdes ou os bugs encontrados, com as contagens lidas do resumo do framework. Nenhum texto da saída vai ao painel: só os números. Sem resumo reconhecido, a linha sai sem números.
+- **Bugs na cena:** um run que falha abre um bug por falha na sala de testes (o Lab de QA ou a Arena), ou 1 bug quando não há contagem. A sala fica em alarme. O run seguinte que passar esmaga os bugs, que somem com uma animação e entram no indicador de bugs esmagados do topo.
+- **O que não abre bug:** um teste que você interrompeu e uma cadeia `&&` que falhou sem resumo de teste (a falha pode ter sido do build, por exemplo).
+
+Os bugs são da sessão: continuam abertos de um ticket para o outro até um run passar.
 
 ### Cena
 
@@ -114,9 +146,19 @@ Abaixo do ticket, a cena mostra as seis salas do tema, com um token para cada ag
 - Cada agente fica na sala do seu papel e, quando termina, vai para a copa (taverna). A sessão principal não sai da sala dela, mesmo parada.
 - Cabem até 3 tokens por sala; além disso, aparece "+N".
 - Quem está trabalhando ou aguardando aprovação mostra um balão com a ação atual. A sala fica em destaque enquanto alguém trabalha nela.
-- Os agentes encerrados em pedidos anteriores saem da cena. Até o T8, sem pedidos, os encerrados continuam na copa (até 3 tokens e "+N").
+- Quem espera a sua aprovação ganha o selo "!" e o balão da aprovação.
+- A sala de testes mostra os bugs abertos, até 4 e "+N", e fica em alarme enquanto houver algum.
+- Os agentes encerrados em tickets anteriores saem da cena.
 
-Nesta fase, a cena é estática: os tokens mudam de sala sem animação.
+A cena é animada, como no mockup:
+
+- o subagente que termina caminha até a copa; se a copa já está cheia, ele vai até o "+N" e some;
+- a delegação voa como um envelope (um pergaminho, na Guilda) de quem delegou até o novo agente;
+- uma falha dá um tranco no retrato de quem falhou (uma ação que você interrompeu, não);
+- os bugs novos surgem na sala de testes, e os esmagados somem com uma animação de derrota;
+- o cartão final aparece quando um ticket é entregue.
+
+Com a opção de reduzir movimento do sistema ligada, nada é animado: os tokens aparecem direto no lugar novo, e o cartão final aparece sem animação. Trocar de tema com o cartão final na tela faz o cartão sumir; isso muda no T14.
 
 ### Atividade
 
@@ -128,9 +170,20 @@ A coluna da direita (Atividade, ou Crônica na Guilda) mostra uma linha por even
 - uso de ferramentas (ler, editar, rodar um comando, buscar...) e falhas;
 - resultado de testes, pedidos de aprovação e compactação do contexto.
 
-Nesta fase, com os eventos reais, aparecem a sessão iniciada e encerrada, as delegações, o fim dos subagentes, as ferramentas e as falhas. Cada ferramenta ganha uma linha quando começa, e uma falha ganha a sua. "Sessão iniciada" só aparece quando o servidor recebe o início da sessão: uma sessão que já estava aberta quando o servidor subiu, ou quando a captura foi ligada, entra direto, sem essa linha. Pedidos, etapas, resultado de testes, aprovações e compactação chegam com o T8.
+- Cada ferramenta ganha uma linha quando começa, e uma falha ganha a sua. Um comando de teste ganha também a linha do resultado.
+- "Sessão iniciada" só aparece quando o servidor recebe o início da sessão: uma sessão que já estava aberta quando o servidor subiu, ou quando a captura foi ligada, entra direto, sem essa linha.
+- As linhas novas entram no topo com uma animação curta. Trocar de sessão ou de tema refaz a lista sem animação, e com a opção de reduzir movimento do sistema nada é animado.
 
 Falhas aparecem em vermelho, interrupções e pedidos de aprovação em amarelo, e sucessos em verde. O cabeçalho mostra quantos eventos estão na lista. O navegador guarda até 200 eventos por sessão, e o servidor manda os 200 mais recentes a cada conexão.
+
+#### Filtros
+
+Acima da lista ficam os chips "Todos" e um por papel da equipe, com o retrato do papel. Também dá para filtrar pelo cartão da equipe, clicando no nome de um papel ou numa instância; clicar de novo volta para todos.
+
+- O filtro só esconde linhas; o cabeçalho passa a mostrar "N de M eventos".
+- No filtro por papel, uma delegação aparece para quem delegou e para o papel chamado, e uma etapa concluída, para o papel dono dela. As linhas de sessão e de ticket só aparecem em "Todos".
+- No filtro por instância, a delegação que criou a instância fica de fora: ela é de quem delegou.
+- O filtro volta para "Todos" quando você troca de sessão ou quando o papel ou a instância somem do cartão da equipe.
 
 Comandos, caminhos e títulos aparecem como chegam do servidor, que corta e redige o que pode ser segredo antes de enviar ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)). Mesmo assim, cuidado ao compartilhar a tela: o modo discreto, que esconde esses textos, chega numa próxima entrega.
 
@@ -165,14 +218,14 @@ Quando o servidor é reiniciado, o selo volta para "ao vivo" e o painel recebe o
 
 O painel mostra uma sessão por vez. O seletor no topo lista as sessões que o servidor conhece, da que teve evento mais recente para a mais antiga. Cada opção traz o nome da sessão e o do projeto, como "Sessão 5f1c0a · meu-app", e "encerrada" quando a sessão terminou. Passe o mouse sobre o seletor para ver a pasta do projeto.
 
-- O nome da sessão é o título dela no Claude Code ou, sem ele, "Sessão" com os 6 primeiros caracteres do id. Sem projeto conhecido, a opção traz só o nome da sessão.
+- O nome da sessão é o título dela no Claude Code; sem ele, o título do primeiro ticket da sessão, com até 48 caracteres; antes do primeiro pedido, "Sessão" com os 6 primeiros caracteres do id. Sem projeto conhecido, a opção traz só o nome da sessão.
 - Aparecem as sessões de todos os projetos, porque a captura vale para todos. Os subagentes ficam dentro da sessão de quem os chamou.
 - Ao abrir, o painel mostra a sessão mais recente.
 - A sessão que você escolher continua escolhida enquanto existir. Se ela sumir, o painel volta para a mais recente. O servidor tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas.
 - A escolha não é guardada entre recarregamentos da página.
 - Sem sessões, o seletor fica escondido.
 
-O agrupamento por projeto, a opção de seguir a sessão com atividade e o aviso de aprovação pendente em outra sessão chegam numa próxima entrega (T13).
+O agrupamento por projeto, a opção de seguir a sessão com atividade e o aviso de aprovação pendente em outra sessão chegam com o T13, em andamento.
 
 ## Sem sessões
 
@@ -199,13 +252,11 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 
 | O que | Quando chega |
 |---|---|
-| Tickets e etapas, "aguardando aprovação", bugs e resultado de testes, compactação do contexto; indicadores de bugs, entregas e aprovações com valores reais | T8 (com o T6 para os testes) |
-| Comandos de teste reconhecidos como teste ("Rodando os testes"), em vez de comando de terminal | T6 |
-| Cena animada: o agente caminhando até a copa, o pergaminho da delegação, o impacto de uma falha, os bugs no Lab de QA e o selo "!" de aprovação | T12b |
-| Filtros da atividade por papel e por agente, e animação de entrada das linhas | T11b |
-| Seletor agrupado por projeto, "seguir atividade" e escolha guardada | T13 |
-| Modo discreto (esconde comandos, caminhos e títulos) e a legenda com a fonte de cada indicador | T14 |
+| Seletor agrupado por projeto, com status e aprovações pendentes de cada sessão; "seguir atividade"; aviso de aprovação pendente em outra sessão; escolha guardada | T13 (em andamento) |
+| Modo discreto (esconde comandos, caminhos e títulos), a legenda com a fonte de cada indicador, o chip da instância filtrada e o cartão final que sobrevive à troca de tema | T14 |
 | Barra de contexto (Foco ou Mana), opcional | T15 e T16 |
+
+As regras de ticket, aprovação, testes e compactação seguem o design e foram testadas com cenários sintéticos. Elas ainda vão ser conferidas com os eventos reais da sessão de teste do T0, e podem mudar em detalhes depois dela.
 
 ## Testes de ponta a ponta (para quem desenvolve)
 
@@ -225,7 +276,7 @@ npm run test:e2e
 
 - **Nenhum navegador é baixado.** O `npm install` instala só o pacote do Playwright, e os testes usam o Edge instalado (`channel: 'msedge'`), sem abrir janela. Não rode `npx playwright install`: o projeto não precisa dos navegadores do Playwright.
 - **Não mexe no seu servidor.** Os testes sobem um servidor próprio, numa porta livre e com um diretório de dados temporário, nunca na porta 47821 nem em `%LOCALAPPDATA%\agent-quest\`. Dá para rodar com o seu servidor ligado. A pasta temporária é apagada no fim.
-- **O que é conferido:** o painel abre sem violar a política de segurança de conteúdo, sem erro de script e sem nenhuma requisição para fora; a troca de tema por botões, teclas, endereço e memória do navegador; o layout em 360, 820 e 1280 px; e a posição dos tokens na cena. Os testes com sessões simulam o servidor ao vivo com os estados de exemplo de `test/fixtures/state/`.
+- **O que é conferido:** o painel abre sem violar a política de segurança de conteúdo, sem erro de script e sem nenhuma requisição para fora; a troca de tema por botões, teclas, endereço e memória do navegador; o layout em 360, 820 e 1280 px; a posição dos tokens na cena; os filtros da atividade; e as animações, inclusive que nenhuma é criada com movimento reduzido. Os testes com sessões usam os estados de exemplo de `test/fixtures/state/` e cenários sintéticos injetados num servidor de teste.
 - **Ver o painel com dados sem a captura:** com o servidor no ar, o `npm run inject` envia um cenário de eventos pelo mesmo caminho da captura ([Injetar um cenário](servidor.md#injetar-um-cenário-npm-run-inject)).
 - **Quando um teste falha,** o Playwright guarda o rastro em `test-results/`, que não vai para o repositório.
 - O `npm test` não roda estes testes: ele cobre os de unidade e de integração, e não precisa de `npm install`.

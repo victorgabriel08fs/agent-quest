@@ -133,25 +133,23 @@ Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft E
 
 ### O que você vê
 
-- **Equipe:** o orquestrador e cada subagente que ele chamar, com o papel, a descrição da delegação, o status (trabalhando, parado ou encerrado na copa) e a ação atual, como "Editando `server/http/app.js`". Dois subagentes em paralelo aparecem como duas instâncias.
-- **Atividade:** delegações, ferramentas, falhas e fim de subagentes, em ordem, com comandos e caminhos já redigidos e relativos ao projeto.
-- **Cena:** um token por agente na sala do seu papel, e a copa para quem terminou.
+- **Ticket:** cada pedido seu vira um ticket, com título, situação e as etapas do time (Arquitetura, Desenvolvimento, QA e Documentação). Quando ele é entregue, aparece o cartão final com o resumo.
+- **Equipe:** o orquestrador e cada subagente que ele chamar, com o papel, a descrição da delegação, o status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa) e a ação atual, como "Editando `server/http/app.js`" ou "Rodando os testes". Dois subagentes em paralelo aparecem como duas instâncias.
+- **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto, e filtros por papel ou por agente.
+- **Cena:** um token por agente na sala do seu papel, com a ida à copa, o envelope da delegação, o tranco das falhas, o selo "!" de aprovação e os bugs abertos pelos testes na sala de testes.
+- **Topo:** duração, bugs esmagados, tickets entregues e aprovações pendentes.
 - **Temas:** Escritório e Guilda, com as teclas `1`, `2` e `T` ou os botões do topo. Trocar de tema no meio da atividade muda o vocabulário e o visual, sem reabrir a conexão com o servidor.
 
-O guia [O painel](painel.md) explica cada área em detalhe.
+O guia [O painel](painel.md) explica cada área em detalhe. As regras de ticket, aprovação e testes ainda vão ser conferidas com os eventos reais da sessão de teste do T0.
 
 ### O que o painel ainda não mostra
 
-Chegam depois do marco, enquanto o resto da v1 é construído:
+Chegam enquanto o resto da v1 é construído:
 
 | O que | Quando chega |
 |---|---|
-| Tickets e etapas, "aguardando aprovação", bugs e resultado de testes; os indicadores de bugs, entregas e aprovações ficam em zero até lá | T6 e T8 |
-| Comandos de teste mostrados como teste; até lá, aparecem como comando de terminal | T6 |
-| Cena animada | T12b |
-| Filtros da atividade | T11b |
-| Seletor agrupado por projeto e "seguir atividade" entre sessões | T13 |
-| Modo discreto, que esconde comandos, caminhos e títulos para compartilhar a tela | T14 |
+| Seletor agrupado por projeto, "seguir atividade" entre sessões e aviso de aprovação pendente em outra sessão | T13 (em andamento) |
+| Modo discreto, que esconde comandos, caminhos e títulos para compartilhar a tela, e a legenda de cada indicador | T14 |
 
 A lista completa está em [O que ainda não está ligado](painel.md#o-que-ainda-não-está-ligado).
 

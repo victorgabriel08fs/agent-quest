@@ -4,7 +4,7 @@
 
 <!-- idioma: a decidir pelo usuário se o README terá também um resumo em inglês. -->
 
-<!-- print: painel principal no tema Escritório, a partir de um cenário sintético injetado (nunca de uma sessão real): equipe com o orquestrador, dois devs em paralelo e o tester; cena com os tokens nas salas e um agente na copa; atividade com delegações, ferramentas e uma falha. Largura de 1280 px, até 1 MB, com texto alternativo. -->
+<!-- print: painel principal no tema Escritório, a partir de um cenário sintético injetado (nunca de uma sessão real): ticket com as etapas; equipe com o orquestrador, dois devs em paralelo e o tester; cena com os tokens nas salas, um agente na copa e bugs na sala de testes; atividade com delegações, ferramentas, uma falha e um resultado de testes. Largura de 1280 px, até 1 MB, com texto alternativo. -->
 
 > **Situação:** em desenvolvimento, rumo à v1. O código do primeiro marco, a "Primeira luz" (captura, servidor e painel ao vivo), está pronto e testado. A instalação da captura no Claude Code real ainda espera a sessão de teste dos hooks. Veja [Situação e roteiro](#situação-e-roteiro).
 
@@ -14,7 +14,10 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 
 ## Destaques
 
-- **Equipe e cena ao vivo.** Cada subagente aparece com a descrição da tarefa que recebeu, a ação atual ("Editando `server/http/app.js`") e uma barra de saúde. Quem termina vai para a copa.
+- **Equipe e cena ao vivo.** Cada subagente aparece com a descrição da tarefa que recebeu, a ação atual ("Editando `server/http/app.js`") e uma barra de saúde. Quem termina caminha até a copa.
+- **Cada pedido vira um ticket,** com as etapas do time (arquitetura, desenvolvimento, QA e documentação) e um cartão final quando é entregue.
+- **Testes viram bugs na cena.** Um run que falha solta bugs na sala de testes; o run seguinte que passa os esmaga.
+- **Aprovações à vista.** Quem espera a sua aprovação ganha um "!", e o topo conta os pedidos pendentes.
 - **Subagentes em paralelo.** Duas instâncias do mesmo agente aparecem separadas, cada uma com as próprias ações.
 - **Dois temas, os mesmos dados.** Escritório e Guilda, com troca a qualquer momento.
 - **100% local.** Servidor, dados e interface ficam na sua máquina. Nada de nuvem, CDN ou telemetria.
@@ -75,7 +78,8 @@ Abra `http://127.0.0.1:47821/`. Sem a captura, o painel mostra o estado sem sess
 
 - **Sessões:** o seletor no topo lista as sessões do Claude Code, de todos os projetos, da mais recente para a mais antiga. Cada sessão aparece com o primeiro evento dela.
 - **Temas:** botões no topo, teclas `1` (Escritório), `2` (Guilda) e `T` (alterna), ou `#escritorio` e `#guilda` no fim do endereço. O navegador guarda a escolha.
-- **Equipe, cena e atividade:** o que cada área mostra está em [O painel](docs/guias/painel.md).
+- **Filtros:** os chips acima da atividade, o nome de um papel ou uma instância no cartão da equipe mostram só a atividade dele.
+- **Ticket, equipe, cena e atividade:** o que cada área mostra está em [O painel](docs/guias/painel.md). Com a opção de reduzir movimento do sistema ligada, nada é animado.
 - **Servidor:** porta, `config.json`, papéis de agentes com outros nomes e mensagens do terminal estão em [Iniciar e parar o servidor](docs/guias/servidor.md).
 
 ## Temas
@@ -172,18 +176,20 @@ Abra uma issue com a versão do Agent Quest (campo `version` do `/api/health`), 
 
 - captura com os 15 hooks assíncronos e o `npm run capture:deploy`;
 - servidor local seguro, sem dependências, com o estado das sessões em memória;
-- normalização dos eventos com redação de segredos;
+- normalização dos eventos com redação de segredos, inclusive a detecção de comandos de teste e a leitura do resumo deles;
 - sessões, agentes, subagentes em paralelo e aninhados, delegações e a ida para a copa;
-- painel ao vivo com equipe, cena estática, atividade, seletor de sessão, os dois temas e layout responsivo;
+- tickets por pedido, etapas do time, aprovações pendentes, bugs abertos pelos testes e esmagados no run seguinte, e os indicadores do topo;
+- painel ao vivo com ticket, equipe, cena animada, atividade com filtros, seletor de sessão, os dois temas e layout responsivo;
 - reconexão do painel sem baixar o estado inteiro de novo;
 - injetor de cenários para desenvolvimento (`npm run inject`).
+
+As regras de ticket, aprovação e testes foram testadas com cenários sintéticos e ainda vão ser conferidas com os eventos reais da sessão de teste dos hooks.
 
 **Próximo marco, a Primeira luz:** a sessão de teste dos hooks no Claude Code real, a liberação do design e a primeira instalação da captura. A partir daí, o resto da v1 é construído com o painel acompanhando o próprio time.
 
 **Ainda na v1:**
 
-- tickets e etapas, "aguardando aprovação", bugs e resultado de testes, e os indicadores do topo com valores reais;
-- filtros da atividade, cena animada e várias sessões com "seguir atividade";
+- várias sessões: seletor agrupado por projeto, "seguir atividade" e aviso de aprovação pendente em outra sessão (em andamento);
 - modo discreto, que esconde comandos e caminhos para compartilhar a tela, e a legenda de cada indicador;
 - opcional: uma barra com o uso aproximado do contexto de cada agente.
 
