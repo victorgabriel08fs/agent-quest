@@ -43,7 +43,7 @@ test.describe('fumaça do painel', () => {
     await expect(page.locator('#feed .entry')).toHaveCount(22);
     await expect(page.locator('.rooms .token')).toHaveCount(4);
 
-    await page.locator('#session-select').selectOption({ label: 'Sessão 5f1c0a · agents-quest' });
+    await page.locator('#session-select').selectOption({ label: 'Sessão 5f1c0a · agents-quest · ativa' });
     await expect(page.locator('#party .member')).toHaveCount(6);
     await expect(page.locator('#feed .entry')).toHaveCount(21);
     await expect(page.locator('.room[data-room="dev"] .token')).toHaveCount(2);

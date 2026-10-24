@@ -160,7 +160,23 @@ test.describe('feed ao vivo com o injetor', () => {
     await expect(page.locator('.onboarding')).toBeVisible();
     await recordPanel(page);
 
-    const session = await inject(page, scenarioParts().whole);
+    // O cenário entra em três partes, com pontos de sincronização (ADR 0010,
+    // "contador antes de relógio"): com os tickets (T8), um subagente encerrado
+    // só fica no cartão até o próximo pedido, de 25 a 125 ms com `speed: 4`. Em
+    // uma injeção só, sob carga, nenhum quadro pode cair nessa janela, e o teste
+    // falhava sem defeito do painel (relatório do tester, T13).
+    const { whole } = scenarioParts();
+    const hooks = whole.events.map((event) => /** @type {any} */ (event.payload).hook_event_name);
+    const firstStart = hooks.indexOf('SubagentStart');
+    const worker = /** @type {any} */ (whole.events[firstStart].payload).agent_id;
+    const workerStop = hooks.findIndex((name, index) => name === 'SubagentStop' && /** @type {any} */ (whole.events[index].payload).agent_id === worker);
+    const nextPrompt = hooks.indexOf('UserPromptSubmit', workerStop);
+    const workerRow = page.locator(`#party li.inst[data-key="${worker}"]`);
+    await inject(page, { ...whole, events: whole.events.slice(0, firstStart + 1) });
+    await expect(workerRow).toHaveClass(/\bworking\b/);
+    await inject(page, { ...whole, events: whole.events.slice(firstStart + 1, nextPrompt) });
+    await expect(workerRow).toHaveClass(/\bfinished\b/);
+    const session = await inject(page, { ...whole, events: whole.events.slice(nextPrompt) });
 
     // O feed mostra o mesmo que o servidor, na mesma ordem (mais recentes no topo).
     await expect(page.locator('#session-select')).toHaveValue(MAIN_SESSION);
@@ -311,12 +327,13 @@ test.describe('feed ao vivo com o injetor', () => {
     // O main.js segura a região por no máximo 1,5 s (HOLD_MAX_MS). Sob carga, o
     // update pode chegar depois disso, e aí o teste não mede o que promete: a
     // tentativa é descartada e refeita com os eventos seguintes (ADR 0010,
-    // "uma nova tentativa em caso de ruído da máquina"; até 3 tentativas).
+    // "uma nova tentativa em caso de ruído da máquina": falhar duas vezes
+    // seguidas é bug).
     const HOLD_BUDGET_MS = 1_200;
     /** @type {number[]} */
     const slow = [];
     let verified = false;
-    for (let attempt = 0; attempt < 3 && !verified; attempt++) {
+    for (let attempt = 0; attempt < 2 && !verified; attempt++) {
       const box = await button.boundingBox();
       if (!box) throw new Error('botão do orquestrador sem caixa');
       const partyBefore = await page.locator('#party').innerHTML();
@@ -343,7 +360,7 @@ test.describe('feed ao vivo com o injetor', () => {
       expect(await page.locator('#party').innerHTML()).not.toBe(partyBefore);
       verified = true;
     }
-    expect(verified, `o update demorou mais que ${HOLD_BUDGET_MS} ms nas três tentativas (${slow.join(', ')} ms)`).toBe(true);
+    expect(verified, `o update demorou mais que ${HOLD_BUDGET_MS} ms nas duas tentativas (${slow.join(', ')} ms)`).toBe(true);
   });
 
   test('parando o servidor, o selo vai para "reconectando"; religando, o painel se recupera', async ({ page }) => {

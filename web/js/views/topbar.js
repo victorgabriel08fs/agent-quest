@@ -1,7 +1,8 @@
 // @ts-check
-// Barra superior: indicadores (ADR 0008, pelo `theme.stats`), selo de conexão e
-// alternância de tema. O seletor de sessão fica em views/sessions.js. Cada
-// função devolve HTML com todo texto dinâmico escapado (ADR 0006).
+// Barra superior: indicadores (ADR 0008, pelo `theme.stats`), selo de conexão,
+// alternância de tema e o aviso de aprovação pendente em outra sessão (T13). O
+// seletor de sessão fica em views/sessions.js. Cada função devolve HTML com todo
+// texto dinâmico escapado (ADR 0006).
 
 import { statsView } from '../selectors.js';
 import { esc } from '../themes/helpers.js';
@@ -41,6 +42,44 @@ export function renderConnection(state) {
   const key = Object.hasOwn(CONNECTION_LABELS, state) ? state : 'offline';
   const { label, title } = CONNECTION_LABELS[key];
   return `<span class="conn conn-${key}" title="${esc(title)}"><i aria-hidden="true"></i>${esc(label)}</span>`;
+}
+
+/** @param {unknown} value */
+const count = (value) => (typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
+
+/**
+ * Sessão com aprovação pendente fora da mostrada (T13): a de evento mais
+ * recente, e quantas outras também têm. Null se nenhuma.
+ * @param {readonly SessionState[]} list   já ordenada por `sessionList`
+ * @param {string|null} selectedId
+ * @returns {{ session: SessionState, more: number }|null}
+ */
+export function pendingElsewhere(list, selectedId) {
+  const others = list.filter((session) => session.id !== selectedId && count(session.counters?.pendingApprovals) > 0);
+  return others.length > 0 ? { session: others[0], more: others.length - 1 } : null;
+}
+
+/**
+ * Aviso de aprovação pendente em outra sessão, com o ícone e a palavra do tema
+ * (o indicador "pending" de `theme.stats`) e o atalho para a sessão. O botão
+ * tem chave estável (`data-focus-key`, a mesma para qualquer sessão, porque o
+ * aviso só tem um atalho): o foco volta para ele depois do redesenho, mesmo
+ * que o aviso passe a apontar outra sessão. Sem aprovação pendente fora da
+ * sessão mostrada, vazio.
+ * @param {{ list: readonly SessionState[], selectedId: string|null, theme: Theme, now: number }} params
+ * @returns {string}
+ */
+export function renderPendingAlert({ list, selectedId, theme, now }) {
+  const found = pendingElsewhere(list, selectedId);
+  if (!found) return '';
+  const { session, more } = found;
+  const pending = theme.stats(statsView(session, now)).find((item) => item.id === 'pending');
+  const where = [session.label || session.id, session.project?.name].filter(Boolean).join(' · ');
+  const others = more > 0 ? ` (e mais ${more} ${more === 1 ? 'sessão' : 'sessões'})` : '';
+  return `<span class="alert-icon" aria-hidden="true">${esc(pending?.icon ?? '!')}</span>` +
+    `<span class="alert-text"><b>${count(session.counters?.pendingApprovals)}</b> ${esc(pending?.label ?? '')} em ` +
+    `<span class="alert-where">${esc(where)}</span>${esc(others)}</span>` +
+    `<button type="button" class="alert-go" data-focus-key="session-alert" data-goto="${esc(session.id)}">Ir para a sessão</button>`;
 }
 
 /**

@@ -14,11 +14,18 @@
 // sessão em que foi escolhido. A lista do feed é atualizada no lugar
 // (views/feed.js, `syncFeedList`), para as linhas novas entrarem no topo com a
 // animação do mockup sem recriar as outras.
+//
+// Várias sessões (T13): o seletor agrupado por projeto (views/sessions.js), a
+// política "seguir atividade" (follow.js, função pura, chamada a cada redesenho
+// e a cada segundo, porque "parada há 30 s" depende do relógio), a preferência
+// no localStorage e o aviso de aprovação pendente em outra sessão
+// (views/topbar.js), com atalho para ela.
 
 import { connect, frameBatcher } from './connection.js';
+import { FOLLOW_STORAGE_KEY, chooseSession, parsePreference, serializePreference } from './follow.js';
 import { createSceneFx } from './fx.js';
 import { renderScene } from './scene.js';
-import { resolveSelectedId, sessionList } from './selectors.js';
+import { sessionList } from './selectors.js';
 import { createStore } from './store.js';
 import { resolveThemeId, themeIdForKey } from './themes/contract.js';
 import escritorio from './themes/escritorio.js';
@@ -27,13 +34,14 @@ import { renderEmpty } from './views/empty.js';
 import { ALL, feedModel, nextFilter, resolveFilter, syncFeedList } from './views/feed.js';
 import { renderParty } from './views/party.js';
 import { renderQuest } from './views/quest.js';
-import { sessionOptions, syncSessionSelect } from './views/sessions.js';
-import { renderConnection, renderStats, renderThemeToggle } from './views/topbar.js';
+import { sessionGroups, syncSessionSelect } from './views/sessions.js';
+import { renderConnection, renderPendingAlert, renderStats, renderThemeToggle } from './views/topbar.js';
 
 /** @typedef {import('../../shared/contract.js').SessionState} SessionState */
 /** @typedef {import('../../shared/contract.js').HealthResponse} HealthResponse */
 /** @typedef {import('./connection.js').ConnectionState} ConnectionState */
 /** @typedef {import('./views/empty.js').HealthState} HealthState */
+/** @typedef {import('./follow.js').FollowPreference} FollowPreference */
 
 const THEMES = [escritorio, guilda];
 const THEME_IDS = THEMES.map((theme) => theme.id);
@@ -55,6 +63,8 @@ function byId(id) {
 const ui = {
   sessionInfo: byId('session-info'),
   sessionSelect: /** @type {HTMLSelectElement} */ (byId('session-select')),
+  sessionFollow: byId('session-follow'),
+  sessionAlert: byId('session-alert'),
   stats: byId('stats'),
   conn: byId('conn'),
   toggle: byId('theme-toggle'),
@@ -76,9 +86,15 @@ const sceneFx = createSceneFx({ stage: ui.sceneStage, layer: ui.sceneFx, motion:
 /** Preferências de quem observa e o que não vem do SSE. */
 const app = {
   themeId: THEME_IDS[0],
-  /** Sessão escolhida; vale enquanto ela existir (T11a). */
+  /** Sessão mostrada, decidida pela política "seguir atividade" (T13). */
   /** @type {string|null} */
   selectedId: null,
+  /** Seguir atividade ou sessão fixada (T13; guardada no localStorage). */
+  /** @type {FollowPreference} */
+  preference: parsePreference(storedPreference()),
+  /** Hora da última troca automática de sessão (no máximo uma a cada 10 s). */
+  /** @type {number|null} */
+  lastSwitchAt: null,
   /** @type {HealthResponse|null} */
   health: null,
   /** @type {HealthState} */
@@ -92,14 +108,49 @@ const app = {
 const currentTheme = () => THEMES.find((theme) => theme.id === app.themeId) ?? THEMES[0];
 
 /**
- * Lista do seletor e sessão mostrada. Se a escolhida sumiu, volta para a mais
- * recente.
+ * Lista do seletor e sessão mostrada, pela política "seguir atividade"
+ * (follow.js): seguindo, troca para a sessão ativa quando a atual está parada;
+ * fixada, mostra a escolhida enquanto ela existir.
+ * @param {number} [now]
  * @returns {{ list: SessionState[], session: SessionState|null }}
  */
-function currentView() {
+function currentView(now = Date.now()) {
   const list = sessionList(store.sessions.values());
-  app.selectedId = resolveSelectedId(list, app.selectedId);
+  const choice = chooseSession({ list, preference: app.preference, currentId: app.selectedId, lastSwitchAt: app.lastSwitchAt, now });
+  if (choice.switched) app.lastSwitchAt = now;
+  app.selectedId = choice.id;
   return { list, session: app.selectedId === null ? null : store.sessions.get(app.selectedId) ?? null };
+}
+
+/**
+ * Guarda a preferência (seguir ou fixar).
+ * @param {FollowPreference} preference
+ */
+function setPreference(preference) {
+  app.preference = preference;
+  try {
+    localStorage.setItem(FOLLOW_STORAGE_KEY, serializePreference(preference));
+  } catch {
+    // armazenamento indisponível: a escolha vale só nesta aba
+  }
+}
+
+/**
+ * Fixa uma sessão (escolha no seletor ou atalho do aviso): desliga o seguir.
+ * @param {string} id
+ */
+function pinSession(id) {
+  if (!store.sessions.has(id)) return;
+  setPreference({ follow: false, pinnedId: id });
+  app.selectedId = id;
+}
+
+function storedPreference() {
+  try {
+    return localStorage.getItem(FOLLOW_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -130,23 +181,31 @@ const held = new Set();
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let holdTimer;
 
+/** Atributos com a chave estável de um botão redesenhado (regras de interface). */
+const FOCUS_KEYS = ['data-filter', 'data-focus-key'];
+
 /**
  * Escreve o HTML gerado pelas views (todo texto dinâmico já escapado) só quando
- * ele muda. Se o foco estava num botão de filtro da região, ele volta para o
- * botão equivalente no HTML novo (o teclado não perde o lugar a cada update).
+ * ele muda. Se o foco estava num botão da região com chave estável
+ * (`data-filter` ou `data-focus-key`), ele volta para o botão equivalente no
+ * HTML novo (o teclado não perde o lugar a cada update). Se o botão sumiu e há
+ * um `fallback`, o foco vai para ele.
  * @param {Element} element
  * @param {string} html
+ * @param {HTMLElement} [fallback]
  */
-function setHTML(element, html) {
+function setHTML(element, html, fallback) {
   if (held.has(element) || lastHTML.get(element) === html) return;
   lastHTML.set(element, html);
   const active = document.activeElement;
-  const focusKey = active && active !== element && element.contains(active) ? active.getAttribute('data-filter') : null;
+  const inside = active !== null && active !== element && element.contains(active);
+  const attr = inside ? FOCUS_KEYS.find((name) => active.hasAttribute(name)) ?? null : null;
+  const focusKey = attr ? active?.getAttribute(attr) ?? null : null;
   element.innerHTML = html;
-  if (focusKey !== null) {
-    const next = [...element.querySelectorAll('[data-filter]')].find((node) => node.getAttribute('data-filter') === focusKey);
-    if (next instanceof HTMLElement) next.focus({ preventScroll: true });
-  }
+  if (!inside) return;
+  const next = attr ? [...element.querySelectorAll(`[${attr}]`)].find((node) => node.getAttribute(attr) === focusKey) : null;
+  if (next instanceof HTMLElement) next.focus({ preventScroll: true });
+  else if (fallback) fallback.focus({ preventScroll: true });
 }
 
 /**
@@ -196,9 +255,17 @@ function renderCenter(session) {
     : renderEmpty({ theme, health: app.health, healthState: app.healthState }));
 }
 
-/** Partes que dependem do relógio (durações). */
+/**
+ * Partes que dependem do relógio (durações) e a política "seguir atividade",
+ * que troca de sessão quando a atual fica parada.
+ */
 function renderClock() {
+  const before = app.selectedId;
   const { session } = currentView();
+  if (app.selectedId !== before) {
+    renderAll();
+    return;
+  }
   if (!session) return;
   const theme = currentTheme();
   const now = Date.now();
@@ -216,7 +283,12 @@ function renderAll() {
   }
   ui.sessionInfo.hidden = list.length === 0;
   ui.sessionSelect.title = session?.project?.dir ?? '';
-  syncSessionSelect(ui.sessionSelect, sessionOptions(list, app.selectedId));
+  ui.sessionFollow.setAttribute('aria-pressed', String(app.preference.follow));
+  // Com um controle do seletor apertado, as opções e o aviso esperam (no máximo 1,5 s).
+  if (!held.has(ui.sessionInfo)) {
+    syncSessionSelect(ui.sessionSelect, sessionGroups(list, app.selectedId, theme));
+    setHTML(ui.sessionAlert, renderPendingAlert({ list, selectedId: app.selectedId, theme, now }), ui.sessionSelect);
+  }
   setHTML(ui.stats, renderStats(session, theme, now));
   setHTML(ui.conn, renderConnection(app.connection));
   const filter = currentFilter(session);
@@ -342,8 +414,34 @@ ui.toggle.addEventListener('click', (event) => {
   if (id) switchTheme(id);
 });
 
+// Escolher uma sessão no seletor a fixa e desliga o "seguir atividade" (T13).
 ui.sessionSelect.addEventListener('change', () => {
-  app.selectedId = ui.sessionSelect.value || null;
+  if (ui.sessionSelect.value) pinSession(ui.sessionSelect.value);
+  held.clear();
+  renderAll();
+});
+
+// "Seguir atividade": ligar volta a seguir; desligar fixa a sessão mostrada.
+ui.sessionFollow.addEventListener('click', () => {
+  if (app.preference.follow) {
+    if (app.selectedId !== null) setPreference({ follow: false, pinnedId: app.selectedId });
+  } else {
+    setPreference({ follow: true, pinnedId: null });
+    app.lastSwitchAt = null;
+  }
+  held.clear();
+  renderAll();
+});
+
+// Atalho do aviso de aprovação pendente: vale como escolher a sessão no
+// seletor. O aviso dessa sessão some, então o foco vai para o seletor (o
+// setHTML já faz isso se o foco estava no botão).
+ui.sessionAlert.addEventListener('click', (event) => {
+  const target = /** @type {Element|null} */ (event.target);
+  const id = target?.closest('[data-goto]')?.getAttribute('data-goto');
+  if (!id) return;
+  pinSession(id);
+  held.clear();
   renderAll();
 });
 
@@ -351,6 +449,7 @@ ui.party.addEventListener('click', (event) => onFilterClick(event, 'toggle'));
 ui.feedFilters.addEventListener('click', (event) => onFilterClick(event, 'set'));
 holdWhilePressed(ui.party);
 holdWhilePressed(ui.feedFilters);
+holdWhilePressed(ui.sessionInfo);
 for (const type of ['pointerup', 'pointercancel', 'keyup']) window.addEventListener(type, releaseHeld, true);
 // Só a janela perdendo o foco solta a região. O blur do botão que perde o foco
 // no mousedown chega logo depois do pointerdown e soltaria a região no meio do

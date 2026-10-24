@@ -91,7 +91,7 @@ test.describe('troca de tema', () => {
 
   test('a sessão escolhida no seletor continua escolhida depois de trocar de tema', async ({ page }) => {
     const hits = await openLive(page);
-    await page.locator('#session-select').selectOption({ label: 'Sessão 5f1c0a · agents-quest' });
+    await page.locator('#session-select').selectOption({ label: 'Sessão 5f1c0a · agents-quest · ativa' });
     await expect(page.locator('.room[data-room="dev"] .token')).toHaveCount(2);
     const before = await stateOf(page);
     const eventsBefore = hits.events;

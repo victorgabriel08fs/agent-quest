@@ -118,6 +118,7 @@ const WORDS = {
   noSessions: 'O salão da guilda está vazio',
   noAgents: 'Nenhum aventureiro no salão ainda',
   noFeed: 'A crônica ainda está em branco',
+  unknownProject: 'Terras desconhecidas',
   questStatus: {
     open: 'em curso',
     waiting_background: 'aguardando o retorno de uma missão em segundo plano',

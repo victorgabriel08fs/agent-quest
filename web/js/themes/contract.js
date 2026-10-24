@@ -54,6 +54,7 @@
  * @property {string} noSessions     título do painel sem sessões
  * @property {string} noAgents       cartão Equipe sem sessão
  * @property {string} noFeed         feed vazio
+ * @property {string} unknownProject grupo do seletor das sessões sem projeto conhecido (modelo de eventos, seção 7; T13)
  * @property {Record<QuestStatus, string>} questStatus
  */
 

@@ -116,6 +116,7 @@ const WORDS = {
   noSessions: 'Nenhuma sessão por aqui ainda',
   noAgents: 'Ninguém no escritório ainda',
   noFeed: 'Nenhuma atividade ainda',
+  unknownProject: 'Projeto desconhecido',
   questStatus: {
     open: 'em andamento',
     waiting_background: 'aguardando tarefa em segundo plano',

@@ -9,7 +9,7 @@ import { feedTone, renderFeed, systemIcon } from '../../../web/js/views/feed.js'
 import { renderParty } from '../../../web/js/views/party.js';
 import { renderQuest } from '../../../web/js/views/quest.js';
 import { CONNECTION_LABELS, renderConnection, renderStats, renderThemeToggle } from '../../../web/js/views/topbar.js';
-import { sessionOptions } from '../../../web/js/views/sessions.js';
+import { sessionGroups, sessionOptions } from '../../../web/js/views/sessions.js';
 import { esc } from '../../../web/js/themes/helpers.js';
 import escritorio from '../../../web/js/themes/escritorio.js';
 import guilda from '../../../web/js/themes/guilda.js';
@@ -105,8 +105,9 @@ describe('snapshot da Primeira luz', () => {
   for (const theme of THEMES) {
     const views = renderAll(session, theme);
 
-    it(`${theme.id}: rótulo da sessão e projeto no topo`, () => {
-      assert.deepEqual(sessionOptions([session], session.id).map((o) => o.text), ['Sessão 5f1c0a · agents-quest']);
+    it(`${theme.id}: rótulo da sessão, projeto e status no topo, no grupo do projeto (T13)`, () => {
+      assert.deepEqual(sessionOptions([session], session.id, theme).map((o) => o.text), ['Sessão 5f1c0a · agents-quest · ativa']);
+      assert.deepEqual(sessionGroups([session], session.id, theme).map((g) => [g.label, g.options.length]), [['agents-quest', 1]]);
     });
 
     it(`${theme.id}: papéis do roster na ordem, com nome do tema e papel real`, () => {

@@ -15,7 +15,11 @@
 <header class="topbar">
   <div class="brand"><span class="logo" aria-hidden="true">⚔️</span><span>Agent Quest</span></div>
   <div class="sess" id="session-info" hidden>
-    <select class="sess-select" id="session-select" aria-label="Sessão exibida"></select>
+    <div class="sess-row">
+      <select class="sess-select" id="session-select" aria-label="Sessão exibida"></select>
+      <button type="button" class="follow" id="session-follow" aria-pressed="true" title="Troca sozinho para a sessão com atividade quando a mostrada fica parada por 30 s. Escolher uma sessão no seletor fixa a escolha."><span aria-hidden="true">⟳</span><span class="l">Seguir atividade</span></button>
+    </div>
+    <div class="sess-alert" id="session-alert" role="status"></div>
   </div>
   <div class="session" id="stats" role="group" aria-label="Resumo da sessão"></div>
   <div class="top-actions">
