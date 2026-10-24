@@ -235,6 +235,14 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
   - por instância, pelo cartão da equipe. Enquanto o filtro de instância está ligado, aparece também um chip dessa instância, que se desfaz com o próprio chip ou com "Todos" (acréscimo previsto no T14);
   - o filtro volta para "Todos" ao trocar de sessão e quando o botão que o ligou some (a instância foi para o "+N" ou o papel saiu da equipe);
   - o filtro de uma instância mostra os eventos dela. A delegação que a criou aparece no filtro de quem delegou, porque o estado do agente não guarda o id da chamada que o criou. Guardar esse id seria mudança de contrato (`AgentState` ou `agent.started`), fora da v1.
+- **Modo discreto** (T14, registrado em 24/10/2026):
+  - **começa desligado** (decisão 3 do usuário). Liga pelo botão 🕶️, só com ícone em todas as larguras, como o "?", e com nome acessível, ou pela tecla `D`. A escolha fica no `localStorage` (`agent-quest-discreet`);
+  - **o que esconde:** alvo, detalhe e títulos, como no plano; e também o erro do ticket e das ferramentas (a primeira linha costuma ter caminho ou comando), o rótulo da sessão (vem do título do pedido), o rótulo das instâncias (vem da descrição da delegação) e a pasta do projeto no tooltip. Vale também para o feed;
+  - **o que fica visível:** o nome do projeto, porque sem ele não dá para se orientar, e o motivo do fim da sessão. Projetos de mesmo nome aparecem como "(1)" e "(2)", sem a pasta. Quem compartilha a tela deve saber que o nome do projeto aparece;
+  - **como funciona:** a máscara é aplicada ao estado antes das views (`maskSession`), e os temas recebem `h.discreet` para usar frases só de categoria. O servidor não muda: a máscara é só de exibição, por cima da redação da seção 10;
+  - a legenda mostra as frases no modo atual.
+- **Topo:** abaixo de 640 px, as ações do topo quebram linha. O botão de alternância apertado tem um traço de 2 px, além do fundo, para não depender só da cor.
+- **Limite conhecido da lista nativa do seletor:** se ela fechar sem escolha por um clique que não chega à página, as opções só são refeitas quando o seletor perde o foco ou recebe Tab, Enter ou Esc. É um efeito da pausa de redesenho com a lista aberta (regra "o clique não se perde"), aceito.
 - **Sessões** (T13, registrado em 21/10/2026):
   - **textos de controle são neutros nos dois temas:** selo de conexão, status no seletor, "Seguir atividade" e "Ir para a sessão". O vocabulário do tema fica para o conteúdo (papéis, salas, eventos, ticket), para o nome do grupo sem projeto (`unknownProject`) e para a palavra e o ícone do aviso de aprovação;
   - o atalho do aviso de aprovação em outra sessão fixa essa sessão, como escolher no seletor;

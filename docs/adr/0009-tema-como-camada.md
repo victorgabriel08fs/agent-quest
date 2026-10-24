@@ -74,7 +74,7 @@ Decisão:
 
   | Variável | Escritório | Guilda |
   |---|---|---|
-  | `--muted` | `#636c81` (era `#667085`) | sem mudança (`#ab9a7e`) |
+  | `--muted` | `#5f687c` (era `#667085`; `#636c81` até o T14, ajustado em 24/10/2026 para a sala em alarme chegar a 4,82:1) | sem mudança (`#ab9a7e`) |
   | `--warn-text` | `#9f5e08` | igual a `--warn` |
   | `--bad-text` | `#d61e24` | igual a `--bad` |
   | `--good-text` | `#0e7c3e` | igual a `--good` |
@@ -93,3 +93,11 @@ Decisão:
 
 - **`ThemeWords` ganha `unknownProject`**, o nome do grupo de sessões sem projeto conhecido. A paridade de chaves entre os temas continua valendo. `shared/contract.js` não muda.
 - **Textos de controle são neutros nos dois temas:** selo de conexão, status no seletor de sessões, "Seguir atividade" e "Ir para a sessão". O tema traduz o conteúdo (papéis, salas, eventos, ticket, aviso de aprovação), não os comandos da interface. Assim, quem troca de tema não precisa reaprender os controles.
+
+## Complemento de 24/10/2026: acréscimos do T14
+
+- **`ThemeHelpers.discreet`:** indica o modo discreto, e com ele os temas usam frases só de categoria ("Rodando um comando", "Editando um arquivo").
+- **`ThemeWords.untitled`:** texto para pedido sem título. É o "pedido sem título" da seção 9 do modelo de eventos, para `quest.title` igual a `''`.
+- **`ThemeWords.hiddenTitle`:** texto que substitui títulos e rótulos no modo discreto.
+- A paridade de chaves entre os temas continua valendo, e `shared/contract.js` não muda.
+- **`--muted` do Escritório** passa a `#5f687c`, no mesmo matiz, para o rótulo da sala em alarme chegar a 4,82:1, acima da folga mínima de 4,6:1 pedida no complemento do T12b.

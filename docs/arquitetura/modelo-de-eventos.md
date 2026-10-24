@@ -761,6 +761,8 @@ O `sanitize.mjs` segue o mesmo princípio ao juntar o texto cortado com o marcad
   - pelo menos um positivo por regra acima, incluindo cada exemplo desta seção, um caractere invisível de cada faixa no meio de uma chave conhecida e um valor JSON com aspas escapadas;
   - negativos: os "não sensíveis" acima, um SHA de commit e um `tool_use_id`.
 
+**Modo discreto** (painel, T14): por cima da redação, para tela compartilhada, o painel esconde alvo, detalhe, títulos, erros, rótulos de sessão e de instância e a pasta do projeto, mostrando só a categoria da ação (visão geral, "Modo discreto"). Ele não muda o que o servidor guarda nem envia.
+
 Alternativa descartada: detectar segredo por entropia. Esconderia SHAs de commit, ids e hashes, que são úteis no painel, e mesmo assim não garantiria cobertura. A redação continua heurística: formatos desconhecidos podem passar, e o modo discreto cobre a tela compartilhada (ADR 0006).
 
 Teste obrigatório: nenhum fato contém as chaves `content`, `old_string`, `new_string`, `stdout`, `stderr`, `tool_input`, `tool_response`, `last_assistant_message`, nem string acima de 200 caracteres (contados com `charLength`). As únicas exceções são os caminhos guardados da seção 2 (`projectDir`, `transcriptPath` e `agentTranscriptPath`, até 1024).
