@@ -88,3 +88,8 @@ Decisão:
 - **Ícones de efeito ficam no CSS do tema**, e não no módulo JS: `--fx-message` (envelope ou pergaminho), `--fx-bug` e `--fx-burst-*` (confete), em `web/css/themes.css`. São visual, como as cores, e assim o contrato dos temas não muda.
 - **`--on-warn`:** cor do texto sobre a cor de aviso. No Escritório é `#241400`, que dá 6,8:1; o branco do mockup dava cerca de 2,6:1. Vale nos dois temas, e o teste de contraste do complemento de 18/10/2026 passa a incluir esse par.
 - **Para a revisão do T14:** o rótulo da sala em alarme no Escritório tem 4,53:1, perto do limite de 4,5:1. Entra no teste de contraste, com folga mínima de 4,6:1.
+
+## Complemento de 21/10/2026: acréscimos do T13 e textos neutros
+
+- **`ThemeWords` ganha `unknownProject`**, o nome do grupo de sessões sem projeto conhecido. A paridade de chaves entre os temas continua valendo. `shared/contract.js` não muda.
+- **Textos de controle são neutros nos dois temas:** selo de conexão, status no seletor de sessões, "Seguir atividade" e "Ir para a sessão". O tema traduz o conteúdo (papéis, salas, eventos, ticket, aviso de aprovação), não os comandos da interface. Assim, quem troca de tema não precisa reaprender os controles.

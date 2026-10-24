@@ -235,6 +235,14 @@ O servidor serve só `web/` e `shared/`. O mockup continua como referência e n�
   - por instância, pelo cartão da equipe. Enquanto o filtro de instância está ligado, aparece também um chip dessa instância, que se desfaz com o próprio chip ou com "Todos" (acréscimo previsto no T14);
   - o filtro volta para "Todos" ao trocar de sessão e quando o botão que o ligou some (a instância foi para o "+N" ou o papel saiu da equipe);
   - o filtro de uma instância mostra os eventos dela. A delegação que a criou aparece no filtro de quem delegou, porque o estado do agente não guarda o id da chamada que o criou. Guardar esse id seria mudança de contrato (`AgentState` ou `agent.started`), fora da v1.
+- **Sessões** (T13, registrado em 21/10/2026):
+  - **textos de controle são neutros nos dois temas:** selo de conexão, status no seletor, "Seguir atividade" e "Ir para a sessão". O vocabulário do tema fica para o conteúdo (papéis, salas, eventos, ticket), para o nome do grupo sem projeto (`unknownProject`) e para a palavra e o ícone do aviso de aprovação;
+  - o atalho do aviso de aprovação em outra sessão fixa essa sessão, como escolher no seletor;
+  - **sessão fixada que some:** "seguir atividade" continua desligado, e o painel mostra a sessão atual, ou a mais recente, até a fixada reaparecer. O seguir não religa sozinho, porque ao recarregar a página a fixada só aparece depois do snapshot;
+  - com o seguir ligado e o painel aberto antes de haver sessões, o painel fica na primeira que aparece até ela passar 30 s sem eventos;
+  - **dois critérios de "parada", aceitos:** a política de seguir usa 30 s sem eventos, para reagir rápido; o status do seletor usa o `idle` do servidor (2 min). Os dois podem divergir por até 90 s. Por isso, a interface não chama de "parada" a condição da política;
+  - visual fora do mockup, que não tem seletor de sessões: o botão e o aviso reaproveitam os estilos de pílula e de alerta. Abaixo de 640 px, o botão mostra só o ícone, com o texto ainda acessível a leitores de tela;
+  - a escolha fica no `localStorage` (`agent-quest-session`), como conveniência do navegador, igual às outras preferências do painel (ADR 0005). Guarda só o id da sessão.
 - **Cena** (T12b, 20/10/2026):
   - `#scene-stage` é redesenhado; `#scene-fx`, a camada de efeitos (envelope, impacto, confete), não é redesenhado e tem `aria-hidden`;
   - o movimento usa FLIP com `element.animate()` nas propriedades individuais `translate` e `scale`, que se somam ao `transform` das vagas, nunca `style=`;
