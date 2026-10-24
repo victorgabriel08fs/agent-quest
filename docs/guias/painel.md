@@ -2,9 +2,9 @@
 
 O painel é a página do Agent Quest no navegador. Ele mostra, ao vivo, o que cada agente de uma sessão do Claude Code está fazendo: quem está na equipe, o pedido em andamento, onde cada agente está na cena e o que acabou de acontecer. Tudo roda na sua máquina, sem nada carregado da internet.
 
-Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, e o que ainda não está ligado.
+Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, como compartilhar a tela com o modo discreto e o que ainda falta.
 
-> **Situação nesta fase.** Com a captura ligada, o painel mostra as sessões reais ao vivo: ticket e etapas, equipe, aprovações pendentes, testes e bugs, a cena animada e a atividade com filtros acompanham cada evento do Claude Code. Ainda faltam o seletor agrupado por projeto e o modo discreto (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). As regras de ticket, aprovação e testes seguem o design e ainda vão ser conferidas com os eventos reais da sessão de teste do T0. Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
+> **Situação nesta fase.** O painel da v1 está completo: com a captura ligada, ticket e etapas, equipe, aprovações, testes e bugs, a cena animada, a atividade com filtros e as várias sessões acompanham cada evento do Claude Code. Falta só a barra de contexto, opcional. As regras de ticket, aprovação e testes seguem o design e ainda vão ser conferidas com os eventos reais da sessão de teste do T0 (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
 
 ## Resumo rápido
 
@@ -12,7 +12,9 @@ Este guia explica como abrir o painel, o que cada área mostra com os dados ao v
 |---|---|
 | Abrir o painel | `npm start` e abrir o endereço impresso, `http://127.0.0.1:47821/` |
 | Trocar de tema | botões no topo, teclas `1` (Escritório), `2` (Guilda) ou `T` (alterna), ou `#escritorio` e `#guilda` no fim do endereço |
-| Escolher a sessão | seletor no topo, ao lado do nome do Agent Quest |
+| Escolher a sessão | seletor no topo; o botão "⟳ Seguir atividade" ao lado troca sozinho para a sessão com atividade |
+| Compartilhar a tela | modo discreto: botão 🕶️ ou tecla `D` (o nome do projeto continua visível) |
+| Entender o que cada coisa significa | legenda: botão "?" ou tecla `?` |
 | Ver uma mudança no código do painel | F5 no navegador |
 
 ## Abrir o painel
@@ -26,19 +28,19 @@ Este guia explica como abrir o painel, o que cada área mostra com os dados ao v
 
 ## O que aparece ao vivo
 
-- **Seletor de sessão:** as sessões do Claude Code que o servidor conhece, de todos os projetos, porque a captura vale para todos. Cada sessão aparece com o primeiro evento dela, mesmo que o servidor tenha sido iniciado no meio da sessão.
+- **Seletor de sessão:** as sessões do Claude Code que o servidor conhece, de todos os projetos, agrupadas por projeto, com status e aprovações pendentes. Cada sessão aparece com o primeiro evento dela, mesmo que o servidor tenha sido iniciado no meio da sessão. Por padrão, o painel segue a sessão com atividade, e um aviso no topo mostra quando outra sessão espera a sua aprovação.
 - **Ticket:** cada pedido seu vira um ticket, com título, situação, duração, ações e as etapas do time.
 - **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", e a barra de saúde.
 - **Cena:** um token por agente na sala do seu papel, com o balão da ação atual. Os agentes caminham até a copa quando terminam, a delegação voa como um envelope, as falhas dão um tranco, e os bugs abertos pelos testes aparecem na sala de testes.
 - **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto. Dá para filtrar por papel ou por agente.
-- **Topo:** a duração da sessão, os bugs esmagados, os tickets entregues, as aprovações pendentes e o selo de conexão.
+- **Topo:** a duração da sessão, os bugs esmagados, os tickets entregues, as aprovações pendentes, o selo de conexão, o modo discreto, a legenda e a alternância de tema.
 - Os dois temas, com alternância a qualquer momento, sem reabrir a conexão.
 
 Nos testes, um evento leva menos de meio segundo da captura até a conexão ao vivo do painel.
 
 ## O que tem na tela
 
-No topo ficam o seletor de sessão, os indicadores da sessão, o selo de conexão e a alternância de tema. Abaixo, em telas a partir de 1280 px de largura, três colunas:
+No topo ficam o seletor de sessão com o botão "Seguir atividade", o aviso de aprovação em outra sessão (quando há), os indicadores da sessão, o selo de conexão, os botões do modo discreto (🕶️) e da legenda (?) e a alternância de tema. Abaixo, em telas a partir de 1280 px de largura, três colunas:
 
 | Esquerda | Centro | Direita |
 |---|---|---|
@@ -60,7 +62,7 @@ Aparecem quando há uma sessão escolhida. Os valores vêm do servidor ([ADR 000
 | Entregas | tickets entregues | quests concluídas | Pedidos encerrados com sucesso na sessão |
 | Aprovações | aprovações pendentes | pedidos de permissão | Pedidos de aprovação esperando por você; o indicador pisca quando há algum |
 
-Todos vêm da sessão real. O de bugs é uma aproximação: ele conta as falhas de um run de testes que o run seguinte, aprovado, zerou (veja [Testes e bugs](#testes-e-bugs)).
+Todos vêm da sessão real. O de bugs é uma aproximação: ele conta as falhas de um run de testes que o run seguinte, aprovado, zerou (veja [Testes e bugs](#testes-e-bugs)). A [legenda](#legenda) explica a fonte de cada um.
 
 ### Equipe
 
@@ -158,7 +160,7 @@ A cena é animada, como no mockup:
 - os bugs novos surgem na sala de testes, e os esmagados somem com uma animação de derrota;
 - o cartão final aparece quando um ticket é entregue.
 
-Com a opção de reduzir movimento do sistema ligada, nada é animado: os tokens aparecem direto no lugar novo, e o cartão final aparece sem animação. Trocar de tema com o cartão final na tela faz o cartão sumir; isso muda no T14.
+Com a opção de reduzir movimento do sistema ligada, nada é animado: os tokens aparecem direto no lugar novo, e o cartão final aparece sem animação. Trocar de tema com o cartão final na tela redesenha o cartão no tema novo, pelo tempo que falta.
 
 ### Atividade
 
@@ -182,10 +184,11 @@ Acima da lista ficam os chips "Todos" e um por papel da equipe, com o retrato do
 
 - O filtro só esconde linhas; o cabeçalho passa a mostrar "N de M eventos".
 - No filtro por papel, uma delegação aparece para quem delegou e para o papel chamado, e uma etapa concluída, para o papel dono dela. As linhas de sessão e de ticket só aparecem em "Todos".
+- No filtro por instância, aparece também um chip marcado com o nome dela (a descrição da delegação ou, sem ela, o tipo do agente). Clicar nele ou em "Todos" desfaz o filtro.
 - No filtro por instância, a delegação que criou a instância fica de fora: ela é de quem delegou.
 - O filtro volta para "Todos" quando você troca de sessão ou quando o papel ou a instância somem do cartão da equipe.
 
-Comandos, caminhos e títulos aparecem como chegam do servidor, que corta e redige o que pode ser segredo antes de enviar ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)). Mesmo assim, cuidado ao compartilhar a tela: o modo discreto, que esconde esses textos, chega numa próxima entrega.
+Comandos, caminhos e títulos aparecem como chegam do servidor, que corta e redige o que pode ser segredo antes de enviar ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)). Mesmo assim, antes de compartilhar a tela, ligue o [modo discreto](#modo-discreto).
 
 ## Temas
 
@@ -198,6 +201,50 @@ Para trocar:
 - **Endereço:** `http://127.0.0.1:47821/#escritorio` ou `http://127.0.0.1:47821/#guilda`. O endereço já abre no tema pedido, o que é útil para favoritos.
 
 O navegador guarda a última escolha e a usa na próxima vez. O tema do endereço tem prioridade sobre o guardado. O título da aba mostra o tema atual, como "Agent Quest · Guilda". Com a opção de reduzir movimento do sistema ligada, a troca é imediata, sem transição.
+
+Os controles do painel (o selo de conexão, os status do seletor, "Seguir atividade" e "Ir para a sessão") usam os mesmos textos nos dois temas. O vocabulário do tema fica para o conteúdo: papéis, salas, eventos e ticket.
+
+## Modo discreto
+
+Para compartilhar a tela (numa chamada, numa gravação ou num print), ligue o modo discreto pelo botão 🕶️ no topo ou pela tecla `D`. Ele começa desligado, e o navegador guarda a escolha.
+
+> **Atenção: o nome do projeto continua visível** no seletor e nos grupos dele, no aviso de aprovação e na linha de sessão iniciada da atividade, porque sem ele não dá para se orientar entre as sessões. Se o nome do projeto já diz demais, não compartilhe a tela com o painel aberto.
+
+O que o modo discreto esconde, só na tela:
+
+- comandos, caminhos, padrões de busca, endereços e nomes de skill ou de servidor MCP, na equipe, na cena, na atividade e nos pedidos de aprovação;
+- o título do ticket e o rótulo da sessão, que vem dele (a sessão aparece como "Sessão" e os 6 primeiros caracteres do id);
+- a descrição das delegações e o rótulo das instâncias, que vem dela;
+- os erros do ticket e das ferramentas;
+- a pasta do projeto, que o seletor mostra ao passar o mouse. Projetos com o mesmo nome aparecem como "(1)" e "(2)", em vez de com a pasta.
+
+No lugar, entram frases só de categoria, como "Rodando um comando" ou "Editando um arquivo". Continuam visíveis os papéis, os tipos de agente, os nomes de ferramenta, as categorias, as contagens, os horários, os status e o motivo do fim da sessão.
+
+O modo discreto muda só o que o painel mostra: o servidor continua com os mesmos dados, e o `/api/state` continua trazendo os textos redigidos. A legenda mostra as frases no modo em que você está.
+
+## Legenda
+
+O botão "?" no topo, ou a tecla `?`, abre "Como ler o painel". Ela é gerada pelos próprios temas, então acompanha o tema escolhido:
+
+- **Eventos:** cada evento real do Claude Code e a frase que o tema mostra para ele;
+- **Lugares e estados:** as salas da cena e a linha de ação de cada estado;
+- **De onde vem cada dado:** a fonte de cada indicador e se ele é real, aproximado (≈) ou derivado ([ADR 0008](../adr/0008-fontes-dos-indicadores.md));
+- **Modo discreto e atalhos.**
+
+Feche com Esc, com o ✕ ou clicando fora da caixa.
+
+## Atalhos de teclado
+
+| Tecla | O que faz |
+|---|---|
+| `1` | Tema Escritório |
+| `2` | Tema Guilda |
+| `T` | Alterna o tema |
+| `D` | Liga ou desliga o modo discreto |
+| `?` | Abre a legenda |
+| Esc | Fecha a legenda |
+
+Os atalhos não valem com Ctrl, Alt ou Cmd apertado, com o foco no seletor de sessão nem com a legenda aberta (aí só o Esc vale). O rodapé da página lembra os atalhos. Os botões só com ícone (🕶️, ?, ✕) têm nome para leitores de tela.
 
 ## Selo de conexão
 
@@ -216,16 +263,29 @@ Quando o servidor é reiniciado, o selo volta para "ao vivo" e o painel recebe o
 
 ## Seletor de sessão
 
-O painel mostra uma sessão por vez. O seletor no topo lista as sessões que o servidor conhece, da que teve evento mais recente para a mais antiga. Cada opção traz o nome da sessão e o do projeto, como "Sessão 5f1c0a · meu-app", e "encerrada" quando a sessão terminou. Passe o mouse sobre o seletor para ver a pasta do projeto.
+O painel mostra uma sessão por vez. O seletor no topo lista as sessões que o servidor conhece, agrupadas por projeto. Passe o mouse sobre o seletor para ver a pasta do projeto da sessão mostrada.
 
-- O nome da sessão é o título dela no Claude Code; sem ele, o título do primeiro ticket da sessão, com até 48 caracteres; antes do primeiro pedido, "Sessão" com os 6 primeiros caracteres do id. Sem projeto conhecido, a opção traz só o nome da sessão.
+- **Grupos:** um por projeto, na ordem da sessão mais recente de cada um; dentro do grupo, da sessão mais recente para a mais antiga. As sessões sem projeto conhecido ficam juntas, num grupo com o nome do tema ("Projeto desconhecido" no Escritório, "Terras desconhecidas" na Guilda). Dois projetos com o mesmo nome em pastas diferentes mostram a pasta junto do nome.
+- **Cada opção** traz o nome da sessão, o projeto, o status (ativa, aguardando aprovação, parada ou encerrada) e as aprovações pendentes, como "Corrigir o cálculo do frete · meu-app · ativa" ou "Sessão 5f1c0a · meu-app · 1 aprovação pendente".
+- **O nome da sessão** é o título dela no Claude Code; sem ele, o título do primeiro ticket da sessão, com até 48 caracteres; antes do primeiro pedido, "Sessão" com os 6 primeiros caracteres do id.
 - Aparecem as sessões de todos os projetos, porque a captura vale para todos. Os subagentes ficam dentro da sessão de quem os chamou.
-- Ao abrir, o painel mostra a sessão mais recente.
-- A sessão que você escolher continua escolhida enquanto existir. Se ela sumir, o painel volta para a mais recente. O servidor tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas.
-- A escolha não é guardada entre recarregamentos da página.
+- O servidor tira da memória as sessões encerradas há 30 minutos e as sem eventos há 6 horas.
 - Sem sessões, o seletor fica escondido.
 
-O agrupamento por projeto, a opção de seguir a sessão com atividade e o aviso de aprovação pendente em outra sessão chegam com o T13, em andamento.
+### Seguir atividade
+
+O botão "⟳ Seguir atividade", ao lado do seletor, vem ligado. Com ele ligado, o painel troca sozinho para outra sessão quando a mostrada passa 30 segundos sem eventos e outra está ativa, com eventos mais recentes. Entre várias, vai para a de evento mais recente. Troca no máximo uma vez a cada 10 segundos, e nunca sai de uma sessão que está esperando a sua aprovação.
+
+- **Escolher uma sessão no seletor** fixa a escolha e desliga o seguir. Apertar o botão com o seguir ligado também fixa a sessão que está na tela.
+- **Para voltar a seguir,** aperte o botão de novo.
+- **Sessão fixada que sumiu** (o servidor a limpou ou foi reiniciado): o seletor avisa "Sessão fixada indisponível" e diz qual sessão está na tela, e o seguir continua desligado. Quando a fixada reaparece, o painel volta para ela. Escolher a sessão que já aparece passa a fixá-la.
+- **A escolha fica guardada no navegador** (seguir, ou o id da sessão fixada) e vale ao recarregar a página.
+
+Os 30 segundos do seguir são um critério só do painel. O status "parada" do seletor vem do servidor, depois de 2 minutos sem eventos, então os dois podem não bater por alguns instantes.
+
+### Aviso de aprovação em outra sessão
+
+Quando outra sessão, que não a mostrada, espera a sua aprovação, aparece um aviso no topo com a contagem e a sessão, por exemplo "1 aprovação pendente em Sessão 5f1c0a · meu-app" (com a palavra do tema), e o botão "Ir para a sessão". O botão mostra e fixa essa sessão, como escolher no seletor. Com mais de uma sessão esperando, o aviso diz quantas outras há. Leitores de tela anunciam o aviso.
 
 ## Sem sessões
 
@@ -252,11 +312,9 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 
 | O que | Quando chega |
 |---|---|
-| Seletor agrupado por projeto, com status e aprovações pendentes de cada sessão; "seguir atividade"; aviso de aprovação pendente em outra sessão; escolha guardada | T13 (em andamento) |
-| Modo discreto (esconde comandos, caminhos e títulos), a legenda com a fonte de cada indicador, o chip da instância filtrada e o cartão final que sobrevive à troca de tema | T14 |
-| Barra de contexto (Foco ou Mana), opcional | T15 e T16 |
+| Barra de contexto (Foco ou Mana), com o uso aproximado do contexto de cada agente; opcional e pode ficar fora da v1 | T15 e T16 |
 
-As regras de ticket, aprovação, testes e compactação seguem o design e foram testadas com cenários sintéticos. Elas ainda vão ser conferidas com os eventos reais da sessão de teste do T0, e podem mudar em detalhes depois dela.
+Fora isso, o que falta é conferência. As regras de ticket, aprovação, testes e compactação seguem o design e foram testadas com cenários sintéticos. Elas ainda vão ser conferidas com os eventos reais da sessão de teste do T0, e podem mudar em detalhes depois dela.
 
 ## Testes de ponta a ponta (para quem desenvolve)
 
@@ -276,7 +334,7 @@ npm run test:e2e
 
 - **Nenhum navegador é baixado.** O `npm install` instala só o pacote do Playwright, e os testes usam o Edge instalado (`channel: 'msedge'`), sem abrir janela. Não rode `npx playwright install`: o projeto não precisa dos navegadores do Playwright.
 - **Não mexe no seu servidor.** Os testes sobem um servidor próprio, numa porta livre e com um diretório de dados temporário, nunca na porta 47821 nem em `%LOCALAPPDATA%\agent-quest\`. Dá para rodar com o seu servidor ligado. A pasta temporária é apagada no fim.
-- **O que é conferido:** o painel abre sem violar a política de segurança de conteúdo, sem erro de script e sem nenhuma requisição para fora; a troca de tema por botões, teclas, endereço e memória do navegador; o layout em 360, 820 e 1280 px; a posição dos tokens na cena; os filtros da atividade; e as animações, inclusive que nenhuma é criada com movimento reduzido. Os testes com sessões usam os estados de exemplo de `test/fixtures/state/` e cenários sintéticos injetados num servidor de teste.
+- **O que é conferido:** o painel abre sem violar a política de segurança de conteúdo, sem erro de script e sem nenhuma requisição para fora; a troca de tema por botões, teclas, endereço e memória do navegador; o layout em 360, 820 e 1280 px; a posição dos tokens na cena; os filtros da atividade; as animações, inclusive que nenhuma é criada com movimento reduzido; o seletor com várias sessões e o seguir atividade; o modo discreto; e textos com código malicioso, que aparecem escapados nos dois temas. Os testes com sessões usam os estados de exemplo de `test/fixtures/state/` e cenários sintéticos injetados num servidor de teste.
 - **Ver o painel com dados sem a captura:** com o servidor no ar, o `npm run inject` envia um cenário de eventos pelo mesmo caminho da captura ([Injetar um cenário](servidor.md#injetar-um-cenário-npm-run-inject)).
 - **Quando um teste falha,** o Playwright guarda o rastro em `test-results/`, que não vai para o repositório.
 - O `npm test` não roda estes testes: ele cobre os de unidade e de integração, e não precisa de `npm install`.

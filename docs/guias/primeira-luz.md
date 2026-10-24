@@ -127,7 +127,7 @@ Na primeira vez que o Claude Code abre numa pasta, ele pergunta se você confia 
 Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft Edge).
 
 - A sessão aparece no painel na primeira ação do Claude Code depois do `/reload-plugins`, mesmo sem ter passado pelo início da sessão.
-- O seletor no topo lista as sessões que o servidor conhece, da mais recente para a mais antiga, com o nome da sessão e o do projeto. Escolha a que você quer acompanhar, se ela não vier escolhida.
+- O seletor no topo lista as sessões que o servidor conhece, agrupadas por projeto, com o nome da sessão, o status e as aprovações pendentes. Por padrão, o painel segue a sessão com atividade. Para ficar na sessão deste repositório, escolha-a no seletor: isso a fixa e desliga o seguir ([Seguir atividade](painel.md#seguir-atividade)).
 - As sessões de outros projetos também aparecem, porque a captura vale para todos. Cada uma fica separada, com a própria equipe e a própria atividade.
 - Para conferir pelo terminal, o `sessions` do `/api/health` conta as sessões em memória.
 
@@ -139,19 +139,20 @@ Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft E
 - **Cena:** um token por agente na sala do seu papel, com a ida à copa, o envelope da delegação, o tranco das falhas, o selo "!" de aprovação e os bugs abertos pelos testes na sala de testes.
 - **Topo:** duração, bugs esmagados, tickets entregues e aprovações pendentes.
 - **Temas:** Escritório e Guilda, com as teclas `1`, `2` e `T` ou os botões do topo. Trocar de tema no meio da atividade muda o vocabulário e o visual, sem reabrir a conexão com o servidor.
+- **Várias sessões:** o seletor agrupa as sessões por projeto, o botão "Seguir atividade" troca sozinho para a sessão com atividade, e um aviso no topo mostra quando outra sessão espera a sua aprovação.
+- **Modo discreto e legenda:** antes de compartilhar a tela, aperte `D` (ou o botão 🕶️) para esconder comandos, caminhos e títulos. **O nome do projeto continua visível.** A tecla `?` abre a legenda.
 
 O guia [O painel](painel.md) explica cada área em detalhe. As regras de ticket, aprovação e testes ainda vão ser conferidas com os eventos reais da sessão de teste do T0.
 
 ### O que o painel ainda não mostra
 
-Chegam enquanto o resto da v1 é construído:
+Do painel da v1, falta só a barra de contexto, opcional:
 
 | O que | Quando chega |
 |---|---|
-| Seletor agrupado por projeto, "seguir atividade" entre sessões e aviso de aprovação pendente em outra sessão | T13 (em andamento) |
-| Modo discreto, que esconde comandos, caminhos e títulos para compartilhar a tela, e a legenda de cada indicador | T14 |
+| Barra de contexto, com o uso aproximado do contexto de cada agente; opcional e pode ficar fora da v1 | T15 e T16 |
 
-A lista completa está em [O que ainda não está ligado](painel.md#o-que-ainda-não-está-ligado).
+Os detalhes estão em [O que ainda não está ligado](painel.md#o-que-ainda-não-está-ligado).
 
 ## Pausar, retomar e remover a captura
 
