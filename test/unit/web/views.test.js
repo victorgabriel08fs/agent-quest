@@ -368,3 +368,27 @@ describe('painel sem sessões', () => {
     assert.ok(html.includes('Nenhum evento recebido desde 14:02'));
   });
 });
+
+describe('título do ticket (T14)', () => {
+  for (const theme of THEMES) {
+    const base = loadSession('ticket-completo');
+    const now = base.lastEventAt + 5_000;
+
+    it(`${theme.id}: pedido que não é texto mostra o "pedido sem título" do tema`, () => {
+      for (const title of ['', '   ', null]) {
+        const html = renderQuest({ session: { ...base, quest: { ...base.quest, title } }, theme, now });
+        assert.ok(html.includes(`<h1 class="q-title is-placeholder">${esc(theme.words.untitled)}</h1>`), String(title));
+      }
+      assert.ok(renderQuest({ session: base, theme, now }).includes(`<h1 class="q-title">${esc(base.quest.title)}</h1>`));
+    });
+
+    it(`${theme.id}: modo discreto mostra o título oculto do tema e só a indicação do erro`, () => {
+      const session = { ...base, quest: { ...base.quest, status: 'failed', error: 'ENOENT C:\\Users\\fulano\\x' } };
+      const html = renderQuest({ session, theme, now, discreet: true });
+      assert.ok(html.includes(`<h1 class="q-title is-placeholder">${esc(theme.words.hiddenTitle)}</h1>`));
+      assert.ok(html.includes('com erro (oculto no modo discreto)'));
+      assert.ok(!html.includes('fulano') && !html.includes(esc(base.quest.title)));
+      assert.ok(renderQuest({ session, theme, now }).includes('fulano'), 'sem o modo, o erro aparece');
+    });
+  }
+});

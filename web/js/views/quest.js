@@ -2,7 +2,12 @@
 // Cartão do ticket: número, título, status, duração, ações e o stepper das
 // etapas (só quando alguma etapa sai de 'pending'). Com `quest: null`, mostra o
 // estado vazio do tema (regra 6 do recorte). Devolve HTML escapado.
+//
+// T14: pedido que não é texto (título vazio) mostra `words.untitled` do tema
+// (modelo de eventos, seção 9). No modo discreto, o título vira
+// `words.hiddenTitle` e o erro do ticket não aparece, só a indicação de erro.
 
+import { maskSession } from '../discreet.js';
 import { PHASE_TITLES, questView } from '../selectors.js';
 import { esc, formatDuration, plural } from '../themes/helpers.js';
 
@@ -15,12 +20,12 @@ const PHASE_STATE_TEXT = Object.freeze({ pending: 'pendente', active: 'em andame
 
 /**
  * O cartão inteiro (`<div class="card quest">`).
- * @param {{ session: SessionState, theme: Theme, now: number }} params
+ * @param {{ session: SessionState, theme: Theme, now: number, discreet?: boolean }} params
  * @returns {string}
  */
-export function renderQuest({ session, theme, now }) {
+export function renderQuest({ session, theme, now, discreet = false }) {
   const words = theme.words;
-  const view = questView(session, now);
+  const view = questView(discreet ? maskSession(session) : session, now);
   if (!view) {
     return `<div class="card quest is-empty"><div class="q-info">` +
       `<div class="q-kicker">${esc(words.quest)}</div>` +
@@ -35,7 +40,8 @@ export function renderQuest({ session, theme, now }) {
     `<span>${view.actions} ${plural(view.actions, 'ação', 'ações')}</span>`,
   ];
   if (view.showStepper) meta.push(`<span>${view.phasesDone} de ${view.phases.length} etapas</span>`);
-  if (view.error) meta.push(`<span class="q-error">erro: <code>${esc(view.error)}</code></span>`);
+  if (discreet && view.error !== null) meta.push('<span class="q-error">com erro (oculto no modo discreto)</span>');
+  else if (!discreet && view.error) meta.push(`<span class="q-error">erro: <code>${esc(view.error)}</code></span>`);
 
   const stepper = view.showStepper
     ? `<ol class="stepper" aria-label="Etapas">${view.phases.map((phase, index) => stepHTML(phase, index, theme)).join('')}</ol>`
@@ -43,9 +49,24 @@ export function renderQuest({ session, theme, now }) {
 
   return `<div class="card quest" data-status="${esc(view.status)}"><div class="q-info">` +
     `<div class="q-kicker">${esc(`${words.quest} #${view.n}`)} · ${esc(status)}</div>` +
-    `<h1 class="q-title">${esc(view.title)}</h1>` +
+    titleHTML(view.title, words, discreet) +
     `<div class="q-meta">${meta.join(' · ')}</div>` +
     `</div>${stepper}</div>`;
+}
+
+/**
+ * Título do ticket: o do pedido; sem texto, o "pedido sem título" do tema; no
+ * modo discreto, o título oculto do tema.
+ * @param {string} title
+ * @param {Theme['words']} words
+ * @param {boolean} discreet
+ * @returns {string}
+ */
+function titleHTML(title, words, discreet) {
+  const text = typeof title === 'string' ? title : '';
+  if (discreet) return `<h1 class="q-title is-placeholder">${esc(words.hiddenTitle)}</h1>`;
+  if (text.trim() === '') return `<h1 class="q-title is-placeholder">${esc(words.untitled)}</h1>`;
+  return `<h1 class="q-title">${esc(text)}</h1>`;
 }
 
 /**

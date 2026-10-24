@@ -9,7 +9,11 @@
 // instância. Clicar de novo no mesmo desfaz o filtro (o main.js liga os
 // cliques; o clique no resto do bloco vale como clique no papel). O botão
 // apertado tem aria-pressed="true", e o bloco ou a linha ganham `is-filter`.
+//
+// Modo discreto (T14): a sessão chega sem os rótulos das instâncias (descrição
+// da delegação), e a linha de ação usa as frases só de categoria do tema.
 
+import { maskSession } from '../discreet.js';
 import { ROLE_TITLES, healthOf, partySummary, teamView } from '../selectors.js';
 import { createHelpers, esc, plural } from '../themes/helpers.js';
 import { ALL, agentFilter, roleFilter } from './feed.js';
@@ -30,16 +34,18 @@ const STATUS_TEXT = Object.freeze({
 
 /**
  * Conteúdo do cartão da equipe (cabeçalho, lista e legenda da barra).
- * @param {{ session: SessionState|null, theme: Theme, filter?: string }} params
- *   filter: o filtro do feed em vigor (`resolveFilter`), para marcar o botão apertado
+ * @param {{ session: SessionState|null, theme: Theme, filter?: string, discreet?: boolean }} params
+ *   filter: o filtro do feed em vigor (`resolveFilter`), para marcar o botão apertado;
+ *   discreet: modo discreto (T14)
  * @returns {string}
  */
-export function renderParty({ session, theme, filter = ALL }) {
+export function renderParty({ session, theme, filter = ALL, discreet = false }) {
   const title = `<h2 id="party-title">${esc(theme.words.party)}</h2>`;
   if (!session) {
     return `<div class="card-head">${title}</div><p class="card-empty">${esc(theme.words.noAgents)}</p>`;
   }
-  const h = createHelpers(theme, session.agents ?? []);
+  if (discreet) session = maskSession(session);
+  const h = createHelpers(theme, session.agents ?? [], { discreet });
   const { active, present } = partySummary(session);
   const count = `<span class="muted" id="party-count">${active}/${present} ${plural(active, 'ativo', 'ativos')}</span>`;
   const members = teamView(session).map((group) => memberHTML(group, theme, h, filter)).join('');

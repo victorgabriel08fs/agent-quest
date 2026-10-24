@@ -17,13 +17,16 @@
   <div class="sess" id="session-info" hidden>
     <div class="sess-row">
       <select class="sess-select" id="session-select" aria-label="Sessão exibida"></select>
-      <button type="button" class="follow" id="session-follow" aria-pressed="true" title="Troca sozinho para a sessão com atividade quando a mostrada fica parada por 30 s. Escolher uma sessão no seletor fixa a escolha."><span aria-hidden="true">⟳</span><span class="l">Seguir atividade</span></button>
+      <button type="button" class="follow" id="session-follow" aria-pressed="true" title="Troca sozinho para a sessão com atividade quando a mostrada passa 30 s sem eventos. Escolher uma sessão no seletor fixa a escolha."><span aria-hidden="true">⟳</span><span class="l">Seguir atividade</span></button>
     </div>
-    <div class="sess-alert" id="session-alert" role="status"></div>
+    <div class="sess-alert" id="session-alert"></div>
+    <p class="sr-only" id="session-alert-live" role="status" aria-live="polite" aria-atomic="true"></p>
   </div>
   <div class="session" id="stats" role="group" aria-label="Resumo da sessão"></div>
   <div class="top-actions">
     <div id="conn" role="status" aria-label="Conexão"></div>
+    <button type="button" class="icon-btn discreet-btn" id="btn-discreet" aria-pressed="false" title="Modo discreto (D): esconde comandos, caminhos, títulos e erros para compartilhar a tela"><span aria-hidden="true">🕶️</span><span class="sr-only">Modo discreto</span></button>
+    <button type="button" class="icon-btn" id="btn-legend" title="Legenda (?)" aria-haspopup="dialog"><span aria-hidden="true">?</span><span class="sr-only">Abrir a legenda</span></button>
     <div class="seg" id="theme-toggle" role="group" aria-label="Tema"></div>
   </div>
 </header>
@@ -49,7 +52,12 @@
   </aside>
 </main>
 
-<p class="foot">Roda 100% local, sem internet · atalhos: <kbd>1</kbd> <kbd>2</kbd> tema, <kbd>T</kbd> alterna</p>
+<p class="foot">Roda 100% local, sem internet · atalhos: <kbd>1</kbd> <kbd>2</kbd> tema, <kbd>T</kbd> alterna, <kbd>D</kbd> modo discreto, <kbd>?</kbd> legenda</p>
+
+<dialog class="legend" id="legend" aria-labelledby="legend-title">
+  <div class="lg-head"><h2 id="legend-title">Como ler o painel</h2><button type="button" class="icon-btn" id="legend-close"><span aria-hidden="true">✕</span><span class="sr-only">Fechar a legenda</span></button></div>
+  <div class="lg-body" id="legend-body"></div>
+</dialog>
 <noscript><p class="foot">O painel precisa de JavaScript ligado no navegador.</p></noscript>
 </body>
 </html>

@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AGENT_STATUS, EVENT_KINDS, FEED_KINDS, PHASES, QUEST_STATUS, ROLES, TOOL_CATEGORIES } from '../../../shared/contract.js';
-import { ROOM_IDS, THEME_KEYS, checkTheme, resolveThemeId, themeIdForKey } from '../../../web/js/themes/contract.js';
+import { ICON_KEYS, ROOM_IDS, THEME_KEYS, WORD_KEYS, checkTheme, resolveThemeId, themeIdForKey } from '../../../web/js/themes/contract.js';
 import { createHelpers, esc } from '../../../web/js/themes/helpers.js';
 import escritorio from '../../../web/js/themes/escritorio.js';
 import guilda from '../../../web/js/themes/guilda.js';
@@ -92,8 +92,10 @@ function assertCleanText(text, context) {
 
 describe('contrato dos temas', () => {
   for (const theme of THEMES) {
-    it(`${theme.id}: segue o contrato (chaves, papéis, salas, etapas e barras)`, () => {
-      assert.deepEqual(checkTheme(theme, { roles: ROLES, phases: PHASES }), []);
+    it(`${theme.id}: segue o contrato (chaves, papéis, salas, etapas, barras, palavras e ícones)`, () => {
+      assert.deepEqual(checkTheme(theme, { roles: ROLES, phases: PHASES, questStatus: QUEST_STATUS }), []);
+      assert.deepEqual(Object.keys(theme.words).filter((key) => key !== 'questStatus').sort(), [...WORD_KEYS].sort());
+      assert.deepEqual(Object.keys(theme.icons).sort(), [...ICON_KEYS].sort());
       assert.deepEqual(Object.keys(theme).sort(), [...THEME_KEYS].sort());
       assert.deepEqual(Object.keys(theme.roles).sort(), [...ROLES].sort());
       assert.deepEqual(Object.keys(theme.rooms).sort(), [...ROOM_IDS].sort());
@@ -118,6 +120,10 @@ describe('contrato dos temas', () => {
     assert.ok(problems.some((p) => p.includes('roles.aux')));
     assert.ok(problems.some((p) => p.includes('"feedLine" não é função')));
     assert.deepEqual(checkTheme(null, { roles: ROLES, phases: PHASES }), ['o tema não é um objeto']);
+    // T14: palavras, status de ticket e ícones também são conferidos.
+    const words = { ...escritorio, words: { ...escritorio.words, hiddenTitle: ' ', questStatus: { ...escritorio.words.questStatus, done: '' } }, icons: { ...escritorio.icons, phaseDone: undefined } };
+    const more = checkTheme(words, { roles: ROLES, phases: PHASES, questStatus: QUEST_STATUS });
+    assert.deepEqual(more, ['words.hiddenTitle ausente', 'words.questStatus.done ausente', 'icons.phaseDone ausente']);
   });
 
   it('os exemplos de dados cobrem todos os tipos de evento do contrato', () => {
@@ -329,4 +335,116 @@ describe('escolha do tema', () => {
     assert.equal(themeIdForKey('T', 'guilda', ids), 'escritorio');
     for (const key of ['x', ' ', 'Enter', '0', '?']) assert.equal(themeIdForKey(key, 'escritorio', ids), null);
   });
+});
+
+// ---------------------------------------------------------------------------
+// T14: modo discreto e endurecimento
+// ---------------------------------------------------------------------------
+
+/** Texto que não pode aparecer no modo discreto (alvo, detalhe, descrição, título, erro). */
+const SECRET = 'SEGREDO';
+
+describe('modo discreto nos temas (T14)', () => {
+  for (const theme of THEMES) {
+    const h = createHelpers(theme, AGENTS, { discreet: true });
+    const plain = createHelpers(theme, AGENTS);
+
+    it(`${theme.id}: os helpers dizem se o modo discreto está ligado`, () => {
+      assert.equal(h.discreet, true);
+      assert.equal(plain.discreet, false);
+    });
+
+    it(`${theme.id}: todo tipo de FEED_KINDS e toda variação geram texto não vazio, sem alvo, detalhe, título, descrição nem erro`, () => {
+      const samples = [...Object.entries(SAMPLE_DATA), ...VARIANTS];
+      for (const [kind, data] of samples) {
+        const secret = mapStrings(data, (text, key) => (['target', 'detail', 'description', 'title', 'error', 'label'].includes(key ?? '') ? `${SECRET}-${text}` : text));
+        for (const agentKey of AGENT_KEYS) {
+          const line = theme.feedLine(makeEvent(kind, secret, agentKey), h);
+          if (!(/** @type {readonly string[]} */ (FEED_KINDS)).includes(kind) || (kind === 'quest.phase' && secret.state !== 'done')) {
+            assert.equal(line, null, kind);
+            continue;
+          }
+          assert.equal(typeof line, 'string', kind);
+          assert.ok(line.replace(/<[^>]+>/g, '').trim().length > 0, `${kind}: vazio`);
+          assert.ok(!line.includes(SECRET), `${kind}/${agentKey}: ${line}`);
+          assert.doesNotMatch(line, /undefined|null|NaN|\[object/, line);
+        }
+      }
+    });
+
+    it(`${theme.id}: toda categoria de ferramenta tem frase só de categoria, diferente entre categorias, no feed, na aprovação e na linha de ação`, () => {
+      const feed = new Set();
+      const asks = new Set();
+      for (const category of TOOL_CATEGORIES) {
+        const data = { toolUseId: 't', tool: 'Ferramenta', category, target: `${SECRET}-alvo`, detail: `${SECRET}-detalhe` };
+        const line = theme.feedLine(makeEvent('tool.started', data, 'a-dev'), h);
+        assert.ok(line && !line.includes(SECRET) && !line.includes('Ferramenta'), `${category}: ${line}`);
+        feed.add(line);
+        const ask = theme.feedLine(makeEvent('permission.requested', { tool: 'Ferramenta', category, target: `${SECRET}-alvo` }, 'a-dev'), h);
+        assert.ok(ask && !ask.includes(SECRET), `${category}: ${ask}`);
+        asks.add(ask);
+        for (const role of ROLES) {
+          const agent = makeAgent({ key: role === 'orq' ? 'main' : `a-${role}`, role, status: 'working', activity: { kind: 'tool', category, tool: 'Ferramenta', target: `${SECRET}-alvo`, detail: null, state: 'running', at: 0 } });
+          const text = theme.actionText(agent, h);
+          assertCleanText(text, `${role}/${category}`);
+          assert.ok(!text.includes(SECRET) && !text.includes('Ferramenta'), `${role}/${category}: ${text}`);
+        }
+      }
+      assert.equal(feed.size, TOOL_CATEGORIES.length, 'cada categoria com a sua frase');
+      assert.equal(asks.size, TOOL_CATEGORIES.length, 'cada categoria com o seu pedido');
+    });
+
+    it(`${theme.id}: delegação sem descrição; ticket pelo número; erro sem o texto`, () => {
+      const delegating = makeAgent({ key: 'main', role: 'orq', status: 'working', activity: { kind: 'delegate', category: null, tool: 'Agent', target: `${SECRET}-t`, detail: `${SECRET}-d`, state: 'running', at: 0 } });
+      assert.ok(!theme.actionText(delegating, h).includes(SECRET));
+      assert.ok(theme.actionText(delegating, plain).includes(`${SECRET}-d`), 'sem o modo, a descrição aparece');
+      const quest = theme.feedLine(makeEvent('quest.started', { questId: 'q', n: 7, title: `${SECRET}-titulo`, implicit: false }), h);
+      assert.ok(quest?.includes('#7') && !quest.includes(SECRET), quest ?? '');
+      const failed = theme.feedLine(makeEvent('quest.finished', { questId: 'q', n: 7, outcome: 'failed', error: `${SECRET}-erro` }), h);
+      assert.ok(failed?.includes('#7') && !failed.includes(SECRET), failed ?? '');
+    });
+
+    it(`${theme.id}: palavras do ticket sem título e do título oculto`, () => {
+      assertCleanText(theme.words.untitled, 'untitled');
+      assertCleanText(theme.words.hiddenTitle, 'hiddenTitle');
+      assert.notEqual(theme.words.untitled, theme.words.hiddenTitle);
+    });
+  }
+
+  it('Escritório e Guilda dizem as mesmas coisas com palavras diferentes no modo discreto', () => {
+    const he = createHelpers(escritorio, AGENTS, { discreet: true });
+    const hg = createHelpers(guilda, AGENTS, { discreet: true });
+    for (const category of TOOL_CATEGORIES) {
+      const event = makeEvent('tool.started', { tool: 'T', category, target: 'x' }, 'a-dev');
+      assert.notEqual(escritorio.feedLine(event, he), guilda.feedLine(event, hg), category);
+    }
+  });
+});
+
+describe('XSS nos campos do critério do T14', () => {
+  // Caminho, comando, descrição, título e erro, com o mesmo vetor, nos dois temas,
+  // com e sem o modo discreto.
+  const cases = [
+    ['caminho', 'tool.started', { toolUseId: 't', tool: 'Read', category: 'read', target: `src/${XSS}.js`, detail: null }],
+    ['comando', 'tool.started', { toolUseId: 't', tool: 'Bash', category: 'bash', target: `echo ${XSS}`, detail: null }],
+    ['descrição do comando', 'tool.started', { toolUseId: 't', tool: 'Bash', category: 'bash', target: 'ls', detail: XSS }],
+    ['descrição da delegação', 'agent.delegated', { toolUseId: 't', toType: 'tester', toRole: 'tes', description: XSS, background: false }],
+    ['título', 'quest.started', { questId: 'q', n: 1, title: XSS, implicit: false }],
+    ['erro da ferramenta', 'tool.failed', { toolUseId: 't', tool: 'Bash', category: 'bash', target: 'ls', error: XSS, interrupted: false }],
+    ['erro do ticket', 'quest.finished', { questId: 'q', n: 1, outcome: 'failed', error: XSS }],
+    ['alvo da aprovação', 'permission.requested', { tool: 'Bash', category: 'bash', target: XSS }],
+  ];
+  for (const theme of THEMES) {
+    for (const discreet of [false, true]) {
+      it(`${theme.id}${discreet ? ', modo discreto' : ''}: nenhum vetor vira marcação`, () => {
+        const h = createHelpers(theme, AGENTS, { discreet });
+        for (const [field, kind, data] of cases) {
+          const line = theme.feedLine(makeEvent(kind, data, 'a-dev'), h) ?? '';
+          assert.ok(!line.includes('<img'), `${field}: ${line}`);
+          if (!discreet && field !== 'descrição do comando') assert.ok(line.includes(esc(XSS)), `${field}: aparece escapado: ${line}`);
+          if (discreet) assert.ok(!line.includes('img src'), `${field}: some no modo discreto: ${line}`);
+        }
+      });
+    }
+  }
 });

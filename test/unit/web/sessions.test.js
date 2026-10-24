@@ -9,8 +9,10 @@ import { resolveSelectedId, sessionList } from '../../../web/js/selectors.js';
 import { applySessionRemoved, applySnapshot, applyUpdate, createStore } from '../../../web/js/store.js';
 import escritorio from '../../../web/js/themes/escritorio.js';
 import guilda from '../../../web/js/themes/guilda.js';
-import { SESSION_STATUS_TEXT, sessionGroups, sessionOptions, sessionText, syncSessionSelect } from '../../../web/js/views/sessions.js';
-import { pendingElsewhere, renderPendingAlert } from '../../../web/js/views/topbar.js';
+import {
+  SESSION_STATUS_TEXT, nextListOpen, pinnedMissingText, sessionGroups, sessionOptions, sessionText, syncSessionSelect,
+} from '../../../web/js/views/sessions.js';
+import { pendingAnnouncement, pendingElsewhere, renderPendingAlert } from '../../../web/js/views/topbar.js';
 import { XSS, deepFreeze, loadSnapshot } from './support.js';
 
 const THEMES = [escritorio, guilda];
@@ -52,7 +54,8 @@ function fakeSelect() {
     return node;
   };
   const select = element('select');
-  const options = () => select.children.flatMap((group) => group.children);
+  // Opções soltas (a primeira, da fixada que sumiu) e as dos grupos, na ordem.
+  const options = () => select.children.flatMap((child) => (child.tag === 'option' ? [child] : child.children));
   Object.defineProperty(select, 'value', {
     get: () => options().find((o) => o.selected)?.value ?? options()[0]?.value ?? '',
     set: (v) => {
@@ -276,3 +279,105 @@ describe('aviso de aprovação pendente em outra sessão', () => {
   });
 });
 
+
+describe('sessão fixada que sumiu (T14, observação do tester do T13)', () => {
+  const list = () => sessionList([session('a', 30, { project: project('alfa') }), session('b', 20, { project: project('beta') })]);
+
+  it('texto da primeira opção: avisa e diz qual sessão está na tela', () => {
+    assert.equal(pinnedMissingText(session('a', 1)), 'Sessão fixada indisponível · mostrando Sessão a · projeto-a · ativa');
+    assert.equal(pinnedMissingText(null), 'Sessão fixada indisponível');
+  });
+
+  it('a primeira opção, sem valor e desabilitada, fica escolhida; qualquer sessão da lista dispara change', () => {
+    const { select, log, options } = fakeSelect();
+    const placeholder = pinnedMissingText(list()[0]);
+    syncSessionSelect(select, sessionGroups(list(), 'a', escritorio), { placeholder });
+    assert.equal(select.children[0].tag, 'option');
+    assert.equal(select.children[0].value, '');
+    assert.equal(select.children[0].disabled, true);
+    assert.equal(select.children[0].textContent, placeholder);
+    assert.deepEqual(drawn(select).slice(1).map(([tag, label]) => [tag, label]), [['optgroup', 'alfa'], ['optgroup', 'beta']]);
+    assert.equal(select.value, '', 'a escolhida é o aviso, não a sessão que aparece');
+    assert.equal(options().find((o) => o.value === 'a')?.selected, false);
+
+    // Mudou só o texto: nada é recriado, e o aviso continua escolhido.
+    const created = log.created;
+    syncSessionSelect(select, sessionGroups(list(), 'a', escritorio), { placeholder: `${placeholder} (de novo)` });
+    assert.equal(log.created, created);
+    assert.equal(select.children[0].textContent, `${placeholder} (de novo)`);
+    assert.equal(select.value, '');
+
+    // A fixada voltou (ou outra foi fixada): o aviso sai e a escolha volta a ser a sessão.
+    syncSessionSelect(select, sessionGroups(list(), 'a', escritorio));
+    assert.deepEqual(select.children.map((c) => c.tag), ['optgroup', 'optgroup']);
+    assert.equal(select.value, 'a');
+  });
+
+  it('placeholder vazio ou null é ignorado', () => {
+    for (const placeholder of [null, '']) {
+      const { select } = fakeSelect();
+      syncSessionSelect(select, sessionGroups(list(), 'b'), { placeholder });
+      assert.deepEqual(select.children.map((c) => c.tag), ['optgroup', 'optgroup']);
+      assert.equal(select.value, 'b');
+    }
+  });
+});
+
+describe('lista nativa aberta (T14, observação do tester do T13)', () => {
+  it('clique no seletor abre e fecha; change, perda de foco e clique fora fecham', () => {
+    assert.equal(nextListOpen(false, { type: 'pointerdown' }), true);
+    assert.equal(nextListOpen(true, { type: 'pointerdown' }), false);
+    for (const type of /** @type {const} */ (['change', 'blur', 'outside'])) assert.equal(nextListOpen(true, { type }), false, type);
+    assert.equal(nextListOpen(false, { type: 'outside' }), false);
+  });
+
+  it('teclado do Windows: F4, Alt+setas e Espaço alternam; Enter, Esc e Tab fecham; setas sozinhas não abrem', () => {
+    for (const key of ['F4', ' ']) {
+      assert.equal(nextListOpen(false, { type: 'keydown', key }), true, key);
+      assert.equal(nextListOpen(true, { type: 'keydown', key }), false, key);
+    }
+    for (const key of ['ArrowDown', 'ArrowUp']) {
+      assert.equal(nextListOpen(false, { type: 'keydown', key, altKey: true }), true, `Alt+${key}`);
+      assert.equal(nextListOpen(false, { type: 'keydown', key }), false, key);
+      assert.equal(nextListOpen(true, { type: 'keydown', key }), true, `${key} com a lista aberta só move a seleção`);
+    }
+    for (const key of ['Enter', 'Escape', 'Tab']) assert.equal(nextListOpen(true, { type: 'keydown', key }), false, key);
+    for (const key of ['a', 'Home', 'Shift']) {
+      assert.equal(nextListOpen(true, { type: 'keydown', key }), true, key);
+      assert.equal(nextListOpen(false, { type: 'keydown', key }), false, key);
+    }
+  });
+});
+
+describe('seletor e aviso no modo discreto (T14)', () => {
+  it('sem o rótulo (vem do título do pedido) e sem a pasta; o nome do projeto e o status ficam', () => {
+    const list = sessionList([
+      session('5f1c0a9e-aaaa', 30, { label: 'Pedido secreto', project: project('app', 'C:\\um\\app') }),
+      session('7d2e1b00-bbbb', 20, { label: 'Outro pedido', project: { key: 'd:/dois/app', name: 'app', dir: 'D:\\dois\\app' }, status: 'waiting', counters: counters(1) }),
+    ]);
+    const groups = sessionGroups(list, '5f1c0a9e-aaaa', guilda, { discreet: true });
+    assert.deepEqual(groups.map((g) => g.label), ['app (1)', 'app (2)'], 'sem a pasta, a ordem desfaz a dúvida');
+    assert.deepEqual(groups.flatMap((g) => g.options.map((o) => o.text)), ['Sessão 5f1c0a · app · ativa', 'Sessão 7d2e1b · app · 1 aprovação pendente']);
+    // O que aparece (rótulos dos grupos e textos das opções); a chave do grupo não é desenhada.
+    const visible = JSON.stringify(groups.map((g) => [g.label, g.options.map((o) => o.text)]));
+    assert.ok(!visible.includes('edido'));
+    assert.ok(!visible.includes('dois'));
+  });
+
+  for (const theme of THEMES) {
+    it(`${theme.id}: aviso e anúncio sem o rótulo da sessão`, () => {
+      const list = sessionList([
+        session('atual-0000', 50),
+        session('outra-1111', 40, { status: 'waiting', counters: counters(2), label: 'Pedido secreto', project: project('beta') }),
+      ]);
+      const pending = theme.stats({ durationMs: 0, bugsCrushed: 0, questsDone: 0, pendingApprovals: 2 }).find((x) => x.id === 'pending');
+      const params = { list, selectedId: 'atual-0000', theme, now: 60_000 };
+      assert.equal(pendingAnnouncement(params), `2 ${pending?.label} em Pedido secreto · beta`);
+      assert.equal(pendingAnnouncement({ ...params, discreet: true }), `2 ${pending?.label} em Sessão outra- · beta`);
+      const html = renderPendingAlert({ ...params, discreet: true });
+      assert.ok(!html.includes('Pedido secreto'));
+      assert.match(html, /data-goto="outra-1111"/, 'o atalho continua apontando a sessão');
+      assert.equal(pendingAnnouncement({ ...params, selectedId: 'outra-1111' }), '', 'sem aviso, sem anúncio');
+    });
+  }
+});

@@ -4,6 +4,7 @@
 // seletor de sessão fica em views/sessions.js. Cada função devolve HTML com todo
 // texto dinâmico escapado (ADR 0006).
 
+import { maskSession } from '../discreet.js';
 import { statsView } from '../selectors.js';
 import { esc } from '../themes/helpers.js';
 
@@ -66,20 +67,50 @@ export function pendingElsewhere(list, selectedId) {
  * aviso só tem um atalho): o foco volta para ele depois do redesenho, mesmo
  * que o aviso passe a apontar outra sessão. Sem aprovação pendente fora da
  * sessão mostrada, vazio.
- * @param {{ list: readonly SessionState[], selectedId: string|null, theme: Theme, now: number }} params
+ *
+ * O aviso visível não é região viva (tem um botão dentro e fica escondido
+ * quando vazio): o anúncio para leitores de tela vai por `pendingAnnouncement`,
+ * numa região `aria-live` educada que existe sempre (T14).
+ * @param {{ list: readonly SessionState[], selectedId: string|null, theme: Theme, now: number, discreet?: boolean }} params
+ *   discreet: modo discreto (T14), sem o rótulo da sessão, que vem do título do pedido
  * @returns {string}
  */
-export function renderPendingAlert({ list, selectedId, theme, now }) {
-  const found = pendingElsewhere(list, selectedId);
-  if (!found) return '';
-  const { session, more } = found;
-  const pending = theme.stats(statsView(session, now)).find((item) => item.id === 'pending');
-  const where = [session.label || session.id, session.project?.name].filter(Boolean).join(' · ');
-  const others = more > 0 ? ` (e mais ${more} ${more === 1 ? 'sessão' : 'sessões'})` : '';
+export function renderPendingAlert({ list, selectedId, theme, now, discreet = false }) {
+  const parts = alertParts({ list, selectedId, theme, now, discreet });
+  if (!parts) return '';
+  const { session, pending, where, others } = parts;
   return `<span class="alert-icon" aria-hidden="true">${esc(pending?.icon ?? '!')}</span>` +
     `<span class="alert-text"><b>${count(session.counters?.pendingApprovals)}</b> ${esc(pending?.label ?? '')} em ` +
     `<span class="alert-where">${esc(where)}</span>${esc(others)}</span>` +
     `<button type="button" class="alert-go" data-focus-key="session-alert" data-goto="${esc(session.id)}">Ir para a sessão</button>`;
+}
+
+/**
+ * Texto puro do anúncio do aviso de aprovação pendente em outra sessão, para a
+ * região `aria-live` educada (T14). Vazio sem aviso.
+ * @param {{ list: readonly SessionState[], selectedId: string|null, theme: Theme, now: number, discreet?: boolean }} params
+ * @returns {string}
+ */
+export function pendingAnnouncement({ list, selectedId, theme, now, discreet = false }) {
+  const parts = alertParts({ list, selectedId, theme, now, discreet });
+  if (!parts) return '';
+  const { session, pending, where, others } = parts;
+  return `${count(session.counters?.pendingApprovals)} ${pending?.label ?? ''} em ${where}${others}`;
+}
+
+/**
+ * Partes do aviso: a sessão (mascarada no modo discreto), o indicador "pending"
+ * do tema, onde está e quantas outras sessões também têm aprovação pendente.
+ * @param {{ list: readonly SessionState[], selectedId: string|null, theme: Theme, now: number, discreet: boolean }} params
+ */
+function alertParts({ list, selectedId, theme, now, discreet }) {
+  const found = pendingElsewhere(list, selectedId);
+  if (!found) return null;
+  const session = discreet ? maskSession(found.session) : found.session;
+  const pending = theme.stats(statsView(session, now)).find((item) => item.id === 'pending');
+  const where = [session.label || session.id, session.project?.name].filter(Boolean).join(' · ');
+  const others = found.more > 0 ? ` (e mais ${found.more} ${found.more === 1 ? 'sessão' : 'sessões'})` : '';
+  return { session, pending, where, others };
 }
 
 /**

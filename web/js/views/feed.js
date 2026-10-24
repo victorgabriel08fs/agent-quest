@@ -16,8 +16,14 @@
 //   e só elas recebem a classe da animação; trocar de sessão redesenha a lista
 //   sem animação, e trocar de tema refaz o texto das linhas sem animação. Com
 //   prefers-reduced-motion, o CSS não anima nada.
+//
+// T14: enquanto o filtro de instância está ligado, um chip com o rótulo dela
+// aparece apertado e se desfaz no próprio chip (`data-toggle`) ou em "Todos".
+// No modo discreto, as linhas usam as frases só de categoria do tema, e a
+// sessão chega sem os textos livres (web/js/discreet.js).
 
 import { ROLES } from '../../../shared/contract.js';
+import { maskSession } from '../discreet.js';
 import { PHASE_OWNER, feedView, rosterRoles, teamView } from '../selectors.js';
 import { createHelpers, esc, formatClock, plural } from '../themes/helpers.js';
 
@@ -71,6 +77,22 @@ export function parseFilter(value) {
 
 /** @param {unknown} value @returns {value is RoleId} */
 const isRole = (value) => typeof value === 'string' && /** @type {readonly string[]} */ (ROLES).includes(value);
+
+/**
+ * Nome de uma instância no chip do filtro: o rótulo (descrição da delegação),
+ * senão o `agent_type`, senão o nome curto do papel no tema. No modo discreto
+ * o rótulo já chega vazio.
+ * @param {import('../../../shared/contract.js').AgentState} agent
+ * @param {Theme} theme
+ * @returns {string}
+ */
+export function instanceName(agent, theme) {
+  const role = isRole(agent.role) ? agent.role : 'aux';
+  for (const value of [agent.label, agent.agentType]) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return theme.roles[role].short;
+}
 
 /**
  * Filtro em vigor para a sessão mostrada. Vale enquanto o controle dele existir
@@ -200,10 +222,13 @@ export function systemIcon(event, theme) {
  * cada uma. Eventos sem frase no tema ficam de fora.
  * @param {SessionState} session
  * @param {Theme} theme
+ * @param {boolean} [discreet]   modo discreto (T14)
  * @returns {FeedEntry[]}
  */
-export function feedEntries(session, theme) {
-  const h = createHelpers(theme, session.agents ?? []);
+export function feedEntries(session, theme, discreet = false) {
+  const shown = discreet ? maskSession(session) : session;
+  const h = createHelpers(theme, shown.agents ?? [], { discreet });
+  session = shown;
   /** @type {FeedEntry[]} */
   const entries = [];
   const used = new Set();
@@ -234,17 +259,17 @@ export function feedEntries(session, theme) {
 /**
  * Modelo do cartão de atividade: cabeçalho, chips, mensagem de vazio e linhas.
  * O filtro já deve vir validado (`resolveFilter`).
- * @param {{ session: SessionState|null, theme: Theme, filter?: string }} params
+ * @param {{ session: SessionState|null, theme: Theme, filter?: string, discreet?: boolean }} params
  * @returns {FeedModel}
  */
-export function feedModel({ session, theme, filter = ALL }) {
+export function feedModel({ session, theme, filter = ALL, discreet = false }) {
   const title = `<h2 id="feed-title">${esc(theme.words.feed)}</h2>`;
   const noFeed = esc(theme.words.noFeed);
   if (!session) {
     return { context: '', filter: ALL, head: title, filters: '', empty: noFeed, entries: [], visible: 0 };
   }
   const applied = parseFilter(filter).kind === 'all' ? ALL : filter;
-  const entries = feedEntries(session, theme);
+  const entries = feedEntries(session, theme, discreet);
   const visible = applied === ALL ? entries.length : entries.filter((entry) => entryMatches(entry, applied)).length;
   const total = entries.length;
   let count = '';
@@ -256,7 +281,7 @@ export function feedModel({ session, theme, filter = ALL }) {
     context: String(session.id),
     filter: applied,
     head: `${title}${count}`,
-    filters: filtersHTML(session, theme, applied),
+    filters: filtersHTML(discreet ? maskSession(session) : session, theme, applied),
     empty: visible === 0 ? noFeed : '',
     entries,
     visible,
@@ -265,7 +290,8 @@ export function feedModel({ session, theme, filter = ALL }) {
 
 /**
  * Chips de filtro, como no mockup: "Todos" e um por papel do cartão da equipe,
- * com o retrato do papel no tema.
+ * com o retrato do papel no tema. Com o filtro de instância ligado (T14), mais
+ * um chip apertado com o nome dela, que se desfaz no próprio chip.
  * @param {SessionState} session
  * @param {Theme} theme
  * @param {string} filter
@@ -279,6 +305,15 @@ function filtersHTML(session, theme, filter) {
     chips.push(`<button type="button" class="chip chip-ag" data-filter="${esc(value)}" data-agent="${esc(role)}" aria-pressed="${filter === value}" ` +
       `title="${esc(words.name)}" aria-label="${esc(`Só ${words.name}`)}">${esc(words.icon)}</button>`);
   }
+  const spec = parseFilter(filter);
+  const agent = spec.kind === 'agent' ? (session.agents ?? []).find((item) => item.key === spec.key) : undefined;
+  if (agent) {
+    const role = isRole(agent.role) ? agent.role : 'aux';
+    const name = instanceName(agent, theme);
+    chips.push(`<button type="button" class="chip chip-inst" data-filter="${esc(filter)}" data-toggle="" data-agent="${esc(role)}" aria-pressed="true" ` +
+      `title="${esc(`Só ${name}. Clique de novo para mostrar todos`)}"><span aria-hidden="true">${esc(theme.roles[role].icon)}</span>` +
+      `<span class="chip-l">${esc(name)}</span></button>`);
+  }
   return chips.join('');
 }
 
@@ -287,11 +322,11 @@ function filtersHTML(session, theme, filter) {
  * linhas fora do filtro escondidas. O painel usa as partes do `feedModel` e
  * atualiza a lista no lugar; esta forma serve para os testes e para quem
  * precisar do cartão inteiro de uma vez.
- * @param {{ session: SessionState|null, theme: Theme, filter?: string }} params
+ * @param {{ session: SessionState|null, theme: Theme, filter?: string, discreet?: boolean }} params
  * @returns {string}
  */
-export function renderFeed({ session, theme, filter = ALL }) {
-  const model = feedModel({ session, theme, filter });
+export function renderFeed({ session, theme, filter = ALL, discreet = false }) {
+  const model = feedModel({ session, theme, filter, discreet });
   const filters = model.filters ? `<div class="filters" role="group" aria-label="${esc(FILTERS_LABEL)}">${model.filters}</div>` : '';
   const empty = model.empty ? `<p class="card-empty">${model.empty}</p>` : '';
   const list = model.entries.length === 0

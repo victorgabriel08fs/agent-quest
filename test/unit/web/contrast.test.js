@@ -16,6 +16,8 @@ const THEMES_CSS = readFileSync(path.join(CSS_DIR, 'themes.css'), 'utf8');
 const NORMAL = 4.5;
 const LARGE = 3;
 const GRAPHIC = 3;
+/** Folga pedida no T14 para o nome da sala em alarme (complemento do ADR 0009, 20/10/2026). */
+const ALARM = 4.6;
 
 /**
  * Pares usados no painel: [cor do texto, fundo, mínimo, onde aparece].
@@ -65,6 +67,18 @@ const PAIRS = [
   ['--on-warn', '--warn', NORMAL, 'balão de aprovação e selo "!" na cena (T12b)'],
   ['--text', '--room-base', NORMAL, '"+N" e nome do token na cena'],
   ['--surface', '--good', GRAPHIC, 'marca ✓ da etapa concluída'],
+  // T14: folga mínima de 4,6:1 no nome da sala de testes em alarme (complemento
+  // do ADR 0009, 20/10/2026), sobre o topo tingido pela cor do tester.
+  ['--muted', '--c-tes*0.12/--room-base', ALARM, 'nome da sala de testes em alarme (T14)'],
+  // T14: chip de papel e chip da instância apertados (22% da cor do papel) e o
+  // traço do estado apertado, que não depende da cor da borda.
+  ...['--c-orq', '--c-arq', '--c-dev', '--c-tes', '--c-doc', '--c-aux'].flatMap((tint) => [
+    ['--text', `${tint}*0.22/--surface`, NORMAL, `chip apertado: rótulo e traço (${tint})`],
+  ]),
+  ['--text', '--accent-soft/--surface', GRAPHIC, 'traço do chip "Todos" apertado (T14)'],
+  ['--text', '--accent-soft/--bg', GRAPHIC, 'traço de "Seguir atividade" e do modo discreto ligados (T14)'],
+  ['--accent', '--accent-soft/--bg', NORMAL, '"Seguir atividade" ligado (T13)'],
+  ['--muted', '--surface', NORMAL, 'título do ticket oculto ou sem título (T14)'],
 ];
 
 /**

@@ -27,7 +27,7 @@
    aprovação pendente em outra sessão logo abaixo, só quando há. */
 .sess-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .sess-row .sess-select { flex: 0 1 auto; }
-.follow { display: inline-flex; flex: none; align-items: center; gap: 5px; height: 26px; padding: 0 10px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 99px; cursor: pointer; transition: background .2s, color .2s; }
+.follow { position: relative; display: inline-flex; flex: none; align-items: center; gap: 5px; height: 26px; padding: 0 10px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 99px; cursor: pointer; transition: background .2s, color .2s; }
 .follow:hover { color: var(--text); background: var(--surface); }
 .follow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .sess-alert { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; justify-self: start; max-width: 100%; min-width: 0; margin-top: 4px; padding: 3px 3px 3px 10px; font-size: 12.5px; color: var(--warn-text); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 10px; }
@@ -51,6 +51,16 @@
 .conn-live i { background: var(--bad); animation: breathe 1.4s ease-in-out infinite; }
 .conn-reconnecting { color: var(--warn-text); }
 .conn-reconnecting i { background: var(--warn); animation: breathe .9s ease-in-out infinite; }
+/* Botões só com ícone (mockup, .icon-btn): modo discreto e legenda (T14). */
+.icon-btn { position: relative; display: grid; flex: none; place-items: center; width: 38px; height: 38px; padding: 0; font-size: 16px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 11px; cursor: pointer; }
+.icon-btn:hover { background: var(--surface-2); }
+.icon-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* Botão de alternância apertado (chips, "Seguir atividade", modo discreto): além
+   do fundo e da borda, um traço na cor do texto embaixo do rótulo, para o estado
+   não depender só da cor (revisão de acessibilidade do T14). */
+.chip[aria-pressed="true"]::after, .follow[aria-pressed="true"]::after, .icon-btn[aria-pressed="true"]::after {
+  content: ""; position: absolute; bottom: 3px; left: 50%; width: 12px; height: 2px; margin-left: -6px; background: var(--text); border-radius: 2px;
+}
 .seg { display: inline-flex; gap: 2px; padding: 4px; background: var(--surface-3); border: 1px solid var(--border); border-radius: 13px; }
 .seg button { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; font-size: 13px; font-weight: 600; color: var(--muted); background: transparent; border: 0; border-radius: 9px; cursor: pointer; transition: background .2s, color .2s; }
 .seg button:hover { color: var(--text); }
@@ -168,10 +178,13 @@ button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--s
 /* ===== Atividade ===== */
 /* Chips de filtro (T11b), portados do mockup: "Todos" e um por papel. */
 .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; border-bottom: 1px solid var(--border); }
-.chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; cursor: pointer; }
+.chip { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; cursor: pointer; }
 .chip:hover { color: var(--text); }
 .chip[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .chip-ag { width: 30px; padding: 0; font-size: 15px; background: color-mix(in srgb, var(--agent) 10%, var(--surface)); }
+/* Chip da instância filtrada (T14): aparece só com o filtro dela ligado, já apertado. */
+.chip.chip-inst { max-width: 200px; min-width: 0; padding: 0 12px 0 8px; color: var(--text); background: color-mix(in srgb, var(--agent) 22%, var(--surface)); border-color: var(--agent); }
+.chip-inst .chip-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-ag[aria-pressed="true"] { background: color-mix(in srgb, var(--agent) 22%, var(--surface)); border-color: var(--agent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent) 25%, transparent); }
 .entries { flex: 1; min-height: 0; margin: 0; padding: 8px 8px 12px; overflow-y: auto; list-style: none; border-top: 1px solid var(--border); scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
 .filters:not([hidden]) ~ .entries { border-top: 0; }
@@ -189,6 +202,25 @@ button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--s
 .e-text code { padding: 1px 5px; font: 12px var(--font-mono); background: var(--surface-3); border-radius: 5px; }
 .e-body time { display: block; margin-top: 2px; font: 11px var(--font-mono); color: var(--muted); }
 
+/* ===== Ticket sem título ou com o título oculto (T14) ===== */
+.q-title.is-placeholder { font-style: italic; color: var(--muted); }
+
+/* ===== Legenda (T14; mockup, .legend) ===== */
+.legend { width: min(720px, calc(100vw - 32px)); max-height: min(84vh, 820px); padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .5); }
+.legend::backdrop { background: rgba(10, 10, 15, .45); backdrop-filter: blur(4px); }
+.lg-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.lg-head h2 { margin: 0; font: 700 17px/1.2 var(--title-font); }
+.lg-body { padding: 4px 20px 20px; }
+.lg-body p { margin: 14px 0 0; color: var(--muted); }
+.lg-body h3 { margin: 18px 0 6px; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.lg-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.lg-table th, .lg-table td { padding: 7px 8px; text-align: left; vertical-align: top; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.lg-table th { width: 36%; font-weight: 600; color: var(--muted); }
+.lg-table thead th { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; }
+.lg-sources th[scope="row"] { width: 26%; }
+.lg-sources td:last-child { width: 18%; white-space: nowrap; color: var(--muted); }
+.lg-table code { padding: 1px 5px; font: 12px var(--font-mono); background: var(--surface-3); border-radius: 5px; }
+
 /* ===== Responsivo ===== */
 @media (max-width: 1279px) {
   /* Indicadores numa linha própria: o topo fica com no máximo duas linhas. */
@@ -205,6 +237,10 @@ button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--s
   .foot { padding: 0 16px; }
 }
 @media (max-width: 640px) {
+  .icon-btn { width: 34px; height: 34px; }
+  /* Com o modo discreto e a legenda (T14), as ações quebram linha em tela estreita. */
+  .top-actions { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; min-width: 0; }
+  .lg-sources td:last-child { white-space: normal; }
   .q-title { font-size: 20px; }
   .seg button { padding: 0 10px; }
   /* "Seguir atividade" só com o ícone; o texto continua para leitores de tela. */

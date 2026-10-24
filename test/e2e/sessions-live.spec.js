@@ -240,7 +240,12 @@ test.describe('várias sessões (T13)', () => {
     const alert = page.locator('#session-alert');
     const label = sessionOf(state, b.scenario.sessionId).label;
     await expect(alert).toBeVisible();
-    await expect(alert).toHaveAttribute('role', 'status');
+    // O anúncio vai por uma região viva educada à parte (T14); o aviso visível tem um botão.
+    const live = page.locator('#session-alert-live');
+    await expect(live).toHaveAttribute('role', 'status');
+    await expect(live).toHaveAttribute('aria-live', 'polite');
+    await expect(live).toHaveText(`1 aprovação pendente em ${sessionOf(state, b.scenario.sessionId).label} · outro-projeto`);
+    await expect(alert).not.toHaveAttribute('role', /.+/);
     await expect(alert).toContainText(`1 aprovação pendente em ${label} · outro-projeto`);
     await expect(alert.locator('.alert-icon')).toHaveText('✋');
     await expect(page.locator(`#session-select option[value="${b.scenario.sessionId}"]`)).toHaveText(`${label} · outro-projeto · 1 aprovação pendente`);

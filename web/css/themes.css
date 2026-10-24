@@ -9,6 +9,10 @@
    Cena animada (T12b): --on-warn é o texto sobre --warn (balão e selo "!" de
    aprovação); --fx-message, --fx-bug e --fx-burst-1 a 4 são os ícones do
    envelope, do bug e do confete de cada tema (mockup, painel-temas.js).
+   T14: o --muted do Escritório passou de #636c81 para #5f687c (mesmo matiz),
+   para o nome das salas na cena, inclusive a de testes em alarme, ficar com
+   folga de pelo menos 4,6:1 (complemento do ADR 0009, 20/10/2026).
+
    Comentários ficam fora dos blocos de variáveis, que o teste de contraste lê. */
 
 :root[data-theme="escritorio"] {
@@ -16,7 +20,7 @@
   --bg: #f3f4f7;
   --bg-glow: radial-gradient(1100px 520px at 0% -10%, rgba(99, 102, 241, .10), transparent 60%), radial-gradient(900px 480px at 100% 0%, rgba(20, 184, 166, .08), transparent 60%);
   --surface: #ffffff; --surface-2: #f8f9fb; --surface-3: #eef0f4;
-  --border: #e4e7ec; --text: #101828; --muted: #636c81; --faint: #98a2b3;
+  --border: #e4e7ec; --text: #101828; --muted: #5f687c; --faint: #98a2b3;
   --accent: #4f46e5; --accent-soft: rgba(79, 70, 229, .10);
   --good: #12a150; --good-soft: rgba(18, 161, 80, .09);
   --warn: #e8890c; --warn-soft: rgba(232, 137, 12, .11);

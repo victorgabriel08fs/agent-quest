@@ -24,8 +24,12 @@
 // retratos, outros balões nem o nome da sala; em sala estreita, só os
 // retratos. (A CSP não impediria posicionar por CSSOM; a escolha é por
 // simplicidade e por deixar o layout responsivo sem JS.)
+//
+// Modo discreto (T14): a sessão chega sem os rótulos das instâncias, e o balão
+// usa as frases só de categoria do tema.
 
 import { ROLES } from '../../shared/contract.js';
+import { maskSession } from './discreet.js';
 import { createHelpers, esc } from './themes/helpers.js';
 import { ROOM_IDS } from './themes/contract.js';
 
@@ -154,11 +158,12 @@ export function sceneLayout(session) {
 /**
  * Conteúdo da cena: o caminho decorativo e as salas com os tokens. Sem sessão,
  * as salas vazias.
- * @param {{ session: SessionState|null, theme: Theme }} params
+ * @param {{ session: SessionState|null, theme: Theme, discreet?: boolean }} params
  * @returns {string}
  */
-export function renderScene({ session, theme }) {
-  const h = createHelpers(theme, session?.agents ?? []);
+export function renderScene({ session, theme, discreet = false }) {
+  if (discreet && session) session = maskSession(session);
+  const h = createHelpers(theme, session?.agents ?? [], { discreet });
   const layout = sceneLayout(session);
   const bugs = openBugs(session);
   const bugText = bugs > 0 ? `, ${bugs} ${bugs === 1 ? 'falha de teste em aberto' : 'falhas de teste em aberto'}` : '';

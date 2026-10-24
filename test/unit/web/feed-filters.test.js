@@ -143,14 +143,39 @@ describe('cartão de atividade com filtro', () => {
       assert.ok(html.includes('3 de 21 eventos'));
     });
 
-    it(`${theme.id}: filtro por instância mostra só as linhas dela; nenhum chip fica apertado`, () => {
+    it(`${theme.id}: filtro por instância mostra só as linhas dela; só o chip da instância (T14) fica apertado`, () => {
       const html = renderFeed({ session, theme, filter: `agent:${DEV_INGEST}` });
       assert.deepEqual(visibleIds(html).map(seqOf), [113, 110, 104]);
-      assert.ok(!html.split('<ol')[0].includes('aria-pressed="true"'));
+      const chips = html.split('<ol')[0];
+      assert.deepEqual(attrs(chips, 'data-filter'), ['', 'role:orq', 'role:arq', 'role:dev', 'role:tes', 'role:doc', 'role:aux', `agent:${DEV_INGEST}`]);
+      assert.deepEqual(attrs(chips, 'aria-pressed'), ['false', 'false', 'false', 'false', 'false', 'false', 'false', 'true']);
+      assert.ok(chips.includes(`<button type="button" class="chip chip-inst" data-filter="agent:${DEV_INGEST}" data-toggle="" data-agent="dev" aria-pressed="true" `));
+      assert.ok(chips.includes(`<span aria-hidden="true">${theme.roles.dev.icon}</span><span class="chip-l">implementar a ingestão</span></button>`));
       assert.ok(html.includes('3 de 21 eventos'));
 
+      // Sessão principal sem rótulo: o nome curto do papel no tema.
       const main = renderFeed({ session, theme, filter: 'agent:main' });
       assert.deepEqual(visibleIds(main).map(seqOf), [121, 119, 117, 116, 114, 108, 107, 103, 102]);
+      assert.ok(main.includes(`<span class="chip-l">${esc(theme.roles.orq.short)}</span>`));
+
+      // Convidado: o rótulo; no modo discreto, o agent_type (o rótulo vem da descrição da delegação).
+      assert.ok(renderFeed({ session, theme, filter: `agent:${GUEST}` }).includes('<span class="chip-l">mapear os hooks do Claude Code</span>'));
+      const hidden = renderFeed({ session, theme, filter: `agent:${GUEST}`, discreet: true });
+      assert.ok(hidden.includes('<span class="chip-l">Explore</span>'));
+      assert.ok(!hidden.includes('mapear os hooks'));
+    });
+
+    it(`${theme.id}: o chip da instância não aparece com outro filtro nem com instância que não existe`, () => {
+      assert.ok(!feedModel({ session, theme }).filters.includes('chip-inst'));
+      assert.ok(!feedModel({ session, theme, filter: 'role:dev' }).filters.includes('chip-inst'));
+      assert.ok(!feedModel({ session, theme, filter: 'agent:sumiu' }).filters.includes('chip-inst'));
+    });
+
+    it(`${theme.id}: rótulo da instância com HTML sai escapado no chip`, () => {
+      const evil = { ...session, agents: session.agents.map((agent) => (agent.key === DEV_INGEST ? { ...agent, label: XSS } : agent)) };
+      const { filters } = feedModel({ session: evil, theme, filter: `agent:${DEV_INGEST}` });
+      assert.ok(filters.includes(`<span class="chip-l">${esc(XSS)}</span>`));
+      assert.ok(!filters.includes('<img'));
     });
 
     it(`${theme.id}: "Todos" mostra tudo, sem hidden e sem "de"`, () => {

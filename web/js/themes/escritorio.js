@@ -54,6 +54,21 @@ const questSummary = (d) => {
 /** @param {RoleId} role @param {'write'|'edit'} kind @param {0|1} form */
 const verb = (role, kind, form) => pick(VERBS[kind], role, 'aux')[form];
 
+/** Modo discreto (T14): o que o agente pede para fazer, só pela categoria. */
+const ASKS = {
+  read: 'ler um arquivo',
+  search: 'fazer uma busca',
+  write: 'criar um arquivo',
+  edit: 'editar um arquivo',
+  test: 'rodar os testes',
+  bash: 'rodar um comando',
+  web: 'consultar a web',
+  plan: 'atualizar o quadro de tarefas',
+  skill: 'usar uma skill',
+  mcp: 'chamar uma ferramenta externa',
+  other: 'usar uma ferramenta',
+};
+
 /** @type {FeedPhrases} */
 const FEED = {
   sessionStarted: (d, h) => `${pick(SESSION_SOURCE, d.source, 'other')}${d.projectName ? ` em ${h.b(d.projectName)}` : ''}`,
@@ -101,6 +116,25 @@ const FEED = {
     unknown: (who) => `Pedido de ${who} negado ou cancelado`,
   },
   compacted: (who) => `☕ ${who} faz uma pausa para o café e recupera o foco (contexto compactado)`,
+  hidden: {
+    questStarted: (d, h) => `Novo ticket no quadro: ${h.b(`#${d.n ?? '?'}`)}`,
+    tool: {
+      read: (who) => `${who} lê um arquivo`,
+      search: (who) => `${who} faz uma busca`,
+      write: (who, d, h, role) => `${who} ${verb(role, 'write', 0)} um arquivo`,
+      edit: (who, d, h, role) => `${who} ${verb(role, 'edit', 0)} um arquivo`,
+      test: (who) => `${who} roda a suíte de testes`,
+      bash: (who) => `${who} roda um comando no terminal`,
+      web: (who) => `${who} consulta a web`,
+      plan: (who) => `${who} atualiza o quadro de tarefas`,
+      skill: (who) => `${who} usa uma skill`,
+      mcp: (who) => `${who} chama uma ferramenta externa`,
+      other: (who) => `${who} usa uma ferramenta`,
+    },
+    toolFailed: (who) => `💥 ${who} esbarrou num erro`,
+    toolInterrupted: (who) => `⏹️ ${who} interrompeu uma ação`,
+    permissionRequested: (who, d) => `✋ ${who} pede sua aprovação para ${pick(ASKS, d.category, 'other')}`,
+  },
 };
 
 const WORDS = {
@@ -117,6 +151,8 @@ const WORDS = {
   noAgents: 'Ninguém no escritório ainda',
   noFeed: 'Nenhuma atividade ainda',
   unknownProject: 'Projeto desconhecido',
+  untitled: 'Pedido sem título',
+  hiddenTitle: 'Título oculto no modo discreto',
   questStatus: {
     open: 'em andamento',
     waiting_background: 'aguardando tarefa em segundo plano',
@@ -147,6 +183,19 @@ const ACTION = {
     skill: (t) => `Usando a skill ${t}`,
     mcp: (t) => `Chamando ${t}`,
     other: (t) => `Usando ${t}`,
+  },
+  hidden: {
+    read: () => 'Lendo um arquivo',
+    search: () => 'Fazendo uma busca',
+    write: (role) => `${verb(role, 'write', 1)} um arquivo`,
+    edit: (role) => `${verb(role, 'edit', 1)} um arquivo`,
+    test: () => 'Rodando os testes',
+    bash: () => 'Rodando um comando',
+    web: () => 'Consultando a web',
+    plan: () => 'Organizando o quadro',
+    skill: () => 'Usando uma skill',
+    mcp: () => 'Chamando uma ferramenta externa',
+    other: () => 'Usando uma ferramenta',
   },
 };
 
@@ -183,7 +232,7 @@ const escritorio = {
     phaseDone: '🏁',
   },
   feedLine: (event, h) => feedLineFrom(FEED, event, h),
-  actionText: (agent) => actionTextFrom(ACTION, agent),
+  actionText: (agent, h) => actionTextFrom(ACTION, agent, Boolean(h?.discreet)),
   finale: (summary) => ({
     icon: '🚀',
     title: 'Ticket entregue!',

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  FINALE_MS, finaleRemaining,
   DELEGATION_WINDOW_MS, FX_IDS, delegationTarget, flipDelta, questSummary, sceneChanges,
 } from '../../../web/js/fx.js';
 import { MAX_BUGS_SHOWN, openBugs, renderScene } from '../../../web/js/scene.js';
@@ -244,5 +245,19 @@ describe('CSS da cena animada', () => {
     const ids = Object.values(FX_IDS);
     assert.equal(new Set(ids).size, ids.length);
     assert.ok(ids.every((id) => id.startsWith('fx-')));
+  });
+});
+
+describe('cartão final na troca de tema (T14)', () => {
+  const finale = { summary: { n: 1, title: '', actions: 3, agents: 2, durationMs: 1000 }, sessionId: 's1', shownAt: 10_000 };
+
+  it('mesma sessão: o tempo que faltava; outra sessão, sem cartão ou tempo esgotado: 0', () => {
+    assert.equal(finaleRemaining(finale, 's1', 10_000), FINALE_MS);
+    assert.equal(finaleRemaining(finale, 's1', 11_000), FINALE_MS - 1_000);
+    assert.equal(finaleRemaining(finale, 's1', 10_000 + FINALE_MS), 0);
+    assert.equal(finaleRemaining(finale, 's1', 10_000 + FINALE_MS + 5_000), 0);
+    assert.equal(finaleRemaining(finale, 's2', 10_500), 0);
+    assert.equal(finaleRemaining(null, 's1', 10_500), 0);
+    assert.equal(finaleRemaining(finale, 's1', 9_000), FINALE_MS, 'relógio que voltou não aumenta o tempo');
   });
 });

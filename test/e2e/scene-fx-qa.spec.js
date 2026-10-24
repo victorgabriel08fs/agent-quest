@@ -40,9 +40,13 @@ const TEST_PASS = (/** @type {number} */ total) =>
  * @param {Page} page
  */
 async function instrument(page) {
+  // A medida de contraste roda na página no instante em que o cartão final é
+  // criado (ele sai sozinho em 3,7 s; sob carga, uma asserção depois pode não
+  // achá-lo mais). Entra por script injetado: a CSP não permite new Function.
+  await page.addInitScript({ content: `window.__measure = ${measure.toString()};` });
   await page.addInitScript(() => {
     const w = /** @type {any} */ (window);
-    w.__scene = { calls: 0, ids: {}, byKey: {}, props: {}, styleWrites: 0, maxAll: 0, maxPerElement: 0, maxFx: 0, fxAdded: [] };
+    w.__scene = { calls: 0, ids: {}, byKey: {}, props: {}, styleWrites: 0, maxAll: 0, maxPerElement: 0, maxFx: 0, fxAdded: [], finales: [] };
     const animate = Element.prototype.animate;
     Element.prototype.animate = function (keyframes, options) {
       const s = w.__scene;
@@ -82,7 +86,29 @@ async function instrument(page) {
       const fx = document.getElementById('scene-fx');
       if (!fx) return;
       new MutationObserver((records) => {
-        for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) w.__scene.fxAdded.push(node.className);
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (!(node instanceof HTMLElement)) continue;
+            w.__scene.fxAdded.push(node.className);
+            // Cartão final: registrado no instante em que aparece (textos,
+            // confete, tamanho e contraste), para as asserções não dependerem
+            // de ele ainda estar na tela.
+            if (node.classList.contains('finale')) {
+              const card = /** @type {HTMLElement|null} */ (node.querySelector('.finale-card'));
+              const overlay = node.getBoundingClientRect();
+              w.__scene.finales.push({
+                h3: node.querySelector('h3')?.textContent ?? '',
+                p: node.querySelector('p')?.textContent ?? '',
+                text: node.textContent ?? '',
+                particles: node.querySelectorAll('.particle').length,
+                cardWidth: card?.offsetWidth ?? 0,
+                overlay: { left: overlay.left, right: overlay.right },
+                viewport: document.documentElement.clientWidth,
+                contrast: typeof w.__measure === 'function' ? w.__measure(['#scene-fx .finale-card h3', '#scene-fx .finale-card p']) : [],
+              });
+            }
+          }
+        }
       }).observe(fx, { childList: true });
     });
   });
@@ -254,12 +280,15 @@ test.describe('cena animada ao vivo (tester)', () => {
         expect((await scene(page)).byKey[`fx-move|${key}`] ?? 0, `${key} caminhou`).toBeGreaterThan(0);
       }
       expect(session.quest?.status, '[T8] ticket entregue').toBe('done');
-      const finale = page.locator('#scene-fx .finale');
-      await expect(finale).toBeVisible();
+      // O cartão final é conferido pelo registro feito quando ele apareceu (ele
+      // sai sozinho em 3,7 s; sob carga, sumia entre duas asserções).
+      await expect.poll(async () => (await scene(page)).finales.length).toBe(1);
+      const [shownFinale] = (await scene(page)).finales;
       const card = theme.finale({ n: 0, title: '', actions: 0, agents: 0, durationMs: 0 });
-      await expect(finale.locator('h3')).toHaveText(card.title);
-      await expect(finale.locator('p')).toContainText(`${session.quest.actions} `);
-      await expect(finale).not.toContainText(/XP/);
+      expect(shownFinale.h3).toBe(card.title);
+      expect(shownFinale.p).toContain(`${session.quest.actions} `);
+      expect(shownFinale.text).not.toMatch(/XP/);
+      expect(shownFinale.particles).toBeGreaterThan(0);
       expect((await scene(page)).ids['fx-burst'] ?? 0).toBeGreaterThan(0);
 
       // Tudo assenta: camada .fx vazia (o cartão sai sozinho) e só animações contínuas.
@@ -360,8 +389,9 @@ test.describe('cena animada ao vivo (tester)', () => {
     await inject(srv(), parts[4]);
     await inject(srv(), parts[5]);
     for (const key of Object.values(keys)) await expect(page.locator(`.room[data-room="idle"] .token[data-key="${key}"]`)).toHaveCount(1);
-    await expect(page.locator('#scene-fx .finale')).toBeVisible();
-    await expect(page.locator('#scene-fx .particle')).toHaveCount(0);
+    // Cartão final pelo registro de quando apareceu: parado, sem confete.
+    await expect.poll(async () => (await scene(page)).finales.length).toBe(1);
+    expect((await scene(page)).finales[0].particles).toBe(0);
     const record = await scene(page);
     expect(record.calls, 'chamadas a animate()').toBe(0);
     expect(record.maxAll, 'animações em algum quadro').toBe(0);
@@ -422,6 +452,7 @@ test.describe('cena animada ao vivo (tester)', () => {
     test(`${width} px: salas, bugs, selo e cartão final cabem, sem rolagem horizontal`, async ({ browser }) => {
       const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 360, hasTouch: width === 360 });
       const page = await context.newPage();
+      await instrument(page);
       try {
         const { first, parts } = liveScenario(`largura-${width}`);
         await page.goto(`${srv().base}/#escritorio`);
@@ -449,7 +480,12 @@ test.describe('cena animada ao vivo (tester)', () => {
         expect(await check()).toEqual([]);
         await inject(srv(), parts[4]);
         await inject(srv(), parts[5]);
-        await expect(page.locator('#scene-fx .finale-card')).toBeVisible();
+        // Cartão final pelo registro de quando apareceu (sai sozinho em 3,7 s).
+        await expect.poll(async () => (await scene(page)).finales.length).toBe(1);
+        const [shown] = (await scene(page)).finales;
+        expect(shown.overlay.left, 'camada do cartão final começa dentro da tela').toBeGreaterThanOrEqual(0);
+        expect(shown.overlay.right, 'camada do cartão final termina dentro da tela').toBeLessThanOrEqual(shown.viewport + 1);
+        expect(shown.cardWidth, 'cartão final cabe na camada').toBeLessThanOrEqual(shown.overlay.right - shown.overlay.left + 1);
         expect(await check()).toEqual([]);
       } finally {
         await context.close();
@@ -460,6 +496,7 @@ test.describe('cena animada ao vivo (tester)', () => {
   for (const themeId of /** @type {const} */ (['escritorio', 'guilda'])) {
     test(`${themeId}: contraste do balão e do selo de aprovação, do "+N" dos bugs, da sala em alarme e do cartão final`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion: 'reduce' });
+      await instrument(page);
       const { first, parts } = liveScenario(`contraste-cena-${themeId}`);
       await page.goto(`${srv().base}/#${themeId}`);
       await inject(srv(), first);
@@ -468,8 +505,9 @@ test.describe('cena animada ao vivo (tester)', () => {
       const results = await page.evaluate(measure, ['.token.waiting .bubble-text', '.token.waiting .tok-alert', '.room[data-room="test"] .bug-more', '.room.alarm .room-label']);
       await inject(srv(), parts[4]);
       await inject(srv(), parts[5]);
-      await expect(page.locator('#scene-fx .finale-card')).toBeVisible();
-      results.push(...await page.evaluate(measure, ['#scene-fx .finale-card h3', '#scene-fx .finale-card p']));
+      // Contraste do cartão final medido na página no instante em que ele apareceu.
+      await expect.poll(async () => (await scene(page)).finales.length).toBe(1);
+      results.push(...(await scene(page)).finales[0].contrast);
       console.log(`[contraste da cena ${themeId}] ${JSON.stringify(results)}`);
       expect(new Set(results.map((/** @type {any} */ r) => r.selector)).size).toBe(6);
       for (const r of results) {

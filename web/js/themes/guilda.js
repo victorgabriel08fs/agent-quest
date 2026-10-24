@@ -54,6 +54,49 @@ const questSummary = (d) => {
 /** @param {RoleId} role @param {'write'|'edit'} kind @param {0|1} form */
 const verb = (role, kind, form) => pick(VERBS[kind], role, 'aux')[form];
 
+/**
+ * Modo discreto (T14): escrita e edição sem o alvo, por papel. Os verbos da
+ * Guilda já trazem o objeto ("desenha a planta"), então o discreto tem os seus:
+ * [na crônica, na linha de ação].
+ * @type {Record<'write'|'edit', Record<RoleId, [string, string]>>}
+ */
+const HIDDEN_VERBS = {
+  write: {
+    orq: ['escreve um édito', 'Escrevendo um édito'],
+    arq: ['desenha uma planta', 'Desenhando uma planta'],
+    dev: ['forja um artefato', 'Forjando um artefato'],
+    tes: ['prepara armadilhas', 'Armando armadilhas'],
+    doc: ['escreve um pergaminho', 'Escrevendo um pergaminho'],
+    aux: ['rabisca um pergaminho', 'Rabiscando um pergaminho'],
+  },
+  edit: {
+    orq: ['emenda um édito', 'Emendando um édito'],
+    arq: ['revisa uma planta', 'Revisando uma planta'],
+    dev: ['reforja um artefato', 'Reforjando um artefato'],
+    tes: ['reforça as armadilhas', 'Reforçando as armadilhas'],
+    doc: ['corrige um pergaminho', 'Corrigindo um pergaminho'],
+    aux: ['ajusta um artefato', 'Ajustando um artefato'],
+  },
+};
+
+/** @param {RoleId} role @param {'write'|'edit'} kind @param {0|1} form */
+const hiddenVerb = (role, kind, form) => pick(HIDDEN_VERBS[kind], role, 'aux')[form];
+
+/** Modo discreto (T14): o que o aventureiro pede para fazer, só pela categoria. */
+const ASKS = {
+  read: 'explorar um pergaminho',
+  search: 'rastrear uma pista',
+  write: 'escrever um pergaminho',
+  edit: 'alterar um pergaminho',
+  test: 'abrir os portões da Arena',
+  bash: 'conjurar um feitiço',
+  web: 'enviar um corvo',
+  plan: 'revisar o mapa da missão',
+  skill: 'abrir um grimório',
+  mcp: 'invocar um aliado distante',
+  other: 'usar um artefato',
+};
+
 /** @type {FeedPhrases} */
 const FEED = {
   sessionStarted: (d, h) => `${pick(SESSION_SOURCE, d.source, 'other')}${d.projectName ? ` em ${h.b(d.projectName)}` : ''}`,
@@ -103,6 +146,25 @@ const FEED = {
     unknown: (who) => `O pedido do ${who} foi negado ou cancelado`,
   },
   compacted: (who) => `🧘 ${who} medita e recupera a mana (contexto compactado)`,
+  hidden: {
+    questStarted: (d, h) => `Nova quest no quadro: ${h.b(`#${d.n ?? '?'}`)}`,
+    tool: {
+      read: (who) => `${who} explora um pergaminho`,
+      search: (who) => `${who} rastreia uma pista`,
+      write: (who, d, h, role) => `${who} ${hiddenVerb(role, 'write', 0)}`,
+      edit: (who, d, h, role) => `${who} ${hiddenVerb(role, 'edit', 0)}`,
+      test: (who) => `${who} abre os portões da Arena`,
+      bash: (who) => `${who} conjura um feitiço`,
+      web: (who) => `${who} envia um corvo`,
+      plan: (who) => `${who} revisa o mapa da missão`,
+      skill: (who) => `${who} abre um grimório`,
+      mcp: (who) => `${who} invoca um aliado distante`,
+      other: (who) => `${who} usa um artefato`,
+    },
+    toolFailed: (who) => `💥 ${who} sofre dano`,
+    toolInterrupted: (who) => `⏹️ ${who} recua`,
+    permissionRequested: (who, d) => `❗ ${who} pede sua permissão para ${pick(ASKS, d.category, 'other')}`,
+  },
 };
 
 const WORDS = {
@@ -119,6 +181,8 @@ const WORDS = {
   noAgents: 'Nenhum aventureiro no salão ainda',
   noFeed: 'A crônica ainda está em branco',
   unknownProject: 'Terras desconhecidas',
+  untitled: 'Missão sem nome',
+  hiddenTitle: 'Missão em segredo (modo discreto)',
   questStatus: {
     open: 'em curso',
     waiting_background: 'aguardando o retorno de uma missão em segundo plano',
@@ -149,6 +213,19 @@ const ACTION = {
     skill: (t) => `Abrindo o grimório ${t}`,
     mcp: (t) => `Invocando ${t}`,
     other: (t) => `Usando o artefato ${t}`,
+  },
+  hidden: {
+    read: () => 'Explorando um pergaminho',
+    search: () => 'Rastreando uma pista',
+    write: (role) => hiddenVerb(role, 'write', 1),
+    edit: (role) => hiddenVerb(role, 'edit', 1),
+    test: () => 'Batalhando na Arena',
+    bash: () => 'Conjurando um feitiço',
+    web: () => 'Enviando um corvo',
+    plan: () => 'Lendo o quadro de quests',
+    skill: () => 'Abrindo um grimório',
+    mcp: () => 'Invocando um aliado distante',
+    other: () => 'Usando um artefato',
   },
 };
 
@@ -185,7 +262,7 @@ const guilda = {
     phaseDone: '🚩',
   },
   feedLine: (event, h) => feedLineFrom(FEED, event, h),
-  actionText: (agent) => actionTextFrom(ACTION, agent),
+  actionText: (agent, h) => actionTextFrom(ACTION, agent, Boolean(h?.discreet)),
   finale: (summary) => ({
     icon: '🎁',
     title: 'Quest concluída!',

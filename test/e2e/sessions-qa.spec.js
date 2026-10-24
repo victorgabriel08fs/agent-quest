@@ -310,7 +310,10 @@ test.describe('várias sessões (tester)', () => {
     const aMore = a.mark();
     a.tool('Read', { file_path: `${PROJECT_DIR}\\depois.md` });
     await inject(srv(), a.part(aMore));
-    await expect(page.locator('#session-select')).toHaveValue(a.sessionId);
+    // T14: o seletor avisa que a fixada sumiu e diz qual sessão está na tela (A).
+    await expect(page.locator('#session-select')).toHaveValue('');
+    // Depois do reinício, A volta sem o pedido: o rótulo é o padrão do servidor.
+    await expect(page.locator('#session-select option:checked')).toHaveText(`Sessão fixada indisponível · mostrando Sessão ${a.sessionId.slice(0, 6)} · agents-quest · ativa`);
     await expect(page.locator('#session-follow')).toHaveAttribute('aria-pressed', 'false');
     expect(JSON.parse(String(await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY)))).toEqual({ follow: false, pinnedId: b.sessionId });
     // B reaparece: o painel volta para a fixada.

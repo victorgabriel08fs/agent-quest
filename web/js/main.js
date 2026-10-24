@@ -17,11 +17,23 @@
 //
 // Várias sessões (T13): o seletor agrupado por projeto (views/sessions.js), a
 // política "seguir atividade" (follow.js, função pura, chamada a cada redesenho
-// e a cada segundo, porque "parada há 30 s" depende do relógio), a preferência
+// e a cada segundo, porque "30 s sem eventos" depende do relógio), a preferência
 // no localStorage e o aviso de aprovação pendente em outra sessão
 // (views/topbar.js), com atalho para ela.
+//
+// T14:
+// - modo discreto (botão e tecla D, guardado no localStorage): as views
+//   recebem `discreet` e mascaram a sessão (discreet.js); os temas usam frases
+//   só de categoria;
+// - legenda (botão e tecla ?): diálogo nativo com o conteúdo de views/legend.js;
+// - aviso de aprovação anunciado numa região aria-live educada, à parte;
+// - sessão fixada que sumiu: o seletor mostra uma primeira opção que avisa, e
+//   escolher a sessão que já aparece passa a fixá-la;
+// - com a lista nativa do seletor aberta, as opções não são refeitas
+//   (`nextListOpen`), porque o pointerup não chega à página.
 
 import { connect, frameBatcher } from './connection.js';
+import { DISCREET_STORAGE_KEY, maskSession, parseDiscreet, serializeDiscreet } from './discreet.js';
 import { FOLLOW_STORAGE_KEY, chooseSession, parsePreference, serializePreference } from './follow.js';
 import { createSceneFx } from './fx.js';
 import { renderScene } from './scene.js';
@@ -32,10 +44,11 @@ import escritorio from './themes/escritorio.js';
 import guilda from './themes/guilda.js';
 import { renderEmpty } from './views/empty.js';
 import { ALL, feedModel, nextFilter, resolveFilter, syncFeedList } from './views/feed.js';
+import { legendTitle, renderLegend } from './views/legend.js';
 import { renderParty } from './views/party.js';
 import { renderQuest } from './views/quest.js';
-import { sessionGroups, syncSessionSelect } from './views/sessions.js';
-import { renderConnection, renderPendingAlert, renderStats, renderThemeToggle } from './views/topbar.js';
+import { nextListOpen, pinnedMissingText, sessionGroups, syncSessionSelect } from './views/sessions.js';
+import { pendingAnnouncement, renderConnection, renderPendingAlert, renderStats, renderThemeToggle } from './views/topbar.js';
 
 /** @typedef {import('../../shared/contract.js').SessionState} SessionState */
 /** @typedef {import('../../shared/contract.js').HealthResponse} HealthResponse */
@@ -65,6 +78,13 @@ const ui = {
   sessionSelect: /** @type {HTMLSelectElement} */ (byId('session-select')),
   sessionFollow: byId('session-follow'),
   sessionAlert: byId('session-alert'),
+  sessionAlertLive: byId('session-alert-live'),
+  discreet: byId('btn-discreet'),
+  legendButton: byId('btn-legend'),
+  legend: /** @type {HTMLDialogElement} */ (byId('legend')),
+  legendTitle: byId('legend-title'),
+  legendBody: byId('legend-body'),
+  legendClose: byId('legend-close'),
   stats: byId('stats'),
   conn: byId('conn'),
   toggle: byId('theme-toggle'),
@@ -95,6 +115,10 @@ const app = {
   /** Hora da última troca automática de sessão (no máximo uma a cada 10 s). */
   /** @type {number|null} */
   lastSwitchAt: null,
+  /** Modo discreto (T14; guardado no localStorage, desligado por padrão). */
+  discreet: parseDiscreet(storedValue(DISCREET_STORAGE_KEY)),
+  /** Lista nativa do seletor aberta: as opções não são refeitas (T14). */
+  listOpen: false,
   /** @type {HealthResponse|null} */
   health: null,
   /** @type {HealthState} */
@@ -109,8 +133,8 @@ const currentTheme = () => THEMES.find((theme) => theme.id === app.themeId) ?? T
 
 /**
  * Lista do seletor e sessão mostrada, pela política "seguir atividade"
- * (follow.js): seguindo, troca para a sessão ativa quando a atual está parada;
- * fixada, mostra a escolhida enquanto ela existir.
+ * (follow.js): seguindo, troca para a sessão ativa quando a atual passa 30 s
+ * sem eventos; fixada, mostra a escolhida enquanto ela existir.
  * @param {number} [now]
  * @returns {{ list: SessionState[], session: SessionState|null }}
  */
@@ -146,11 +170,33 @@ function pinSession(id) {
 }
 
 function storedPreference() {
+  return storedValue(FOLLOW_STORAGE_KEY);
+}
+
+/**
+ * Valor guardado no localStorage, ou null se o armazenamento não estiver disponível.
+ * @param {string} key
+ */
+function storedValue(key) {
   try {
-    return localStorage.getItem(FOLLOW_STORAGE_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
+}
+
+/**
+ * Liga ou desliga o modo discreto e guarda a escolha (T14).
+ * @param {boolean} on
+ */
+function setDiscreet(on) {
+  app.discreet = on;
+  try {
+    localStorage.setItem(DISCREET_STORAGE_KEY, serializeDiscreet(on));
+  } catch {
+    // armazenamento indisponível: a escolha vale só nesta aba
+  }
+  renderAll();
 }
 
 /**
@@ -189,10 +235,11 @@ const FOCUS_KEYS = ['data-filter', 'data-focus-key'];
  * ele muda. Se o foco estava num botão da região com chave estável
  * (`data-filter` ou `data-focus-key`), ele volta para o botão equivalente no
  * HTML novo (o teclado não perde o lugar a cada update). Se o botão sumiu e há
- * um `fallback`, o foco vai para ele.
+ * um `fallback` (um elemento, ou um seletor procurado na região já
+ * redesenhada), o foco vai para ele.
  * @param {Element} element
  * @param {string} html
- * @param {HTMLElement} [fallback]
+ * @param {HTMLElement|string} [fallback]
  */
 function setHTML(element, html, fallback) {
   if (held.has(element) || lastHTML.get(element) === html) return;
@@ -204,8 +251,9 @@ function setHTML(element, html, fallback) {
   element.innerHTML = html;
   if (!inside) return;
   const next = attr ? [...element.querySelectorAll(`[${attr}]`)].find((node) => node.getAttribute(attr) === focusKey) : null;
+  const other = typeof fallback === 'string' ? element.querySelector(fallback) : fallback;
   if (next instanceof HTMLElement) next.focus({ preventScroll: true });
-  else if (fallback) fallback.focus({ preventScroll: true });
+  else if (other instanceof HTMLElement) other.focus({ preventScroll: true });
 }
 
 /**
@@ -251,13 +299,13 @@ function releaseHeld() {
 function renderCenter(session) {
   const theme = currentTheme();
   setHTML(ui.questSlot, session
-    ? renderQuest({ session, theme, now: Date.now() })
+    ? renderQuest({ session, theme, now: Date.now(), discreet: app.discreet })
     : renderEmpty({ theme, health: app.health, healthState: app.healthState }));
 }
 
 /**
  * Partes que dependem do relógio (durações) e a política "seguir atividade",
- * que troca de sessão quando a atual fica parada.
+ * que troca de sessão quando a atual passa 30 s sem eventos.
  */
 function renderClock() {
   const before = app.selectedId;
@@ -270,7 +318,7 @@ function renderClock() {
   const theme = currentTheme();
   const now = Date.now();
   setHTML(ui.stats, renderStats(session, theme, now));
-  setHTML(ui.questSlot, renderQuest({ session, theme, now }));
+  setHTML(ui.questSlot, renderQuest({ session, theme, now, discreet: app.discreet }));
 }
 
 function renderAll() {
@@ -281,21 +329,46 @@ function renderAll() {
   for (const button of ui.toggle.querySelectorAll('button[data-theme]')) {
     button.setAttribute('aria-pressed', String(button.getAttribute('data-theme') === app.themeId));
   }
+  const discreet = app.discreet;
   ui.sessionInfo.hidden = list.length === 0;
-  ui.sessionSelect.title = session?.project?.dir ?? '';
+  ui.sessionSelect.title = discreet ? '' : session?.project?.dir ?? '';
   ui.sessionFollow.setAttribute('aria-pressed', String(app.preference.follow));
-  // Com um controle do seletor apertado, as opções e o aviso esperam (no máximo 1,5 s).
+  ui.discreet.setAttribute('aria-pressed', String(discreet));
+  // Com um controle do seletor apertado, as opções e o aviso esperam (no máximo
+  // 1,5 s); com a lista nativa aberta, as opções esperam ela fechar.
   if (!held.has(ui.sessionInfo)) {
-    syncSessionSelect(ui.sessionSelect, sessionGroups(list, app.selectedId, theme));
-    setHTML(ui.sessionAlert, renderPendingAlert({ list, selectedId: app.selectedId, theme, now }), ui.sessionSelect);
+    if (!app.listOpen) {
+      const pinnedMissing = !app.preference.follow && app.preference.pinnedId !== null && !store.sessions.has(app.preference.pinnedId);
+      const placeholder = pinnedMissing && session ? pinnedMissingText(discreet ? maskSession(session) : session) : null;
+      syncSessionSelect(ui.sessionSelect, sessionGroups(list, app.selectedId, theme, { discreet }), { placeholder });
+    }
+    const alert = { list, selectedId: app.selectedId, theme, now, discreet };
+    setHTML(ui.sessionAlert, renderPendingAlert(alert), ui.sessionSelect);
+    const announcement = pendingAnnouncement(alert);
+    if (ui.sessionAlertLive.textContent !== announcement) ui.sessionAlertLive.textContent = announcement;
   }
   setHTML(ui.stats, renderStats(session, theme, now));
   setHTML(ui.conn, renderConnection(app.connection));
   const filter = currentFilter(session);
-  setHTML(ui.party, renderParty({ session, theme, filter }));
-  renderFeedCard(feedModel({ session, theme, filter }));
+  setHTML(ui.party, renderParty({ session, theme, filter, discreet }));
+  renderFeedCard(feedModel({ session, theme, filter, discreet }));
   renderSceneArea(session, theme);
   renderCenter(session);
+  if (ui.legend.open) renderLegendDialog();
+}
+
+/** Título e corpo da legenda, no tema e no modo atuais (T14). */
+function renderLegendDialog() {
+  const theme = currentTheme();
+  const title = legendTitle(theme);
+  if (ui.legendTitle.textContent !== title) ui.legendTitle.textContent = title;
+  setHTML(ui.legendBody, renderLegend({ theme, discreet: app.discreet }));
+}
+
+function openLegend() {
+  if (ui.legend.open) return;
+  renderLegendDialog();
+  ui.legend.showModal();
 }
 
 /**
@@ -306,7 +379,7 @@ function renderAll() {
  */
 function renderSceneArea(session, theme) {
   const before = sceneFx.capture();
-  setHTML(ui.sceneStage, renderScene({ session, theme }));
+  setHTML(ui.sceneStage, renderScene({ session, theme, discreet: app.discreet }));
   sceneFx.update({ session, theme, before });
 }
 
@@ -317,7 +390,8 @@ function renderSceneArea(session, theme) {
  */
 function renderFeedCard(model) {
   setHTML(ui.feedHead, model.head);
-  setHTML(ui.feedFilters, model.filters);
+  // O chip da instância some quando ela é desfeita: o foco vai para "Todos".
+  setHTML(ui.feedFilters, model.filters, '[data-filter=""]');
   ui.feedFilters.hidden = model.filters === '';
   setHTML(ui.feedEmpty, model.empty);
   ui.feedEmpty.hidden = model.empty === '';
@@ -336,7 +410,9 @@ function onFilterClick(event, mode) {
   if (!control) return;
   const { session } = currentView();
   if (!session) return;
-  const value = nextFilter(currentFilter(session), control.getAttribute('data-filter') ?? ALL, mode);
+  // O chip da instância filtrada (T14) se desfaz no próprio chip.
+  const how = control.hasAttribute('data-toggle') ? 'toggle' : mode;
+  const value = nextFilter(currentFilter(session), control.getAttribute('data-filter') ?? ALL, how);
   app.filter = { sessionId: session.id, value };
   // O clique já chegou: a região pode ser redesenhada.
   held.clear();
@@ -416,10 +492,27 @@ ui.toggle.addEventListener('click', (event) => {
 
 // Escolher uma sessão no seletor a fixa e desliga o "seguir atividade" (T13).
 ui.sessionSelect.addEventListener('change', () => {
+  app.listOpen = false;
   if (ui.sessionSelect.value) pinSession(ui.sessionSelect.value);
   held.clear();
   renderAll();
 });
+
+// Lista nativa do seletor aberta (T14): enquanto estiver, as opções não mudam.
+/**
+ * @param {Parameters<typeof nextListOpen>[1]} event
+ */
+function trackList(event) {
+  const was = app.listOpen;
+  app.listOpen = nextListOpen(was, event);
+  if (was && !app.listOpen) scheduleRender();
+}
+ui.sessionSelect.addEventListener('pointerdown', () => trackList({ type: 'pointerdown' }));
+ui.sessionSelect.addEventListener('keydown', (event) => trackList({ type: 'keydown', key: event.key, altKey: event.altKey }));
+ui.sessionSelect.addEventListener('blur', () => trackList({ type: 'blur' }));
+document.addEventListener('pointerdown', (event) => {
+  if (event.target !== ui.sessionSelect) trackList({ type: 'outside' });
+}, true);
 
 // "Seguir atividade": ligar volta a seguir; desligar fixa a sessão mostrada.
 ui.sessionFollow.addEventListener('click', () => {
@@ -445,6 +538,14 @@ ui.sessionAlert.addEventListener('click', (event) => {
   renderAll();
 });
 
+ui.discreet.addEventListener('click', () => setDiscreet(!app.discreet));
+ui.legendButton.addEventListener('click', openLegend);
+ui.legendClose.addEventListener('click', () => ui.legend.close());
+// Clique no fundo (fora da caixa) fecha a legenda, como no mockup.
+ui.legend.addEventListener('click', (event) => {
+  if (event.target === ui.legend) ui.legend.close();
+});
+
 ui.party.addEventListener('click', (event) => onFilterClick(event, 'toggle'));
 ui.feedFilters.addEventListener('click', (event) => onFilterClick(event, 'set'));
 holdWhilePressed(ui.party);
@@ -460,8 +561,19 @@ window.addEventListener('blur', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+  // Com a legenda aberta, só o Esc (do próprio diálogo) vale.
+  if (ui.legend.open) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+  if (event.key === 'd' || event.key === 'D') {
+    setDiscreet(!app.discreet);
+    return;
+  }
+  if (event.key === '?') {
+    event.preventDefault();
+    openLegend();
+    return;
+  }
   const id = themeIdForKey(event.key, app.themeId, THEME_IDS);
   if (id) switchTheme(id);
 });

@@ -9,6 +9,12 @@
 // contrato tem `icons`: os ícones das linhas de sistema do feed (sessão, ticket
 // e etapa), que no mockup ficavam em `sysIcon`.
 //
+// Modo discreto (T14): os helpers trazem `h.discreet`. Com ele, `feedLine` e
+// `actionText` usam frases só de categoria, sem alvo, detalhe, título nem erro
+// (os dados já chegam sem esses textos, web/js/discreet.js). `words.untitled`
+// é o título do pedido que não é texto (modelo de eventos, seção 9), e
+// `words.hiddenTitle`, o título do ticket no modo discreto.
+//
 // Este módulo também tem as regras de escolha do tema (hash da URL,
 // `localStorage` e teclas 1, 2 e T, como no mockup), que não dependem do DOM.
 
@@ -55,6 +61,8 @@
  * @property {string} noAgents       cartão Equipe sem sessão
  * @property {string} noFeed         feed vazio
  * @property {string} unknownProject grupo do seletor das sessões sem projeto conhecido (modelo de eventos, seção 7; T13)
+ * @property {string} untitled       título do ticket cujo pedido não é texto (modelo de eventos, seção 9; T14)
+ * @property {string} hiddenTitle    título do ticket no modo discreto (T14)
  * @property {Record<QuestStatus, string>} questStatus
  */
 
@@ -73,6 +81,7 @@
  * Helpers que as telas entregam ao tema (`h`). Tudo que é dinâmico passa por
  * eles; as funções que devolvem HTML já escapam o texto.
  * @typedef {object} ThemeHelpers
+ * @property {boolean} discreet                       modo discreto: frases só de categoria (T14)
  * @property {(value: unknown) => string} esc        escapa &, <, >, " e '
  * @property {(value: unknown) => string} code       `<code>` com o texto escapado
  * @property {(value: unknown) => string} b          `<b>` com o texto escapado
@@ -134,8 +143,8 @@
  * @property {{ health: string, context: string }} bars
  * @property {ThemeWords} words
  * @property {ThemeIcons} icons
- * @property {(event: CanonicalEvent, h: ThemeHelpers) => string|null} feedLine   HTML seguro, ou null para não aparecer no feed
- * @property {(agent: AgentState|null, h: ThemeHelpers) => string} actionText   texto puro do balão e da linha do cartão
+ * @property {(event: CanonicalEvent, h: ThemeHelpers) => string|null} feedLine   HTML seguro, ou null para não aparecer no feed; respeita `h.discreet`
+ * @property {(agent: AgentState|null, h: ThemeHelpers) => string} actionText   texto puro do balão e da linha do cartão; respeita `h.discreet`
  * @property {(summary: QuestSummary) => FinaleCard} finale
  * @property {(view: SessionStatsView) => StatItem[]} stats
  */
@@ -146,6 +155,15 @@ export const THEME_KEYS = Object.freeze([
   'feedLine', 'actionText', 'finale', 'stats',
 ]);
 
+/** Palavras obrigatórias de `words` (texto não vazio), além de `questStatus`. */
+export const WORD_KEYS = Object.freeze([
+  'quest', 'party', 'feed', 'idle', 'orqIdle', 'start', 'waiting', 'noQuest', 'noQuestHint',
+  'noSessions', 'noAgents', 'noFeed', 'unknownProject', 'untitled', 'hiddenTitle',
+]);
+
+/** Ícones obrigatórios de `icons`. */
+export const ICON_KEYS = Object.freeze(['session', 'questStarted', 'questDone', 'questFailed', 'questInterrupted', 'phaseDone']);
+
 /** Salas da cena, na ordem do mockup. */
 export const ROOM_IDS = Object.freeze(/** @type {const} */ (['hq', 'design', 'dev', 'idle', 'docs', 'test']));
 
@@ -155,10 +173,11 @@ const THEME_FUNCTIONS = ['feedLine', 'actionText', 'finale', 'stats'];
 /**
  * Confere a forma de um tema. Devolve a lista de problemas (vazia se estiver certo).
  * @param {any} theme
- * @param {{ roles: readonly string[], phases: readonly string[] }} lists   papéis e etapas do contrato compartilhado
+ * @param {{ roles: readonly string[], phases: readonly string[], questStatus?: readonly string[] }} lists
+ *   papéis, etapas e status de ticket do contrato compartilhado
  * @returns {string[]}
  */
-export function checkTheme(theme, { roles, phases }) {
+export function checkTheme(theme, { roles, phases, questStatus = [] }) {
   const problems = [];
   if (!theme || typeof theme !== 'object') return ['o tema não é um objeto'];
   for (const key of THEME_KEYS) {
@@ -187,6 +206,16 @@ export function checkTheme(theme, { roles, phases }) {
   }
   for (const bar of ['health', 'context']) {
     if (typeof theme.bars?.[bar] !== 'string' || theme.bars[bar] === '') problems.push(`bars.${bar} ausente`);
+  }
+  for (const word of WORD_KEYS) {
+    if (typeof theme.words?.[word] !== 'string' || theme.words[word].trim() === '') problems.push(`words.${word} ausente`);
+  }
+  for (const status of questStatus) {
+    const text = theme.words?.questStatus?.[status];
+    if (typeof text !== 'string' || text === '') problems.push(`words.questStatus.${status} ausente`);
+  }
+  for (const icon of ICON_KEYS) {
+    if (typeof theme.icons?.[icon] !== 'string' || theme.icons[icon] === '') problems.push(`icons.${icon} ausente`);
   }
   return problems;
 }

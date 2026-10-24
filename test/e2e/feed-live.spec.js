@@ -263,14 +263,15 @@ test.describe('feed ao vivo com o injetor', () => {
     await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
     expect(await visibleIds(page)).toEqual(expectedIds(state));
 
-    // Instância (os convidados ainda trabalham): só as linhas dela; nenhum chip
-    // apertado; de novo (Espaço) desfaz, e o foco fica no botão.
+    // Instância (os convidados ainda trabalham): só as linhas dela; só o chip da
+    // instância (T14) apertado; de novo (Espaço) desfaz, e o foco fica no botão.
     const instance = page.locator('#party .member[data-agent="aux"] .inst-pick').first();
     const value = await instance.getAttribute('data-filter');
     const key = String(value).slice('agent:'.length);
     await instance.click();
     await expect(instance).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#feed-filters [aria-pressed="true"]')).toHaveCount(0);
+    await expect(page.locator('#feed-filters [aria-pressed="true"]')).toHaveCount(1);
+    await expect(page.locator(`#feed-filters .chip-inst[data-filter="${value}"]`)).toHaveAttribute('aria-pressed', 'true');
     expect(await visibleIds(page)).toEqual(expectedIds(state, (e) => e.agentKey === key));
     await page.locator(`#party [data-filter="${value}"]`).focus();
     await page.keyboard.press('Space');

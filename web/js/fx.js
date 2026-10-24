@@ -13,6 +13,9 @@
 // - bugs: os novos aparecem com "spawn"; os que somem viram fantasmas com a
 //   animação de derrota (mockup);
 // - `quest.finished` com `done`: cartão final com o resumo do tema, sem XP.
+//   Trocar de tema com o cartão na tela o redesenha no tema novo, pelo tempo
+//   que ainda faltava e sem confete (T14, observação do tester do T12b);
+//   trocar de sessão o tira.
 //
 // Regras do plano: nenhum estilo inline, nem no HTML nem por atributo (CSP);
 // posições por classes e data-*, movimento só por element.animate() ou classes
@@ -193,6 +196,27 @@ export function questSummary(session, event) {
 }
 
 /**
+ * Cartão final na tela: o resumo, a sessão e quando ele apareceu (`clock`).
+ * @typedef {object} FinaleState
+ * @property {QuestSummary} summary
+ * @property {string} sessionId
+ * @property {number} shownAt
+ */
+
+/**
+ * Quanto falta do cartão final que estava na tela, para redesenhá-lo no tema
+ * novo (T14). Outra sessão, ou o tempo já acabou: 0.
+ * @param {FinaleState|null} finale
+ * @param {string} sessionId
+ * @param {number} now   mesmo relógio de `shownAt`
+ * @returns {number}
+ */
+export function finaleRemaining(finale, sessionId, now) {
+  if (!finale || finale.sessionId !== sessionId) return 0;
+  return Math.max(0, FINALE_MS - Math.max(0, now - finale.shownAt));
+}
+
+/**
  * @typedef {{ left: number, top: number, width: number, height: number }} Box
  */
 
@@ -282,6 +306,8 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
   let flights = [];
   /** @type {HTMLElement|null} */
   let finaleCard = null;
+  /** @type {FinaleState|null} */
+  let finale = null;
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let finaleTimer;
 
@@ -517,10 +543,13 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
    * Cartão final do ticket entregue (mockup, `finale`), com o texto do tema.
    * @param {QuestSummary} summary
    * @param {Theme} theme
-   * @param {boolean} animated
+   * @param {boolean} animated   com o confete
+   * @param {{ sessionId: string, shownAt?: number, duration?: number }} where
+   *   sessão do cartão; ao redesenhar no tema novo, quando ele apareceu e quanto falta
    */
-  function showFinale(summary, theme, animated) {
+  function showFinale(summary, theme, animated, { sessionId, shownAt = clock(), duration = FINALE_MS }) {
     hideFinale();
+    finale = { summary, sessionId, shownAt };
     const card = theme.finale(summary);
     const overlay = temp('finale');
     const box = document.createElement('div');
@@ -538,14 +567,16 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
     if (animated) burst(overlay);
     finaleTimer = setTimeout(() => {
       overlay.classList.add('out');
+      finale = null;
       finaleTimer = setTimeout(() => { overlay.remove(); if (finaleCard === overlay) finaleCard = null; }, FINALE_OUT_MS);
-    }, FINALE_MS);
+    }, duration);
   }
 
   function hideFinale() {
     clearTimeout(finaleTimer);
     finaleCard?.remove();
     finaleCard = null;
+    finale = null;
   }
 
   /** Confete do cartão final (mockup, `burst`); os ícones vêm do CSS do tema. */
@@ -592,7 +623,10 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
     const animated = motion();
     if (!changes.animate) {
       // Outra sessão ou outro tema (ou o primeiro desenho): nada anima, e o que
-      // estava no ar sai.
+      // estava no ar sai. O cartão final da mesma sessão volta no tema novo,
+      // pelo tempo que faltava (T14).
+      const kept = finale;
+      const remaining = session ? finaleRemaining(kept, session.id, clock()) : 0;
       for (const effect of effects) effect.animation?.cancel();
       effects = [];
       for (const flight of flights) {
@@ -602,12 +636,13 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
       }
       flights = [];
       hideFinale();
+      if (kept && session && remaining > 0) showFinale(kept.summary, theme, false, { sessionId: session.id, shownAt: kept.shownAt, duration: remaining });
       if (animated) syncAmbient();
       return;
     }
     if (!animated || !session) {
       // Movimento reduzido: nenhuma chamada a animate(); o cartão final aparece parado.
-      if (changes.finale && session) showFinale(changes.finale, theme, false);
+      if (changes.finale && session) showFinale(changes.finale, theme, false, { sessionId: session.id });
       return;
     }
 
@@ -651,7 +686,7 @@ export function createSceneFx({ stage, layer, motion, clock = () => performance.
     retarget(session, claimed);
     for (const delegation of changes.delegations) launch(session, delegation, claimed);
 
-    if (changes.finale) showFinale(changes.finale, theme, true);
+    if (changes.finale) showFinale(changes.finale, theme, true, { sessionId: session.id });
     syncAmbient();
   }
 

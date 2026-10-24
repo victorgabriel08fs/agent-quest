@@ -7,6 +7,12 @@
 // crus e só montam HTML com esses helpers.
 //
 // Nada aqui depende do DOM: o mesmo código roda no navegador e nos testes do Node.
+//
+// Modo discreto (T14): com `h.discreet`, os despachantes tiram os textos livres
+// dos dados (`maskEventData`) e usam as frases só de categoria de cada tema
+// (`hidden`), como "Rodando um comando" ou "Editando um arquivo".
+
+import { maskEventData } from '../discreet.js';
 
 /** @typedef {import('../../../shared/contract.js').RoleId} RoleId */
 /** @typedef {import('../../../shared/contract.js').ToolCategory} ToolCategory */
@@ -75,9 +81,10 @@ export function formatClock(ts, { seconds = true } = {}) {
  * resolvidos pela lista `agents` do estado da sessão.
  * @param {Theme} theme
  * @param {readonly AgentState[]} [agents]
+ * @param {{ discreet?: boolean }} [options]   discreet: modo discreto (T14)
  * @returns {ThemeHelpers}
  */
-export function createHelpers(theme, agents = []) {
+export function createHelpers(theme, agents = [], { discreet = false } = {}) {
   const byKey = new Map(agents.map((agent) => [agent.key, agent]));
   const roles = /** @type {Record<string, import('./contract.js').RoleWords>} */ (theme.roles);
   const phases = /** @type {Record<string, string>} */ (theme.phases);
@@ -98,6 +105,7 @@ export function createHelpers(theme, agents = []) {
   };
 
   return {
+    discreet: Boolean(discreet),
     esc,
     code,
     b,
@@ -144,6 +152,17 @@ export function createHelpers(theme, agents = []) {
  * @property {AgentPhrase} permissionRequested
  * @property {{ approved: AgentPhrase, denied: AgentPhrase, unknown: AgentPhrase }} permissionResolved
  * @property {AgentPhrase} compacted
+ * @property {HiddenFeedPhrases} hidden   modo discreto: frases só de categoria (T14)
+ */
+
+/**
+ * Frases do feed no modo discreto, sem alvo, detalhe, título nem erro.
+ * @typedef {object} HiddenFeedPhrases
+ * @property {DataPhrase} questStarted
+ * @property {Record<ToolCategory, AgentPhrase>} tool
+ * @property {AgentPhrase} toolFailed
+ * @property {AgentPhrase} toolInterrupted
+ * @property {AgentPhrase} permissionRequested   pela categoria da ferramenta (`data.category`)
  */
 
 /**
@@ -157,6 +176,7 @@ export function createHelpers(theme, agents = []) {
  * @property {string} compacting
  * @property {string} failed
  * @property {Record<ToolCategory, (target: string, role: RoleId) => string>} doing
+ * @property {Record<ToolCategory, (role: RoleId) => string>} hidden   modo discreto: só a categoria (T14)
  */
 
 /**
@@ -194,6 +214,7 @@ export function targetOf(data) {
  * @returns {string|null}
  */
 export function feedLineFrom(p, event, h) {
+  if (h.discreet) return hiddenFeedLine(p, event, h);
   const d = /** @type {Record<string, any>} */ (event.data ?? {});
   const role = h.roleOf(event.agentKey);
   const who = h.role(event.agentKey);
@@ -216,21 +237,46 @@ export function feedLineFrom(p, event, h) {
 }
 
 /**
+ * Linha do feed no modo discreto: os dados chegam sem os textos livres, e as
+ * linhas que mostrariam alvo, título ou erro usam as frases só de categoria.
+ * @param {FeedPhrases} p
+ * @param {CanonicalEvent} event
+ * @param {ThemeHelpers} h
+ * @returns {string|null}
+ */
+function hiddenFeedLine(p, event, h) {
+  const d = maskEventData(event.data);
+  const role = h.roleOf(event.agentKey);
+  const who = h.role(event.agentKey);
+  switch (event.kind) {
+    case 'quest.started': return p.hidden.questStarted(d, h);
+    case 'tool.started': return pick(p.hidden.tool, d.category, 'other')(who, d, h, role);
+    case 'tool.failed': return (d.interrupted ? p.hidden.toolInterrupted : p.hidden.toolFailed)(who, d, h, role);
+    case 'permission.requested': return p.hidden.permissionRequested(who, d, h, role);
+    default: return feedLineFrom(p, { ...event, data: d }, { ...h, discreet: false });
+  }
+}
+
+/**
  * Linha de ação de um agente (balão e cartão), em texto puro.
- * Sem agente (papel do time sem instância na sessão), o texto de ocioso.
+ * Sem agente (papel do time sem instância na sessão), o texto de ocioso. No
+ * modo discreto, a delegação sai sem a descrição e a ferramenta, só com a
+ * categoria.
  * @param {ActionPhrases} p
  * @param {AgentState|null} agent
+ * @param {boolean} [discreet]
  * @returns {string}
  */
-export function actionTextFrom(p, agent) {
+export function actionTextFrom(p, agent, discreet = false) {
   if (!agent) return p.idle;
   if (agent.status === 'waiting') return p.waiting;
   if (agent.finished) return p.idle;
   if (agent.status === 'idle') return agent.role === 'orq' ? p.orqIdle : p.idle;
   const activity = agent.activity;
   if (!activity || activity.kind === 'start') return p.start;
-  if (activity.kind === 'delegate') return p.delegating(activity.detail || activity.target || null);
+  if (activity.kind === 'delegate') return p.delegating(discreet ? null : activity.detail || activity.target || null);
   if (activity.kind === 'compact') return p.compacting;
   if (activity.state === 'failed') return p.failed;
+  if (discreet) return pick(p.hidden, activity.category, 'other')(agent.role);
   return pick(p.doing, activity.category, 'other')(targetOf(activity), agent.role);
 }

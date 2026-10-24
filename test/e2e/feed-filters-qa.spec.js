@@ -17,7 +17,7 @@ import { injectScenario } from '../../scripts/inject-fixture.mjs';
 import escritorio from '../../web/js/themes/escritorio.js';
 import guilda from '../../web/js/themes/guilda.js';
 import {
-  OTHER_PROJECT_DIR, createScenario, expectedIds, inject, interleave, recordFeed, recorded, resetRecord, startLiveServer, visibleIds, waitFor, waitPanelFeed,
+  OTHER_PROJECT_DIR, createScenario, expectedIds, inject, interleave, recordFeed, recorded, resetRecord, settledState, startLiveServer, visibleIds, waitFor, waitPanelFeed,
 } from './qa-live.js';
 import { watchPage } from './support.js';
 
@@ -85,6 +85,61 @@ function teamScenario(label = 'time') {
 
 /** @param {any} state @param {string} id */
 const sessionOf = (state, id) => state.sessions.find((/** @type {any} */ x) => x.id === id);
+
+/**
+ * Registra na página, pelo relógio dela (performance.now): aperto e soltura de
+ * botão (Espaço ou ponteiro), a primeira linha nova do feed e cada redesenho da
+ * equipe e dos chips. Instalado uma vez por página.
+ * @param {import('@playwright/test').Page} page
+ */
+async function installHoldProbe(page) {
+  await page.evaluate(() => {
+    const w = /** @type {any} */ (window);
+    if (w.__hold) return;
+    w.__hold = [];
+    const log = (/** @type {string} */ what) => w.__hold.push({ what, t: performance.now() });
+    document.addEventListener('keydown', (event) => { if (event.key === ' ' && !event.repeat) log('press'); }, true);
+    document.addEventListener('keyup', (event) => { if (event.key === ' ') log('release'); }, true);
+    document.addEventListener('pointerdown', () => log('press'), true);
+    document.addEventListener('pointerup', () => log('release'), true);
+    const observe = (/** @type {string} */ id, /** @type {string} */ what) => new MutationObserver(() => log(what)).observe(/** @type {Node} */ (document.getElementById(id)), { childList: true });
+    observe('party', 'party');
+    observe('feed-filters', 'chips');
+    new MutationObserver((records) => { if (records.some((r) => r.addedNodes.length > 0)) log('row'); })
+      .observe(/** @type {Node} */ (document.getElementById('feed-entries')), { childList: true });
+  });
+}
+
+/** @param {import('@playwright/test').Page} page */
+const resetHoldProbe = (page) => page.evaluate(() => { /** @type {any} */ (window).__hold.length = 0; });
+
+/**
+ * Marcos da tentativa, em ms desde o aperto (relógio da página): primeira linha
+ * nova, soltura e quantos redesenhos da região houve entre o aperto e a soltura.
+ * @param {import('@playwright/test').Page} page
+ * @param {'party'|'chips'} region
+ */
+const holdTimeline = (page, region) => page.evaluate((name) => {
+  const log = /** @type {{ what: string, t: number }[]} */ (/** @type {any} */ (window).__hold);
+  const press = log.find((e) => e.what === 'press');
+  if (!press) return null;
+  const row = log.find((e) => e.what === 'row' && e.t >= press.t);
+  const release = log.find((e) => e.what === 'release' && e.t >= press.t);
+  const end = release ? release.t : Infinity;
+  return {
+    rowAfter: row ? Math.round(row.t - press.t) : null,
+    releaseAfter: release ? Math.round(release.t - press.t) : null,
+    redraws: log.filter((e) => e.what === name && e.t >= press.t && e.t < end).length,
+  };
+}, region);
+
+/**
+ * A tentativa mede o que promete: a linha nova chegou e o botão foi solto antes
+ * do teto de 1,5 s (com folga).
+ * @param {{ rowAfter: number|null, releaseAfter: number|null }|null} timeline
+ */
+const validHold = (timeline) => timeline !== null && timeline.rowAfter !== null && timeline.releaseAfter !== null
+  && timeline.rowAfter <= 1_400 && timeline.releaseAfter <= 1_400;
 
 test.describe('filtros e animação do feed (tester)', () => {
   // Prazo maior que o padrão de 30 s: cada teste sobe o próprio servidor e tem muitos passos, e o E2E roda com vários workers.
@@ -169,16 +224,18 @@ test.describe('filtros e animação do feed (tester)', () => {
         expect(item.isNew, item.id).toBe(!item.hidden);
       }
 
-      // Instância do tester pelo cartão: só as linhas dela; nenhum chip apertado.
+      // Instância do tester pelo cartão: só as linhas dela; só o chip da instância (T14) apertado.
       const tesButton = page.locator(`#party [data-filter="agent:${keys.tes}"]`);
       await tesButton.click();
       await expect(tesButton).toHaveAttribute('aria-pressed', 'true');
       await expect(page.locator(`#party li.inst[data-key="${keys.tes}"]`)).toHaveClass(/is-filter/);
-      await expect(page.locator('#feed-filters [aria-pressed="true"]')).toHaveCount(0);
+      await expect(page.locator('#feed-filters [aria-pressed="true"]')).toHaveCount(1);
+      await expect(page.locator(`#feed-filters .chip-inst[data-filter="agent:${keys.tes}"]`)).toHaveAttribute('aria-pressed', 'true');
       expect(await visibleIds(page)).toEqual(expectedIds(session, oracle(session, `agent:${keys.tes}`)));
       // Clicar de novo desfaz.
       await tesButton.click();
       await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.locator('#feed-filters .chip-inst')).toHaveCount(0);
       expect(await visibleIds(page)).toEqual(expectedIds(session));
       await expect(page.locator('#feed-head')).toHaveText(new RegExp(`^${theme.words.feed}\\s*${session.feed.length} eventos$`));
 
@@ -465,16 +522,20 @@ test.describe('filtros e animação do feed (tester)', () => {
     expect(await visibleIds(page)).toEqual(expectedIds(session, oracle(session, `agent:${keys.dev}`)));
   });
 
+  // Clique segurado (regras de interface da visão geral): o main.js segura a
+  // região por no máximo 1,5 s. Os marcos de cada tentativa (aperto, primeira
+  // linha nova, soltura e redesenhos da região) são medidos pelo relógio da
+  // própria página, sem a latência do processo de teste (ADR 0010, "contador
+  // antes de relógio"). A tentativa só vale se o update chegou e o botão foi
+  // solto antes do teto; senão, é refeita uma vez com outros eventos (ADR 0010,
+  // "uma nova tentativa"; falhar duas vezes seguidas é bug).
+
   test('clique durante um update: Espaço segurado no cartão e mouse segurado no chip não se perdem', async ({ page }) => {
     const { s, parts } = teamScenario('clique');
     await page.goto(`${srv().base}/#escritorio`);
     const state = await inject(srv(), parts[0]);
     await waitPanelFeed(page, sessionOf(state, s.sessionId));
-
-    // O main.js segura a região por no máximo 1,5 s. Se o update chega depois
-    // de 1,2 s (máquina carregada), a tentativa não mede o que promete e é
-    // refeita uma vez com outros eventos (ADR 0010, "uma nova tentativa").
-    const HOLD_BUDGET_MS = 1_200;
+    await installHoldProbe(page);
     const send = (/** @type {{ events: any[] }} */ chunk) => injectScenario(/** @type {any} */ (chunk), { port: srv().port, token: srv().token, fast: true });
     const feedCount = () => page.locator('#feed-entries li.entry').count();
 
@@ -484,31 +545,32 @@ test.describe('filtros e animação do feed (tester)', () => {
     const extra = s.mark();
     s.pre('Read', { file_path: FILE('extra.md') });
     const keyChunks = [{ events: parts[1].events.slice(0, 2) }, s.part(extra)];
-    /** @type {number[]} */
+    /** @type {any[]} */
     const slowKeys = [];
+    let keyVerified = false;
     for (const chunk of keyChunks) {
       await page.locator('#feed-filters [data-filter=""]').click();
       await arqRole.focus();
       const count = await feedCount();
-      const partyBefore = await page.locator('#party').innerHTML();
+      await resetHoldProbe(page);
       await page.keyboard.down(' ');
-      const pressedAt = Date.now();
       await send(chunk);
-      await expect.poll(feedCount, { intervals: [20, 40, 80] }).toBeGreaterThan(count);
-      const held = Date.now() - pressedAt;
-      const redrawn = (await page.locator('#party').innerHTML()) !== partyBefore;
+      await expect.poll(feedCount, { intervals: [10, 20, 40] }).toBeGreaterThan(count);
       await page.keyboard.up(' ');
-      if (held > HOLD_BUDGET_MS) {
-        slowKeys.push(held);
+      const timeline = await holdTimeline(page, 'party');
+      if (!validHold(timeline)) {
+        slowKeys.push(timeline);
+        await settledState(srv().port);
         continue;
       }
-      // Com a tecla apertada, o cartão da equipe ainda não foi redesenhado.
-      expect(redrawn, 'equipe redesenhada com a tecla apertada').toBe(false);
+      // Com a tecla apertada, o cartão da equipe não foi redesenhado, e o clique valeu.
+      expect(timeline?.redraws, 'equipe redesenhada com a tecla apertada').toBe(0);
       await expect(arqRole).toHaveAttribute('aria-pressed', 'true');
       await expect(page.locator('#feed-filters [data-filter="role:arq"]')).toHaveAttribute('aria-pressed', 'true');
+      keyVerified = true;
       break;
     }
-    expect(slowKeys.length, `update depois de ${HOLD_BUDGET_MS} ms nas duas tentativas (${slowKeys.join(', ')} ms)`).toBeLessThan(2);
+    expect(keyVerified, `teto passado nas duas tentativas: ${JSON.stringify(slowKeys)}`).toBe(true);
 
     // Mouse: botão apertado num chip enquanto chega um papel novo (os chips
     // mudam): o tester; na nova tentativa, um documentador. Sem foco em outro
@@ -516,8 +578,9 @@ test.describe('filtros e animação do feed (tester)', () => {
     const docMark = s.mark();
     s.delegate(s.agent('doc-extra', 'documentador'), 'Documentar o clique');
     const mouseChunks = [{ events: parts[1].events.slice(2) }, s.part(docMark)];
-    /** @type {number[]} */
+    /** @type {any[]} */
     const slowMouse = [];
+    let mouseVerified = false;
     for (const chunk of mouseChunks) {
       await page.locator('#feed-filters [data-filter=""]').click();
       await page.evaluate(() => /** @type {HTMLElement|null} */ (document.activeElement)?.blur());
@@ -526,27 +589,27 @@ test.describe('filtros e animação do feed (tester)', () => {
       if (!box) throw new Error('chip sem caixa');
       const count = await feedCount();
       const chipsBefore = await page.locator('#feed-filters .chip').count();
-      const chipsHTML = await page.locator('#feed-filters').innerHTML();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await resetHoldProbe(page);
       await page.mouse.down();
-      const pressedAt = Date.now();
       await send(chunk);
-      await expect.poll(feedCount, { intervals: [20, 40, 80] }).toBeGreaterThan(count);
-      const held = Date.now() - pressedAt;
-      const redrawn = (await page.locator('#feed-filters').innerHTML()) !== chipsHTML;
+      await expect.poll(feedCount, { intervals: [10, 20, 40] }).toBeGreaterThan(count);
       await page.mouse.up();
-      if (held > HOLD_BUDGET_MS) {
-        slowMouse.push(held);
+      const timeline = await holdTimeline(page, 'chips');
+      if (!validHold(timeline)) {
+        slowMouse.push(timeline);
+        await settledState(srv().port);
         continue;
       }
-      // Com o botão apertado, os chips ainda não ganharam o papel novo.
-      expect(redrawn, 'chips redesenhados com o botão apertado').toBe(false);
+      // Com o botão apertado, os chips não ganharam o papel novo; o clique valeu.
+      expect(timeline?.redraws, 'chips redesenhados com o botão apertado').toBe(0);
       await expect(chip).toHaveAttribute('aria-pressed', 'true');
       // Solto o botão, os chips acompanham o papel novo.
-      await expect(page.locator('#feed-filters .chip')).toHaveCount(chipsBefore + 1);
+      await expect(page.locator('#feed-filters .chip:not(.chip-inst)')).toHaveCount(chipsBefore + 1);
+      mouseVerified = true;
       break;
     }
-    expect(slowMouse.length, `update depois de ${HOLD_BUDGET_MS} ms nas duas tentativas (${slowMouse.join(', ')} ms)`).toBeLessThan(2);
+    expect(mouseVerified, `teto passado nas duas tentativas: ${JSON.stringify(slowMouse)}`).toBe(true);
   });
 
   // Regressão do bug 1 do tester no T11b (corrigido em 19/10/2026): o `blur` do
@@ -559,24 +622,40 @@ test.describe('filtros e animação do feed (tester)', () => {
     await page.goto(`${srv().base}/#escritorio`);
     const state = await inject(srv(), parts[0]);
     await waitPanelFeed(page, sessionOf(state, s.sessionId));
-    // O usuário já usou um filtro: o chip "Todos" fica com o foco depois do clique.
-    await page.locator('#feed-filters [data-filter="role:arq"]').click();
-    await page.locator('#feed-filters [data-filter=""]').click();
-    await expect(page.locator('#feed-filters [data-filter=""]')).toBeFocused();
-
+    await installHoldProbe(page);
+    const extra = s.mark();
+    s.pre('Read', { file_path: FILE('extra-foco.md') });
+    const chunks = [{ events: parts[1].events.slice(0, 2) }, s.part(extra)];
     const button = page.locator('#party [data-filter="role:orq"]');
-    const box = await button.boundingBox();
-    if (!box) throw new Error('botão sem caixa');
-    const partyBefore = await page.locator('#party').innerHTML();
-    const count = await page.locator('#feed-entries li.entry').count();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await injectScenario(/** @type {any} */ ({ events: parts[1].events.slice(0, 2) }), { port: srv().port, token: srv().token, fast: true });
-    await expect.poll(() => page.locator('#feed-entries li.entry').count()).toBeGreaterThan(count);
-    const redrawnWhilePressed = (await page.locator('#party').innerHTML()) !== partyBefore;
-    await page.mouse.up();
-    expect.soft(redrawnWhilePressed, 'a equipe foi redesenhada com o botão apertado').toBe(false);
-    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    /** @type {any[]} */
+    const slow = [];
+    let verified = false;
+    for (const chunk of chunks) {
+      // O usuário já usou um filtro: o chip "Todos" fica com o foco depois do clique.
+      await page.locator('#feed-filters [data-filter="role:arq"]').click();
+      await page.locator('#feed-filters [data-filter=""]').click();
+      await expect(page.locator('#feed-filters [data-filter=""]')).toBeFocused();
+      const box = await button.boundingBox();
+      if (!box) throw new Error('botão sem caixa');
+      const count = await page.locator('#feed-entries li.entry').count();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await resetHoldProbe(page);
+      await page.mouse.down();
+      await injectScenario(/** @type {any} */ (chunk), { port: srv().port, token: srv().token, fast: true });
+      await expect.poll(() => page.locator('#feed-entries li.entry').count(), { intervals: [10, 20, 40] }).toBeGreaterThan(count);
+      await page.mouse.up();
+      const timeline = await holdTimeline(page, 'party');
+      if (!validHold(timeline)) {
+        slow.push(timeline);
+        await settledState(srv().port);
+        continue;
+      }
+      expect(timeline?.redraws, 'a equipe foi redesenhada com o botão apertado').toBe(0);
+      await expect(button).toHaveAttribute('aria-pressed', 'true');
+      verified = true;
+      break;
+    }
+    expect(verified, `teto passado nas duas tentativas: ${JSON.stringify(slow)}`).toBe(true);
   });
 
   test('botão segurado por mais de 1,5 s não congela a equipe: ela volta a acompanhar os updates com o botão ainda apertado', async ({ page }) => {
