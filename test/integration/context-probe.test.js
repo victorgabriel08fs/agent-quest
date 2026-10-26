@@ -47,11 +47,14 @@ const FIXTURES = fileURLToPath(new URL('../fixtures/transcripts/', import.meta.u
 const fixture = (name) => JSON.parse(readFileSync(path.join(FIXTURES, `${name}.json`), 'utf8'));
 const jsonl = (lines) => lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n') + '\n';
 
-/** Resposta SINTÉTICA com `usage`. */
-const assistant = (input, { creation = 0, read = 0, sidechain = false } = {}) => ({
+/**
+ * Resposta SINTÉTICA com `usage`. O modelo padrão é de uma família de 200 mil
+ * (seção 6, "Janela"), para as porcentagens pequenas continuarem visíveis.
+ */
+const assistant = (input, { creation = 0, read = 0, sidechain = false, model = 'claude-sonnet-4-5-20250929' } = {}) => ({
   type: 'assistant',
   isSidechain: sidechain,
-  message: { role: 'assistant', model: 'claude-sintetico', content: [{ type: 'text', text: 'RESPOSTA-SINTETICA' }], usage: { input_tokens: input, cache_creation_input_tokens: creation, cache_read_input_tokens: read, output_tokens: 1 } },
+  message: { role: 'assistant', model, content: [{ type: 'text', text: 'RESPOSTA-SINTETICA' }], usage: { input_tokens: input, cache_creation_input_tokens: creation, cache_read_input_tokens: read, output_tokens: 1 } },
 });
 const userLine = (text = 'PEDIDO-SINTETICO') => ({ type: 'user', message: { role: 'user', content: text } });
 
@@ -106,7 +109,7 @@ describe('T15 integração: estado com leituras da sonda intercaladas (fuzz)', (
           const agentKey = random() < 0.9 ? session.agents[Math.floor(random() * session.agents.length)]?.key ?? 'main' : 'agente-desconhecido';
           const before = state.sessions.get(session.id) ? getSessionStates(state, { feed: true }).find((s) => s.id === session.id) : null;
           const options = [
-            () => contextUsage(Math.floor(random() * 1_500_000) + 1, random() < 0.2 ? 'modelo[1m]' : null),
+            () => contextUsage(Math.floor(random() * 1_500_000) + 1, { requested: random() < 0.2 ? 'modelo[1m]' : null, observed: random() < 0.5 ? 'claude-opus-4-6' : 'claude-opus-5-5' }),
             () => contextUsage([1000, 50_000, 199_999][Math.floor(random() * 3)]),
             () => null,
             () => ({ pct: -1, usedTokens: 10, windowTokens: 200_000 }),
@@ -336,7 +339,7 @@ describe('T15 ponta a ponta: POST /hooks → sonda de contexto → SSE e /api/st
     assert.deepEqual(message.data.event.data, { pct: 40, usedTokens: 80_000, windowTokens: 200_000 });
   });
 
-  it('modelo pedido com [1m] no SessionStart: janela de 1 milhão; uso acima de 200 mil também', async () => {
+  it('janela: [1m] no modelo pedido dá 1 milhão; resposta num modelo com 1M nativo (sem [1m]) também; uso acima de 200 mil também', async () => {
     const sid = newSessionId();
     const file = transcript(path.join(projectFolder(), `${sid}.jsonl`), [userLine(), assistant(10_000, { read: 90_000 })]);
     await sessionStart(sid, file, { model: 'claude-opus-5-5[1m]' });
@@ -350,6 +353,14 @@ describe('T15 ponta a ponta: POST /hooks → sonda de contexto → SSE e /api/st
     await toolDone(big, bigFile);
     const bigMessage = await sse.waitFor(usageOf(big), 3000);
     assert.deepEqual(bigMessage?.data.event.data, { pct: 30, usedTokens: 300_000, windowTokens: 1_000_000 });
+
+    // O caso do próprio usuário (ADR 0008, complemento de 26/10/2026): claude-opus-5-5 sem [1m].
+    const native = newSessionId();
+    const nativeFile = transcript(path.join(projectFolder(), `${native}.jsonl`), [userLine(), assistant(10_000, { read: 140_000, model: 'claude-opus-5-5' })]);
+    await sessionStart(native, nativeFile, { model: 'claude-opus-5-5' });
+    await toolDone(native, nativeFile);
+    const nativeMessage = await sse.waitFor(usageOf(native), 3000);
+    assert.deepEqual(nativeMessage?.data.event.data, { pct: 15, usedTokens: 150_000, windowTokens: 1_000_000 });
   });
 
   it('subagente: tool.finished lê <pasta>/<session_id>/subagents/agent-<id>.jsonl; SubagentStop lê o agent_transcript_path', async () => {

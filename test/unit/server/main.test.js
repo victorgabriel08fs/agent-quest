@@ -26,7 +26,7 @@ function newHome() {
 
 /** startServer com diretório temporário e porta livre, a menos que `argv` diga outra porta. */
 async function start(home, argv = ['--port', '0'], extraEnv = {}) {
-  const result = await startServer({ argv, env: { AGENT_QUEST_HOME: home, ...extraEnv }, logError: () => {} });
+  const result = await startServer({ argv, env: { AGENT_QUEST_HOME: home, ...extraEnv }, homedir: home, logError: () => {} });
   if (result.status === 'started') running.push(result);
   return result;
 }

@@ -99,7 +99,7 @@ describe('servidor real: respostas fora do tratador de requisições', () => {
   let port;
 
   before(async () => {
-    running = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: tmp.dir }, logError: () => {} });
+    running = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: tmp.dir }, homedir: tmp.dir, logError: () => {} });
     port = running.port;
   });
 

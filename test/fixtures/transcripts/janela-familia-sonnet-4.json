@@ -1,0 +1,55 @@
+{
+  "name": "janela-familia-sonnet-4",
+  "description": "SINTÉTICO: subagente em claude-sonnet-4-5-20250929 (Sonnet até 4.6): janela de 200 mil",
+  "synthetic": true,
+  "options": {
+    "main": false
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000109",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000110",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5-20250929",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 500,
+          "cache_creation_input_tokens": 4500,
+          "cache_read_input_tokens": 45000,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 4500
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "usedTokens": 50000,
+    "windowTokens": 200000,
+    "pct": 25
+  }
+}

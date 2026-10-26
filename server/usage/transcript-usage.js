@@ -6,8 +6,16 @@
 // - só os últimos 64 KiB do arquivo (MAX_READ_BYTES);
 // - da última resposta com `message.usage`: `usedTokens = input_tokens +
 //   cache_creation_input_tokens + cache_read_input_tokens`;
-// - janela de 200 mil tokens, ou 1 milhão se o uso passar de 200 mil ou o
-//   modelo pedido terminar em `[1m]`;
+// - de trás para a frente, a leitura para na marca de compactação (entrada
+//   `type: "system"`, `subtype: "compact_boundary"`): marca antes de qualquer
+//   resposta com `usage` dá `null`, e a barra some até a próxima resposta. No
+//   transcript da sessão principal, a marca com `isSidechain: true` é
+//   ignorada, como as respostas;
+// - janela pelo modelo da própria resposta (`message.model`; sem ele, o modelo
+//   pedido, só na sessão principal): 1 milhão por padrão; 200 mil só para as
+//   famílias sem 1M nativo (Opus e Sonnet até 4.6, Haiku 4.x e Claude 3.x)
+//   quando o modelo pedido não termina em `[1m]`; uso acima de 200 mil vale
+//   sempre 1 milhão (seção 6, "Janela"; decisão do usuário de 26/10/2026);
 // - só arquivos `.jsonl` dentro de `~/.claude/projects/`, conferido no caminho
 //   resolvido e, depois, no caminho real (sem escapar por `..`, link simbólico
 //   ou junção). Caminho fora da pasta é recusado antes de qualquer acesso ao
@@ -36,14 +44,28 @@ export const MAX_READ_BYTES = 64 * 1024;
 /** No máximo uma leitura por agente neste intervalo (ms). */
 export const READ_INTERVAL_MS = 5000;
 
-/** Janela padrão e janela estendida (tokens). */
-export const DEFAULT_WINDOW_TOKENS = 200_000;
-export const EXTENDED_WINDOW_TOKENS = 1_000_000;
+/** Janela das famílias sem 1M nativo (tokens). */
+export const SMALL_WINDOW_TOKENS = 200_000;
+/** Janela padrão, de 1 milhão (tokens). */
+export const DEFAULT_WINDOW_TOKENS = 1_000_000;
+
+/**
+ * Famílias sem janela de 1 milhão nativa: Opus e Sonnet até 4.6, Haiku 4.x e
+ * Claude 3.x (padrão de referência da seção 6, "Janela").
+ */
+const SMALL_WINDOW_MODEL = /^claude-(?:3(?:-\d)?-[a-z]+|(?:opus|sonnet)-4(?:-[0-6])?|haiku-4(?:-\d)?)(?:-\d{8})?$/i;
+
+/** Sufixo do modelo pedido que pede a janela de 1 milhão. */
+const ONE_MILLION_SUFFIX = /\[1m\]$/i;
 
 /** Leituras em andamento ao mesmo tempo, no servidor inteiro. */
 export const MAX_CONCURRENT_READS = 1;
 
-/** Agentes acompanhados pela sonda; acima disso, sai o mais antigo parado. */
+/**
+ * Agentes acompanhados pela sonda; acima disso, sai o de leitura mais antiga
+ * sem leitura pendente (o início dessa leitura fica guardado à parte, para o
+ * intervalo de 5 s continuar valendo).
+ */
 export const MAX_TRACKED_AGENTS = 2000;
 
 const EXTENSION = '.jsonl';
@@ -59,7 +81,7 @@ const CASE_INSENSITIVE = process.platform === 'win32';
 /**
  * @typedef {object} ReadOptions
  * @property {string|null} root       pasta `~/.claude/projects` (os testes injetam uma temporária)
- * @property {string|null} [model]    modelo pedido (`[1m]` no fim pede a janela de 1 milhão)
+ * @property {string|null} [model]    modelo pedido no SessionStart (só vale na sessão principal)
  * @property {boolean} [main]         transcript da sessão principal: ignora entradas `isSidechain`
  * @property {number} [maxBytes]      padrão MAX_READ_BYTES
  */
@@ -76,24 +98,57 @@ export async function readContextUsage(file, { root, model = null, main = false,
     if (real === null) return null;
     const text = await readTail(real, maxBytes);
     if (text === null) return null;
-    const used = lastUsage(text.content, { complete: text.complete, main });
-    return used === null ? null : contextUsage(used, model);
+    const last = lastUsage(text.content, { complete: text.complete, main });
+    if (last === null) return null;
+    // O modelo pedido só é conhecido para a sessão principal (SessionStart).
+    return contextUsage(last.usedTokens, { requested: main ? model : null, observed: last.model });
   } catch {
     return null;
   }
 }
 
 /**
- * Janela e porcentagem a partir dos tokens usados (seção 6).
+ * Janela e porcentagem a partir dos tokens usados (seção 6, "Janela"):
+ * 1. uso acima de 200 mil → 1 milhão;
+ * 2. o modelo é o `observed` (o `message.model` da resposta lida); sem ele,
+ *    o `requested` sem o `[1m]`; sem nenhum dos dois, o padrão;
+ * 3. modelo de uma família sem 1M nativo, e `requested` sem `[1m]` no fim →
+ *    200 mil;
+ * 4. qualquer outro modelo, inclusive desconhecido → 1 milhão.
  * @param {number} usedTokens
- * @param {string|null} [model]
+ * @param {{ requested?: unknown, observed?: unknown }} [models]
+ *   `requested`: modelo pedido no SessionStart (só da sessão principal);
+ *   `observed`: `message.model` da resposta lida
  * @returns {ContextUsage}
  */
-export function contextUsage(usedTokens, model = null) {
-  const extended = usedTokens > DEFAULT_WINDOW_TOKENS || (typeof model === 'string' && /\[1m\]$/i.test(model.trim()));
-  const windowTokens = extended ? EXTENDED_WINDOW_TOKENS : DEFAULT_WINDOW_TOKENS;
+export function contextUsage(usedTokens, { requested = null, observed = null } = {}) {
+  const windowTokens = windowFor(usedTokens, modelName(requested), modelName(observed));
   const pct = Math.min(100, Math.round((usedTokens / windowTokens) * 100));
   return { pct, usedTokens, windowTokens };
+}
+
+/**
+ * @param {number} usedTokens
+ * @param {string|null} requested
+ * @param {string|null} observed
+ * @returns {number}
+ */
+function windowFor(usedTokens, requested, observed) {
+  if (usedTokens > SMALL_WINDOW_TOKENS) return DEFAULT_WINDOW_TOKENS;
+  if (requested !== null && ONE_MILLION_SUFFIX.test(requested)) return DEFAULT_WINDOW_TOKENS;
+  const model = observed ?? (requested === null ? null : modelName(requested.replace(ONE_MILLION_SUFFIX, '')));
+  return model !== null && SMALL_WINDOW_MODEL.test(model) ? SMALL_WINDOW_TOKENS : DEFAULT_WINDOW_TOKENS;
+}
+
+/**
+ * Nome de modelo sem espaços nas pontas; `null` se não for texto ou for vazio.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function modelName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  return name === '' ? null : name;
 }
 
 /**
@@ -169,13 +224,14 @@ async function readTail(file, maxBytes) {
 }
 
 /**
- * Tokens da última resposta com `message.usage` válido, de trás para a
- * frente. Linha que não é JSON, entrada sem `usage` ou com números fora do
- * formato esperado é pulada. Uso zero (por exemplo, mensagem sintética de
- * erro) não conta como resposta.
+ * Tokens (e modelo) da última resposta com `message.usage` válido, de trás
+ * para a frente, até a marca de compactação. Linha que não é JSON, entrada
+ * sem `usage` ou com números fora do formato esperado é pulada. Uso zero (por
+ * exemplo, mensagem sintética de erro) não conta como resposta. Uma marca de
+ * compactação antes de qualquer resposta dá `null`.
  * @param {string} content
  * @param {{ complete: boolean, main: boolean }} options
- * @returns {number|null}
+ * @returns {{ usedTokens: number, model: unknown }|null}   `model`: o `message.model` da resposta, como veio
  */
 function lastUsage(content, { complete, main }) {
   const lines = content.split('\n');
@@ -183,28 +239,27 @@ function lastUsage(content, { complete, main }) {
   const first = complete ? 0 : 1;
   for (let i = lines.length - 1; i >= first; i--) {
     const line = lines[i].trim();
-    if (line === '' || !line.includes('"usage"')) continue;
+    if (line === '' || (!line.includes('"usage"') && !line.includes('"compact_boundary"'))) continue;
     let entry;
     try {
       entry = JSON.parse(line);
     } catch {
       continue;
     }
-    const used = usedTokensOf(entry, main);
-    if (used !== null) return used;
+    // No transcript da sessão principal, uma entrada de subagente não é dela.
+    if (!isPlainObject(entry) || (main && entry.isSidechain === true)) continue;
+    if (entry.type === 'system' && entry.subtype === 'compact_boundary') return null;
+    const used = usedTokensOf(entry);
+    if (used !== null) return { usedTokens: used, model: /** @type {Record<string, any>} */ (entry.message).model };
   }
   return null;
 }
 
 /**
- * @param {unknown} entry
- * @param {boolean} main
+ * @param {Record<string, any>} entry
  * @returns {number|null}
  */
-function usedTokensOf(entry, main) {
-  if (!isPlainObject(entry)) return null;
-  // No transcript da sessão principal, uma entrada de subagente não é dela.
-  if (main && entry.isSidechain === true) return null;
+function usedTokensOf(entry) {
   const message = entry.message;
   if (!isPlainObject(message)) return null;
   if (entry.type !== 'assistant' && message.role !== 'assistant') return null;
@@ -342,6 +397,14 @@ export function createContextProbe({
   /** @type {Set<Promise<void>>} */
   const running = new Set();
   let tracked = 0;
+  /**
+   * Início da última leitura dos agentes despejados, para o intervalo de 5 s
+   * continuar valendo se um deles for pedido de novo. Só guarda leituras ainda
+   * dentro do intervalo, e no máximo MAX_TRACKED_AGENTS (sai o mais antigo).
+   * Chave: `recentKey(sessionId, agentKey)`.
+   * @type {Map<string, number>}
+   */
+  const recent = new Map();
 
   /** @param {Entry} entry */
   function schedule(entry) {
@@ -401,17 +464,60 @@ export function createContextProbe({
     if (entry.again) schedule(entry);
   }
 
-  /** Tira o agente mais antigo que não tem leitura pendente, para a memória não crescer sem limite. */
+  /**
+   * Tira o agente com a leitura mais antiga (menor `lastStart`) entre os que
+   * não têm leitura pendente, para a memória não crescer sem limite. O
+   * `lastStart` dele fica guardado em `recent` enquanto estiver dentro do
+   * intervalo.
+   */
   function evict() {
-    for (const [sessionId, agents] of sessions) {
-      for (const [agentKey, entry] of agents) {
+    /** @type {Entry|null} */
+    let oldest = null;
+    for (const agents of sessions.values()) {
+      for (const entry of agents.values()) {
         if (entry.queued || entry.running || entry.timer !== null) continue;
-        agents.delete(agentKey);
-        tracked--;
-        if (agents.size === 0) sessions.delete(sessionId);
-        return;
+        if (oldest === null || (entry.lastStart ?? -Infinity) < (oldest.lastStart ?? -Infinity)) oldest = entry;
       }
     }
+    if (oldest === null) return;
+    const agents = /** @type {Map<string, Entry>} */ (sessions.get(oldest.sessionId));
+    agents.delete(oldest.agentKey);
+    tracked--;
+    if (agents.size === 0) sessions.delete(oldest.sessionId);
+    if (oldest.lastStart !== null) remember(oldest.sessionId, oldest.agentKey, oldest.lastStart);
+  }
+
+  /**
+   * @param {string} sessionId
+   * @param {string} agentKey
+   * @param {number} lastStart
+   */
+  function remember(sessionId, agentKey, lastStart) {
+    const now = clock();
+    // Tira do começo as que já saíram do intervalo (a ordem é a do despejo).
+    for (const [key, start] of recent) {
+      if (start + intervalMs > now) break;
+      recent.delete(key);
+    }
+    if (lastStart + intervalMs <= now) return;
+    const key = recentKey(sessionId, agentKey);
+    recent.delete(key);
+    recent.set(key, lastStart);
+    if (recent.size > MAX_TRACKED_AGENTS) recent.delete(/** @type {string} */ (recent.keys().next().value));
+  }
+
+  /**
+   * `lastStart` guardado de um agente despejado (e esquece o registro).
+   * @param {string} sessionId
+   * @param {string} agentKey
+   * @returns {number|null}
+   */
+  function recall(sessionId, agentKey) {
+    const key = recentKey(sessionId, agentKey);
+    const start = recent.get(key);
+    if (start === undefined) return null;
+    recent.delete(key);
+    return start + intervalMs > clock() ? start : null;
   }
 
   return {
@@ -425,7 +531,10 @@ export function createContextProbe({
       let entry = agents.get(agentKey);
       if (!entry) {
         if (tracked >= MAX_TRACKED_AGENTS) evict();
-        entry = { sessionId, agentKey, path: null, model: null, lastStart: null, timer: null, queued: false, running: false, again: false, forgotten: false };
+        // `evict` pode ter tirado a última entrada desta mesma sessão.
+        if (!sessions.has(sessionId)) sessions.set(sessionId, agents);
+        const lastStart = recall(sessionId, agentKey);
+        entry = { sessionId, agentKey, path: null, model: null, lastStart, timer: null, queued: false, running: false, again: false, forgotten: false };
         agents.set(agentKey, entry);
         tracked++;
       }
@@ -436,6 +545,11 @@ export function createContextProbe({
       else schedule(entry);
     },
     forgetSession(sessionId) {
+      if (typeof sessionId !== 'string') return;
+      const prefix = recentKey(sessionId, '');
+      for (const key of recent.keys()) {
+        if (key.startsWith(prefix)) recent.delete(key);
+      }
       const agents = sessions.get(sessionId);
       if (!agents) return;
       for (const entry of agents.values()) {
@@ -458,6 +572,16 @@ export function createContextProbe({
       while (running.size > 0) await Promise.all([...running]);
     },
   };
+}
+
+/**
+ * Chave de um agente no registro dos despejados. O tamanho do `sessionId` na
+ * frente evita que duas combinações diferentes deem a mesma chave.
+ * @param {string} sessionId
+ * @param {string} agentKey
+ */
+function recentKey(sessionId, agentKey) {
+  return `${sessionId.length}:${sessionId}:${agentKey}`;
 }
 
 /**

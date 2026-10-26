@@ -1,0 +1,56 @@
+{
+  "name": "janela-1m-pedido",
+  "description": "SINTÉTICO: família de 200 mil (claude-opus-4-6) com o modelo pedido terminando em [1m]: janela de 1 milhão",
+  "synthetic": true,
+  "options": {
+    "main": true,
+    "model": "claude-opus-4-6[1m]"
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000105",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000106",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-4-6",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 1000,
+          "cache_creation_input_tokens": 9000,
+          "cache_read_input_tokens": 90000,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 9000
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "usedTokens": 100000,
+    "windowTokens": 1000000,
+    "pct": 10
+  }
+}

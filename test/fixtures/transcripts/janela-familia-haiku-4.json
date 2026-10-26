@@ -1,0 +1,55 @@
+{
+  "name": "janela-familia-haiku-4",
+  "description": "SINTÉTICO: subagente em claude-haiku-4-5 (Haiku 4.x): janela de 200 mil",
+  "synthetic": true,
+  "options": {
+    "main": false
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000111",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000112",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-haiku-4-5",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 200,
+          "cache_creation_input_tokens": 1800,
+          "cache_read_input_tokens": 28000,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 1800
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "usedTokens": 30000,
+    "windowTokens": 200000,
+    "pct": 15
+  }
+}

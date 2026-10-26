@@ -1,6 +1,6 @@
 {
   "name": "janela-1m-por-uso",
-  "description": "SINTÉTICO: uso acima de 200 mil tokens passa a janela para 1 milhão",
+  "description": "SINTÉTICO: uso acima de 200 mil tokens vale 1 milhão, mesmo num modelo de família de 200 mil",
   "synthetic": true,
   "options": {
     "main": true
@@ -8,7 +8,7 @@
   "lines": [
     {
       "type": "user",
-      "uuid": "00000000-0000-4000-8000-000000000010",
+      "uuid": "00000000-0000-4000-8000-000000000103",
       "sessionId": "00000000-0000-4000-8000-000000000001",
       "isSidechain": false,
       "timestamp": "2026-10-26T12:00:00.000Z",
@@ -19,7 +19,7 @@
     },
     {
       "type": "assistant",
-      "uuid": "00000000-0000-4000-8000-000000000011",
+      "uuid": "00000000-0000-4000-8000-000000000104",
       "sessionId": "00000000-0000-4000-8000-000000000001",
       "isSidechain": false,
       "timestamp": "2026-10-26T12:00:02.000Z",
@@ -27,7 +27,7 @@
         "id": "msg_01SINTETICO",
         "type": "message",
         "role": "assistant",
-        "model": "claude-opus-5-5",
+        "model": "claude-sonnet-4-5-20250929",
         "content": [
           {
             "type": "text",

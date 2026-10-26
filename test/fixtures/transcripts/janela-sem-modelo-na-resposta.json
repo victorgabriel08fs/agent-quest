@@ -1,0 +1,55 @@
+{
+  "name": "janela-sem-modelo-na-resposta",
+  "description": "SINTÉTICO: resposta sem message.model: vale o modelo pedido da sessão principal (claude-sonnet-4-6), sem [1m]: janela de 200 mil",
+  "synthetic": true,
+  "options": {
+    "main": true,
+    "model": "claude-sonnet-4-6"
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000115",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000116",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 1000,
+          "cache_creation_input_tokens": 9000,
+          "cache_read_input_tokens": 30000,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 9000
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "usedTokens": 40000,
+    "windowTokens": 200000,
+    "pct": 20
+  }
+}

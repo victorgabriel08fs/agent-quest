@@ -51,7 +51,7 @@
   ],
   "expected": {
     "usedTokens": 60000,
-    "windowTokens": 200000,
-    "pct": 30
+    "windowTokens": 1000000,
+    "pct": 6
   }
 }

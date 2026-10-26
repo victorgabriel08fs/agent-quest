@@ -329,7 +329,8 @@ describe('ligação da sonda de contexto com a leitura real (pasta pessoal tempo
     await pipeline.settled();
     const last = messages.at(-1);
     assert.equal(last.event.kind, 'context.usage');
-    assert.deepEqual(last.event.data, { pct: 50, usedTokens: 100_000, windowTokens: 200_000 });
+    // Resposta em claude-opus-5-5, com 1M nativo (seção 6, "Janela").
+    assert.deepEqual(last.event.data, { pct: 10, usedTokens: 100_000, windowTokens: 1_000_000 });
   });
 
   it('transcript fora de <home>/.claude/projects: não é lido, e o context fica null', async () => {

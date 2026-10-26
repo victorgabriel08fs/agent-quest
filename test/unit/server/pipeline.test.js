@@ -457,6 +457,7 @@ describe('servidor real no mesmo processo (startServer)', () => {
     const result = await startServer({
       argv: ['--port', '0'],
       env: { AGENT_QUEST_HOME: home.dir },
+      homedir: home.dir,
       logError: () => {},
       pipeline: { timers: intervals.timers, clock: () => now, reader: { read: async () => ['tester'] } },
     });

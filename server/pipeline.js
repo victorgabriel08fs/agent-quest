@@ -150,7 +150,7 @@ export function createPipeline({
   /** Projetos cuja leitura de .claude/agents/ já foi pedida. @type {Set<string>} */
   const requested = new Set();
   const agentNames = reader ?? createAgentNamesReader({ homeDir, ...readerOptions, onLate: applyAgentNames });
-  /** Modelo pedido de cada sessão (SessionStart), para a janela de 1 milhão. @type {Map<string, string>} */
+  /** Modelo pedido de cada sessão (SessionStart), para a janela de contexto (seção 6, "Janela"). @type {Map<string, string>} */
   const sessionModels = new Map();
   const { root: usageRoot = projectsRoot(homeDir), ...probeOptions } = usageOptions;
   const probe = usageRoot === null

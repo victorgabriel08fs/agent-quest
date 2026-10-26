@@ -615,7 +615,7 @@ describe('T9a hub: encerramento do servidor (startServer) com painéis abertos',
   it('close() termina em pouco tempo e fecha os fluxos; o heartbeat não segura nada', async () => {
     const home = tempDir('aq-int-sse-close-');
     try {
-      const result = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: home.dir }, logError: () => {} });
+      const result = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: home.dir }, homedir: home.dir, logError: () => {} });
       assert.equal(result.status, 'started');
       const clients = [];
       for (let i = 0; i < 4; i++) {

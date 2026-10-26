@@ -766,7 +766,7 @@ describe('T3 integração: rajada de 1 000 eventos e memória do servidor', () =
     const harness = [
       `import process from 'node:process';`,
       `import { startServer } from ${JSON.stringify(pathToFileURL(MAIN).href)};`,
-      `const run = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: process.env.AGENT_QUEST_HOME }, logError: (m) => process.send({ error: m }) });`,
+      `const run = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: process.env.AGENT_QUEST_HOME }, homedir: process.env.AGENT_QUEST_HOME, logError: (m) => process.send({ error: m }) });`,
       `process.send({ port: run.port, token: run.runtime.token });`,
       `process.on('message', async (m) => {`,
       `  if (m === 'mem') { globalThis.gc(); globalThis.gc(); process.send({ mem: process.memoryUsage() }); }`,

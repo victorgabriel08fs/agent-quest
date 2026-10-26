@@ -996,7 +996,7 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
    */
   async function assertDeliveredWithinDeadline(t, label, makeStdin, expected = {}) {
     const home = newHome();
-    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
+    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, homedir: home, logError: () => {} });
     const health = () =>
       new Promise((resolve, reject) => {
         http.get({ host: '127.0.0.1', port: running.port, path: '/api/health', agent: false }, (r) => {
@@ -1160,7 +1160,7 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
     const { keys, make } = stdinWithKeys(16 * 1024 * 1024);
     assert.ok(Buffer.byteLength(make('toolu_0')) <= 16 * 1024 * 1024);
     const home = newHome();
-    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
+    const running = await startServer({ argv: ['--port', '0', '--debug-dump'], env: { AGENT_QUEST_HOME: home }, homedir: home, logError: () => {} });
     const health = () =>
       new Promise((resolve, reject) => {
         http.get({ host: '127.0.0.1', port: running.port, path: '/api/health', agent: false }, (r) => {
@@ -1208,7 +1208,7 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
 
   it('com o servidor real (T3): o evento é aceito com o token do runtime.json', async () => {
     const home = newHome();
-    const running = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: home }, logError: () => {} });
+    const running = await startServer({ argv: ['--port', '0'], env: { AGENT_QUEST_HOME: home }, homedir: home, logError: () => {} });
     try {
       assertSilentExit(await runForwarder({ home, stdin: JSON.stringify(hookPayload()) }));
       const res = await new Promise((resolve, reject) => {

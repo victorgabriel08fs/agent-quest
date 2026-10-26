@@ -50,6 +50,8 @@ export default defineConfig({
     timeout: 30_000,
     stdout: 'ignore',
     stderr: 'pipe',
-    env: { ...process.env, AGENT_QUEST_HOME: process.env.AQ_E2E_HOME },
+    // USERPROFILE e HOME também na pasta temporária: o servidor de teste não lê
+    // o ~/.claude real (agentes e transcripts da sonda de contexto do T15).
+    env: { ...process.env, AGENT_QUEST_HOME: process.env.AQ_E2E_HOME, USERPROFILE: process.env.AQ_E2E_HOME, HOME: process.env.AQ_E2E_HOME },
   },
 });

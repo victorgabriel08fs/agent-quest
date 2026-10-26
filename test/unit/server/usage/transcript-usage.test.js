@@ -13,9 +13,10 @@ import { setImmediate } from 'node:timers';
 import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_WINDOW_TOKENS,
-  EXTENDED_WINDOW_TOKENS,
   MAX_READ_BYTES,
+  MAX_TRACKED_AGENTS,
   READ_INTERVAL_MS,
+  SMALL_WINDOW_TOKENS,
   contextUsage,
   createContextProbe,
   readContextUsage,
@@ -97,20 +98,172 @@ describe('readContextUsage: transcripts sintéticos (test/fixtures/transcripts)'
   });
 });
 
-describe('readContextUsage: cálculo (seção 6)', () => {
-  it('usedTokens = input + cache_creation + cache_read; janela de 200 mil; pct inteiro de 0 a 100', () => {
-    assert.deepEqual(contextUsage(80_000), { pct: 40, usedTokens: 80_000, windowTokens: DEFAULT_WINDOW_TOKENS });
-    assert.deepEqual(contextUsage(200_000), { pct: 100, usedTokens: 200_000, windowTokens: DEFAULT_WINDOW_TOKENS });
-    assert.deepEqual(contextUsage(1), { pct: 0, usedTokens: 1, windowTokens: DEFAULT_WINDOW_TOKENS });
+describe('contextUsage: janela (seção 6, "Janela"; decisão do usuário de 26/10/2026)', () => {
+  const M = DEFAULT_WINDOW_TOKENS;
+  const K200 = SMALL_WINDOW_TOKENS;
+
+  it('as constantes: padrão de 1 milhão, 200 mil para as famílias sem 1M nativo', () => {
+    assert.equal(DEFAULT_WINDOW_TOKENS, 1_000_000);
+    assert.equal(SMALL_WINDOW_TOKENS, 200_000);
   });
 
-  it('acima de 200 mil, ou com o modelo pedido terminando em [1m], a janela é de 1 milhão; acima de 1 milhão, pct fica em 100', () => {
-    assert.deepEqual(contextUsage(200_001), { pct: 20, usedTokens: 200_001, windowTokens: EXTENDED_WINDOW_TOKENS });
-    assert.deepEqual(contextUsage(10_000, 'claude-opus-5-5[1m]'), { pct: 1, usedTokens: 10_000, windowTokens: EXTENDED_WINDOW_TOKENS });
-    assert.deepEqual(contextUsage(10_000, 'claude-opus-5-5[1M]'), { pct: 1, usedTokens: 10_000, windowTokens: EXTENDED_WINDOW_TOKENS });
-    assert.equal(contextUsage(10_000, 'claude-opus-5-5').windowTokens, DEFAULT_WINDOW_TOKENS);
-    assert.equal(contextUsage(10_000, '[1m]-no-meio').windowTokens, DEFAULT_WINDOW_TOKENS);
+  // [modelo da resposta (observed), janela esperada], com o modelo pedido ausente.
+  const byObserved = [
+    // Exemplos da seção 6 com 1M nativo ou desconhecidos.
+    ['claude-opus-5-5', M],
+    ['claude-opus-4-7', M],
+    ['claude-haiku-5-5', M],
+    ['claude-sonnet-5', M],
+    ['claude-modelo-desconhecido', M],
+    ['claude-fable-1', M],
+    ['gpt-qualquer', M],
+    ['<synthetic>', M],
+    // Famílias de 200 mil (padrão de referência da seção 6).
+    ['claude-opus-4-6', K200],
+    ['claude-opus-4', K200],
+    ['claude-opus-4-1-20250805', K200],
+    ['claude-sonnet-4-5-20250929', K200],
+    ['claude-sonnet-4-6', K200],
+    ['claude-sonnet-4-20250514', K200],
+    ['claude-haiku-4-5', K200],
+    ['claude-haiku-4-5-20251001', K200],
+    ['claude-3-5-sonnet-20241022', K200],
+    ['claude-3-opus-20240229', K200],
+    ['claude-3-7-sonnet-20250219', K200],
+    ['CLAUDE-OPUS-4-6', K200],
+    ['  claude-opus-4-6  ', K200],
+    // Parecidos, mas fora do padrão: 1M.
+    ['claude-opus-4-7-20260101', M],
+    ['claude-sonnet-4-6-extra', M],
+    ['claude-opus-4-6[1m]', M],
+    ['opus', M],
+    ['sonnet', M],
+  ];
+  for (const [observed, windowTokens] of byObserved) {
+    it(`resposta em ${JSON.stringify(observed)}: janela de ${windowTokens}`, () => {
+      assert.equal(contextUsage(10_000, { observed }).windowTokens, windowTokens);
+      assert.equal(contextUsage(10_000, { observed, requested: null }).windowTokens, windowTokens);
+    });
+  }
+
+  it('[1m] no fim do modelo pedido dá 1M mesmo com a resposta numa família de 200 mil (sem diferenciar maiúsculas)', () => {
+    assert.deepEqual(contextUsage(10_000, { requested: 'claude-opus-4-6[1m]', observed: 'claude-opus-4-6' }), { pct: 1, usedTokens: 10_000, windowTokens: M });
+    assert.equal(contextUsage(10_000, { requested: 'claude-sonnet-4-5[1M]', observed: 'claude-sonnet-4-5-20250929' }).windowTokens, M);
+    assert.equal(contextUsage(10_000, { requested: 'sonnet[1m]', observed: 'claude-sonnet-4-6' }).windowTokens, M);
+    // [1m] fora do fim não conta.
+    assert.equal(contextUsage(10_000, { requested: '[1m]-no-meio', observed: 'claude-opus-4-6' }).windowTokens, K200);
+    // Pedido sem [1m] não muda a regra do modelo da resposta.
+    assert.equal(contextUsage(10_000, { requested: 'claude-opus-4-6', observed: 'claude-opus-4-6' }).windowTokens, K200);
+    assert.equal(contextUsage(10_000, { requested: 'claude-opus-4-6', observed: 'claude-opus-5-5' }).windowTokens, M);
+  });
+
+  it('uso acima de 200 mil dá 1M sempre; exatamente 200 mil numa família de 200 mil dá 100%', () => {
+    assert.deepEqual(contextUsage(200_001, { observed: 'claude-opus-4-6' }), { pct: 20, usedTokens: 200_001, windowTokens: M });
+    assert.deepEqual(contextUsage(200_000, { observed: 'claude-opus-4-6' }), { pct: 100, usedTokens: 200_000, windowTokens: K200 });
+    assert.deepEqual(contextUsage(250_000, { requested: 'claude-3-5-sonnet-20241022' }), { pct: 25, usedTokens: 250_000, windowTokens: M });
     assert.equal(contextUsage(1_500_000).pct, 100);
+  });
+
+  it('resposta sem message.model (ou que não é texto): vale o modelo pedido sem o [1m]; sem os dois, o padrão', () => {
+    for (const observed of [null, undefined, '', '   ', 42, { name: 'claude-opus-4-6' }, ['claude-opus-4-6']]) {
+      assert.equal(contextUsage(10_000, { observed, requested: 'claude-opus-4-6' }).windowTokens, K200, String(observed));
+      assert.equal(contextUsage(10_000, { observed, requested: 'claude-opus-5-5' }).windowTokens, M, String(observed));
+      assert.equal(contextUsage(10_000, { observed, requested: null }).windowTokens, M, String(observed));
+      assert.equal(contextUsage(10_000, { observed }).windowTokens, M, String(observed));
+    }
+    assert.equal(contextUsage(10_000, { requested: '[1m]' }).windowTokens, M);
+    assert.equal(contextUsage(10_000, { requested: 42 }).windowTokens, M);
+    assert.equal(contextUsage(10_000).windowTokens, M);
+  });
+
+  it('o modelo da resposta ganha do modelo pedido', () => {
+    assert.equal(contextUsage(10_000, { requested: 'claude-opus-5-5', observed: 'claude-haiku-4-5' }).windowTokens, K200);
+    assert.equal(contextUsage(10_000, { requested: 'claude-opus-4-6', observed: 'claude-haiku-5-5' }).windowTokens, M);
+  });
+
+  it('pct inteiro de 0 a 100', () => {
+    assert.deepEqual(contextUsage(80_000, { observed: 'claude-sonnet-4-5' }), { pct: 40, usedTokens: 80_000, windowTokens: K200 });
+    assert.deepEqual(contextUsage(80_000, { observed: 'claude-opus-5-5' }), { pct: 8, usedTokens: 80_000, windowTokens: M });
+    assert.deepEqual(contextUsage(1), { pct: 0, usedTokens: 1, windowTokens: M });
+    assert.deepEqual(contextUsage(1_000_000), { pct: 100, usedTokens: 1_000_000, windowTokens: M });
+  });
+});
+
+describe('readContextUsage: janela pelo message.model da resposta lida', () => {
+  /** Resposta SINTÉTICA com 100 mil tokens e o modelo dado (sem a chave, se `undefined`). */
+  const answer = (model, { sidechain = false } = {}) => JSON.stringify({
+    type: 'assistant',
+    sessionId: SID,
+    isSidechain: sidechain,
+    message: { role: 'assistant', ...(model === undefined ? {} : { model }), content: [{ type: 'text', text: 'RESPOSTA-SINTETICA' }], usage: { input_tokens: 1000, cache_creation_input_tokens: 9000, cache_read_input_tokens: 90_000, output_tokens: 1 } },
+  });
+
+  // [modelo da resposta, opções da leitura, janela esperada]
+  const cases = [
+    ['claude-opus-5-5', { main: true, model: 'claude-opus-5-5' }, DEFAULT_WINDOW_TOKENS],
+    ['claude-opus-4-7', { main: true }, DEFAULT_WINDOW_TOKENS],
+    ['claude-haiku-5-5', { main: false }, DEFAULT_WINDOW_TOKENS],
+    ['claude-modelo-desconhecido', { main: true }, DEFAULT_WINDOW_TOKENS],
+    ['claude-opus-4-6', { main: true }, SMALL_WINDOW_TOKENS],
+    ['claude-sonnet-4-5-20250929', { main: false }, SMALL_WINDOW_TOKENS],
+    ['claude-haiku-4-5', { main: false }, SMALL_WINDOW_TOKENS],
+    ['claude-3-5-sonnet-20241022', { main: true }, SMALL_WINDOW_TOKENS],
+    ['claude-opus-4-6', { main: true, model: 'claude-opus-4-6[1m]' }, DEFAULT_WINDOW_TOKENS],
+    // O modelo pedido só vale na sessão principal: um subagente não herda o [1m].
+    ['claude-opus-4-6', { main: false, model: 'claude-opus-4-6[1m]' }, SMALL_WINDOW_TOKENS],
+    // Sem message.model: o modelo pedido (só main), depois o padrão.
+    [undefined, { main: true, model: 'claude-sonnet-4-6' }, SMALL_WINDOW_TOKENS],
+    [undefined, { main: true, model: 'claude-sonnet-4-6[1m]' }, DEFAULT_WINDOW_TOKENS],
+    [undefined, { main: false, model: 'claude-sonnet-4-6' }, DEFAULT_WINDOW_TOKENS],
+    [undefined, { main: true }, DEFAULT_WINDOW_TOKENS],
+    [42, { main: true, model: 'claude-haiku-4-5' }, SMALL_WINDOW_TOKENS],
+  ];
+  for (const [model, options, windowTokens] of cases) {
+    it(`resposta ${JSON.stringify(model) ?? 'sem modelo'}, ${JSON.stringify(options)}: janela de ${windowTokens}`, async () => {
+      const file = writeTranscript(`${answer(model, { sidechain: !options.main })}\n`);
+      const usage = await readContextUsage(file, { root: ROOT, ...options });
+      assert.deepEqual(usage, { pct: Math.round((100_000 / windowTokens) * 100), usedTokens: 100_000, windowTokens });
+    });
+  }
+
+  it('vale o modelo da última resposta com usage, não o de uma anterior', async () => {
+    const file = writeTranscript(`${answer('claude-opus-5-5')}\n${answer('claude-haiku-4-5')}\n`);
+    assert.equal((await readContextUsage(file, { root: ROOT, main: true }))?.windowTokens, SMALL_WINDOW_TOKENS);
+    const back = writeTranscript(`${answer('claude-haiku-4-5')}\n${answer('claude-opus-5-5')}\n`);
+    assert.equal((await readContextUsage(back, { root: ROOT, main: true }))?.windowTokens, DEFAULT_WINDOW_TOKENS);
+  });
+});
+
+describe('readContextUsage: marca de compactação (compact_boundary)', () => {
+  const answer = (input, { sidechain = false } = {}) => JSON.stringify({
+    type: 'assistant',
+    isSidechain: sidechain,
+    message: { role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'RESPOSTA-SINTETICA' }], usage: { input_tokens: input, output_tokens: 1 } },
+  });
+  const mark = ({ sidechain = false, ...extra } = {}) => JSON.stringify({ type: 'system', subtype: 'compact_boundary', isSidechain: sidechain, content: 'Conversation compacted', compactMetadata: { trigger: 'auto', preTokens: 1 }, ...extra });
+
+  it('no transcript de subagente (main: false), a marca conta mesmo com isSidechain: true', async () => {
+    const file = writeTranscript(`${answer(5000, { sidechain: true })}\n${mark({ sidechain: true })}\n`);
+    assert.equal(await readContextUsage(file, { root: ROOT, main: false }), null);
+    const after = writeTranscript(`${answer(5000, { sidechain: true })}\n${mark({ sidechain: true })}\n${answer(7000, { sidechain: true })}\n`);
+    assert.equal((await readContextUsage(after, { root: ROOT, main: false }))?.usedTokens, 7000);
+  });
+
+  it('a resposta de subagente depois da marca, no principal, também é ignorada: continua null', async () => {
+    const file = writeTranscript(`${answer(5000)}\n${mark()}\n${answer(9000, { sidechain: true })}\n`);
+    assert.equal(await readContextUsage(file, { root: ROOT, main: true }), null);
+  });
+
+  it('só type "system" com subtype "compact_boundary" é marca; texto parecido não para a leitura', async () => {
+    const lookalikes = [
+      mark({ type: 'user' }),
+      mark({ subtype: 'compact_boundary_x' }),
+      JSON.stringify({ type: 'system', subtype: 'informational', content: 'compact_boundary' }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: '"compact_boundary"' } }),
+      '{"type":"system","subtype":"compact_boundary"', // linha partida
+    ];
+    const file = writeTranscript(`${answer(5000)}\n${lookalikes.join('\n')}\n`);
+    assert.equal((await readContextUsage(file, { root: ROOT, main: true }))?.usedTokens, 5000);
   });
 });
 
@@ -120,7 +273,7 @@ describe('readContextUsage: só os últimos 64 KiB', () => {
     const far = writeTranscript(`${usage}\n${fillerLine(MAX_READ_BYTES)}\n`);
     assert.equal(await readContextUsage(far, { root: ROOT }), null);
     const near = writeTranscript(`${fillerLine(MAX_READ_BYTES)}\n${usage}\n${fillerLine(MAX_READ_BYTES - usage.length - 200)}\n`);
-    assert.deepEqual(await readContextUsage(near, { root: ROOT }), { pct: 25, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS });
+    assert.deepEqual(await readContextUsage(near, { root: ROOT }), { pct: 5, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS });
   });
 
   it('a linha partida no começo do trecho lido é descartada, mesmo que pareça ter usage', async () => {
@@ -146,7 +299,7 @@ describe('readContextUsage: só os últimos 64 KiB', () => {
 
 describe('readContextUsage: só .jsonl dentro da raiz (caminho resolvido)', () => {
   const content = `${assistantLine(1000, 0, 49_000)}\n`;
-  const expected = { pct: 25, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS };
+  const expected = { pct: 5, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS };
 
   it('dentro da raiz, em qualquer profundidade: lê', async () => {
     const nested = writeTranscript(content, { dir: path.join(PROJECT_DIR, SID, 'subagents'), name: `agent-${AID}.jsonl` });
@@ -440,6 +593,139 @@ describe('createContextProbe: no máximo uma leitura por agente a cada 5 s', () 
     const { probe, results } = setupProbe({ read: readContextUsage });
     probe.request({ sessionId: SID, agentKey: 'main', path: file });
     await probe.settled();
-    assert.deepEqual(results[0].usage, { pct: 25, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS });
+    assert.deepEqual(results[0].usage, { pct: 5, usedTokens: 50_000, windowTokens: DEFAULT_WINDOW_TOKENS });
+  });
+});
+
+describe('createContextProbe: limite de agentes acompanhados (B1 do tester)', () => {
+  /** Temporizadores falsos que guardam a hora de disparo, para soltar só os vencidos. */
+  function dueTimers(clock) {
+    const pending = new Set();
+    return {
+      timers: {
+        setTimeout(run, ms) {
+          const handle = { run, at: clock() + ms, unref() { return this; } };
+          pending.add(handle);
+          return handle;
+        },
+        clearTimeout: (handle) => pending.delete(handle),
+      },
+      size: () => pending.size,
+      fireDue() {
+        for (const handle of [...pending]) {
+          if (handle.at > clock()) continue;
+          pending.delete(handle);
+          handle.run();
+        }
+      },
+    };
+  }
+
+  it(`${MAX_TRACKED_AGENTS + 1} agentes com pedidos repetidos: nenhum agente é lido duas vezes em menos de 5 s`, async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const timers = dueTimers(clock);
+    /** Horas de leitura de cada agente (pelo caminho, que é único por agente). @type {Map<string, number[]>} */
+    const readsAt = new Map();
+    const probe = createContextProbe({
+      root: ROOT,
+      clock,
+      timers: timers.timers,
+      read: async (file) => {
+        readsAt.set(file, [...(readsAt.get(file) ?? []), now]);
+        return USAGE;
+      },
+      onResult: () => {},
+    });
+    const total = MAX_TRACKED_AGENTS + 1;
+    const ask = (i) => probe.request({ sessionId: `sessao-${i % 7}`, agentKey: `a${i}`, path: `/agente-${i}.jsonl` });
+
+    for (let round = 0; round < 6; round++) {
+      for (let i = 0; i < total; i++) {
+        ask(i);
+        await probe.settled();
+        now += 1;
+        if (i % 100 === 0) {
+          timers.fireDue();
+          await probe.settled();
+        }
+      }
+      now += 1000;
+      timers.fireDue();
+      await probe.settled();
+    }
+    // Os pedidos que ficaram para o fim do intervalo saem.
+    now += READ_INTERVAL_MS;
+    timers.fireDue();
+    await probe.settled();
+    assert.equal(timers.size(), 0);
+
+    assert.equal(readsAt.size, total, 'todo agente foi lido');
+    const tooSoon = [];
+    for (const [file, times] of readsAt) {
+      assert.ok(times.length >= 2, `${file}: só ${times.length} leitura(s)`);
+      for (let k = 1; k < times.length; k++) {
+        if (times[k] - times[k - 1] < READ_INTERVAL_MS) tooSoon.push(`${file}: ${times[k] - times[k - 1]} ms`);
+      }
+    }
+    assert.deepEqual(tooSoon, [], 'leituras do mesmo agente com menos de 5 s');
+
+    // Sessão esquecida: o registro dos despejados também é esquecido.
+    for (let s = 0; s < 7; s++) probe.forgetSession(`sessao-${s}`);
+    const before = readsAt.get('/agente-0.jsonl').length;
+    ask(0);
+    await probe.settled();
+    assert.equal(readsAt.get('/agente-0.jsonl').length, before + 1, 'agente de sessão esquecida volta como novo');
+  });
+
+  it('o despejado é o de leitura mais antiga sem leitura pendente, e o intervalo continua valendo para ele', async () => {
+    const { probe, timers, reads, advance } = setupProbe();
+    // Enche a sonda; o agente 0 é lido primeiro, o 1 por último.
+    const ask = (key) => probe.request({ sessionId: SID, agentKey: key, path: `/${key}.jsonl` });
+    ask('primeiro');
+    reads.calls.at(-1).resolve(USAGE);
+    await probe.settled();
+    for (let i = 1; i < MAX_TRACKED_AGENTS; i++) {
+      advance(1);
+      ask(`a${i}`);
+      reads.calls.at(-1).resolve(USAGE);
+      await probe.settled();
+    }
+    // O primeiro é pedido de novo (fica agendado) e não pode ser despejado.
+    ask('primeiro');
+    assert.equal(timers.pending().length, 1);
+    const count = reads.calls.length;
+    // Agente novo: despeja o de leitura mais antiga sem pendência (a1).
+    ask('novo');
+    assert.equal(reads.calls.length, count + 1);
+    reads.calls.at(-1).resolve(USAGE);
+    await probe.settled();
+    // a1, pedido de novo antes de 5 s, não é lido na hora.
+    ask('a1');
+    assert.equal(reads.calls.length, count + 1, 'a1 foi lido de novo antes de 5 s');
+    assert.equal(timers.pending().length, 2);
+  });
+
+  it('despejo que esvazia a sessão do próprio pedido: o agente novo continua ligado à sessão (forgetSession o alcança)', async () => {
+    const { probe, timers, reads, advance } = setupProbe();
+    // A única entrada de SID é a leitura mais antiga; as demais ficam em outra sessão.
+    probe.request({ sessionId: SID, agentKey: 'antigo', path: '/antigo.jsonl' });
+    reads.calls.at(-1).resolve(USAGE);
+    await probe.settled();
+    for (let i = 1; i < MAX_TRACKED_AGENTS; i++) {
+      advance(1);
+      probe.request({ sessionId: 'outra', agentKey: `a${i}`, path: `/a${i}.jsonl` });
+      reads.calls.at(-1).resolve(USAGE);
+      await probe.settled();
+    }
+    // Agente novo em SID: despeja o 'antigo', a última entrada de SID.
+    probe.request({ sessionId: SID, agentKey: 'novo', path: '/novo.jsonl' });
+    reads.calls.at(-1).resolve(USAGE);
+    await probe.settled();
+    // Pedido de novo dentro de 5 s: fica agendado.
+    probe.request({ sessionId: SID, agentKey: 'novo', path: '/novo.jsonl' });
+    assert.equal(timers.pending().length, 1);
+    probe.forgetSession(SID);
+    assert.equal(timers.pending().length, 0, 'o agendamento do agente novo ficou fora do alcance do forgetSession');
   });
 });

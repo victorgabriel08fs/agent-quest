@@ -17,10 +17,12 @@ export const MAIN = path.join(REPO, 'server', 'main.js');
 /** Ambiente mínimo e isolado: só o necessário para o Node rodar, mais o AGENT_QUEST_HOME temporário. */
 export function isolatedEnv(home, extra = {}) {
   const env = {};
-  for (const name of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'USERPROFILE', 'HOME']) {
+  for (const name of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP']) {
     if (process.env[name] !== undefined) env[name] = process.env[name];
   }
-  return { ...env, AGENT_QUEST_HOME: home, ...extra };
+  // A pasta pessoal também é a temporária: o servidor nunca lê o ~/.claude real
+  // (agentes e transcripts da sonda de contexto do T15).
+  return { ...env, USERPROFILE: home, HOME: home, AGENT_QUEST_HOME: home, ...extra };
 }
 
 /**

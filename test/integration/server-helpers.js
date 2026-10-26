@@ -7,6 +7,11 @@
 //
 // O ambiente dos processos filhos é mínimo de propósito: sem USERPROFILE, HOME ou
 // LOCALAPPDATA herdados, para que um esquecimento nunca caia no diretório real.
+// Sem USERPROFILE, o Node acharia a pasta pessoal real pelo sistema
+// (os.homedir()); por isso USERPROFILE e HOME apontam, por padrão, para uma
+// pasta pessoal temporária, e o servidor de teste nunca lê o ~/.claude real
+// (agentes em ~/.claude/agents, transcripts em ~/.claude/projects para a sonda
+// de contexto do T15).
 
 import { Buffer } from 'node:buffer';
 import { spawn, spawnSync } from 'node:child_process';
@@ -68,13 +73,33 @@ export function tempDir(prefix = 'aq-int-') {
   return { dir, cleanup: () => removeDir(dir) };
 }
 
-/** Ambiente mínimo para o Node rodar, mais `extra`. */
+/**
+ * Ambiente mínimo para o Node rodar, mais `extra`. USERPROFILE e HOME apontam
+ * para uma pasta pessoal temporária, a não ser que `extra` diga outra.
+ */
 export function minimalEnv(extra = {}) {
   const env = {};
   for (const name of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'ComSpec', 'PATHEXT']) {
     if (process.env[name] !== undefined) env[name] = process.env[name];
   }
-  return { ...env, ...extra };
+  const home = fakeHome();
+  return { ...env, USERPROFILE: home, HOME: home, ...extra };
+}
+
+/** Pasta pessoal temporária e vazia dos processos filhos, apagada no fim. */
+let fakeHomeDir = null;
+function fakeHome() {
+  if (!fakeHomeDir) {
+    fakeHomeDir = mkdtempSync(path.join(tmpdir(), 'aq-int-home-'));
+    process.once('exit', () => {
+      try {
+        removeDir(fakeHomeDir, { timeoutMs: 5_000 });
+      } catch {
+        // pasta temporária do sistema; não vale derrubar o teste por ela
+      }
+    });
+  }
+  return fakeHomeDir;
 }
 
 /**
