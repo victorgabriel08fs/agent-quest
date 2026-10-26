@@ -1,0 +1,10 @@
+{
+  "name": "vazio",
+  "description": "SINTÉTICO: arquivo vazio: devolve null",
+  "synthetic": true,
+  "options": {
+    "main": true
+  },
+  "lines": [],
+  "expected": null
+}

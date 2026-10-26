@@ -52,3 +52,14 @@ Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas defin
 
 - **Barra de contexto (Foco / Mana):** opcional, no fim da v1 (T15 e T16). Pode sair da v1 sem afetar o resto.
 - **Custo da sessão:** fora da v1. OpenTelemetry, ou qualquer outra fonte de custo, só entra depois da v1 e com nova aprovação do usuário, porque exige mudar o `env` do `~/.claude/settings.json` e criar um receptor OTLP local.
+
+## Complemento (26/10/2026, revisão do T15)
+
+Refinamentos da barra de contexto, sem mudar a decisão nem o contrato. As regras completas estão no modelo de eventos, seção 6, "Contexto".
+
+- **Depois de uma compactação**, a barra some até a próxima resposta do agente. A leitura do transcript para na marca de compactação (`compact_boundary`). Sem isso, a barra mostraria o valor de antes, perto do limite, logo depois de a compactação liberar o contexto. É o mesmo comportamento da status line do Claude Code (`current_usage` fica `null` depois do `/compact`). Alternativas descartadas:
+  - manter o último valor: errado justamente no momento em que a compactação aparece no painel;
+  - usar o tamanho pós-compactação que a marca registra (`compactMetadata.postTokens`): não é documentado e, nos transcripts reais conferidos, ficou de 2 a 5 vezes abaixo (7 compactações em 5 transcripts, Claude Code 2.1.301) do uso da resposta seguinte. A barra pularia logo depois;
+  - zerar o contexto no reducer ao receber o PostCompact: a leitura seguinte traria o valor antigo de volta, porque continuaria achando a última resposta de antes.
+- **`CLAUDE_CONFIG_DIR`** fica fora da v1. Com a pasta do Claude Code mudada, os transcripts saem de `~/.claude/projects`, a sonda recusa os caminhos e a barra não aparece. É uma falha segura. Aceitar a pasta da variável exigiria que o servidor visse o ambiente do Claude Code (mudança no envelope, seção 1) ou confiasse no caminho do próprio payload (afrouxa a pasta permitida). Uma alternativa barata para depois da v1 é aceitar também `<CLAUDE_CONFIG_DIR>/projects` quando a variável estiver no ambiente do próprio servidor.
+- **Leitura travada** sem prazo na v1. As barras ficam com o último valor, e o resto do painel não é afetado. O leitor de `.claude/agents/` tem prazo e "listagem perdida" porque lê pastas de projeto, que podem estar na rede ou só na nuvem. A sonda lê só `~/.claude/projects`, que fica no disco local no caso normal.

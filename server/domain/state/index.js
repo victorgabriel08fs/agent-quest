@@ -6,8 +6,11 @@
 // T7: sessões, agentes, delegação, ordem, saúde, fim de turno e limpeza.
 // T8: tickets e etapas (quests.js), aprovações (permissions.js), bugs,
 // compactação e interrupção. A partir do T8 o reducer emite todos os tipos da
-// seção 3, menos `context.usage` (T15), e o SessionState sai com `quest`,
-// `counters`, `bugs` e `waitingFor` reais e com os status `waiting`.
+// seção 3, e o SessionState sai com `quest`, `counters`, `bugs` e
+// `waitingFor` reais e com os status `waiting`.
+// T15: `context` do agente e `context.usage`, a partir da leitura do
+// transcript que a ligação entrega por `setContextUsage` (o reducer não lê o
+// disco).
 //
 // Determinístico (ADR 0010): o relógio `now` vem de quem chama. As horas do
 // estado vêm do `ts` do fato (sentAt do encaminhador); `now` decide o status
@@ -230,6 +233,57 @@ export function setAgentNames(state, projectDir, names) {
     changed.push(session.id);
   }
   return { changed };
+}
+
+/**
+ * Leitura da sonda de contexto (T15; seção 6, "Contexto"), entregue pela
+ * ligação depois da leitura assíncrona do transcript (server/usage/).
+ * - Valor novo: o `context` do agente muda e sai `context.usage` (fora do
+ *   feed), com o `ts` da leitura.
+ * - Mesmo valor da leitura anterior: nada muda, nem o `at`.
+ * - `null` (arquivo ausente, formato desconhecido, erro): `context` vira
+ *   `null`, sem evento (a barra some no painel).
+ * - Sessão ou agente que não está mais na memória: nada.
+ * @param {State} state
+ * @param {string} sessionId
+ * @param {string} agentKey
+ * @param {{ pct: number, usedTokens: number, windowTokens: number }|null} usage
+ * @param {number} at                    hora da leitura (relógio do servidor, ms)
+ * @returns {{ events: CanonicalEvent[], changed: string[] }}
+ */
+export function setContextUsage(state, sessionId, agentKey, usage, at) {
+  /** @type {CanonicalEvent[]} */
+  const events = [];
+  const session = state.sessions.get(sessionId);
+  const agent = session?.agents.get(agentKey);
+  if (!session || !agent || !Number.isFinite(at)) return { events, changed: [] };
+  const value = contextValue(usage);
+  const current = agent.context;
+  if (value === null) {
+    if (current === null) return { events, changed: [] };
+    agent.context = null;
+    return { events, changed: [sessionId] };
+  }
+  if (current && current.pct === value.pct && current.usedTokens === value.usedTokens && current.windowTokens === value.windowTokens) {
+    return { events, changed: [] };
+  }
+  agent.context = { ...value, at };
+  emit(contextOf(state, session, events, at), agentKey, 'context.usage', { ...value }, at);
+  return { events, changed: [sessionId] };
+}
+
+/**
+ * Leitura no formato do contrato, ou null.
+ * @param {unknown} usage
+ * @returns {{ pct: number, usedTokens: number, windowTokens: number }|null}
+ */
+function contextValue(usage) {
+  if (usage === null || typeof usage !== 'object') return null;
+  const { pct, usedTokens, windowTokens } = /** @type {Record<string, unknown>} */ (usage);
+  if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct > 100) return null;
+  if (!Number.isSafeInteger(usedTokens) || /** @type {number} */ (usedTokens) < 0) return null;
+  if (!Number.isSafeInteger(windowTokens) || /** @type {number} */ (windowTokens) <= 0) return null;
+  return { pct, usedTokens: /** @type {number} */ (usedTokens), windowTokens: /** @type {number} */ (windowTokens) };
 }
 
 /**

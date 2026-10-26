@@ -1,0 +1,57 @@
+{
+  "name": "linhas-invalidas",
+  "description": "SINTÉTICO: linha final partida e linha que não é JSON são puladas",
+  "synthetic": true,
+  "options": {
+    "main": true
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000016",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000017",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 100,
+          "cache_creation_input_tokens": 900,
+          "cache_read_input_tokens": 59000,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 900
+          }
+        }
+      }
+    },
+    "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input_tokens\":",
+    "isto não é JSON \"usage\""
+  ],
+  "expected": {
+    "usedTokens": 60000,
+    "windowTokens": 200000,
+    "pct": 30
+  }
+}

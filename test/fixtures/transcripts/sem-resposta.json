@@ -1,0 +1,44 @@
+{
+  "name": "sem-resposta",
+  "description": "SINTÉTICO: só pedido e entradas sem usage: devolve null",
+  "synthetic": true,
+  "options": {
+    "main": true
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000034",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000035",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:01.000Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01SINTETICO",
+            "content": "SAIDA-SINTETICA"
+          }
+        ]
+      }
+    },
+    {
+      "type": "summary",
+      "summary": "RESUMO-SINTETICO",
+      "leafUuid": "00000000-0000-4000-8000-000000000036"
+    }
+  ],
+  "expected": null
+}

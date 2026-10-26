@@ -23,11 +23,19 @@
 //   `update` sem evento (seção 7). Até lá, o `roster` tem só os papéis vistos.
 //   Uma listagem que termina depois do prazo chega por `onLate` do leitor e é
 //   aplicada do mesmo jeito.
+// - Sonda de contexto (T15; seção 6, "Contexto"): `tool.finished`, Stop,
+//   SubagentStop e PostCompact pedem a leitura do transcript do agente à sonda
+//   (server/usage/transcript-usage.js), que respeita uma leitura por agente a
+//   cada 5 s e lê fora do `apply`, de forma assíncrona. O resultado chega por
+//   `setContextUsage` e sai como `update` (com `context.usage` quando o valor
+//   muda). Só lê dentro de `~/.claude/projects/`; sem pasta pessoal, a sonda
+//   fica desligada. Erro na sonda nunca chega à fila nem ao Claude Code.
 //
 // O hub (server/http/sse.js) continua sem importar nada do domínio: recebe
 // daqui as mensagens já numeradas e o snapshot pronto.
 
 import os from 'node:os';
+import path from 'node:path';
 import { clearInterval, setInterval } from 'node:timers';
 import { createAgentNamesReader } from './agent-names.js';
 import { normalize } from './domain/normalize.js';
@@ -39,11 +47,19 @@ import {
   getSessionStates,
   sessionCount,
   setAgentNames,
+  setContextUsage,
   tick,
 } from './domain/state/index.js';
+import { createContextProbe, transcriptPathFor } from './usage/transcript-usage.js';
 
 /** Intervalo do `tick` (plano, T9a). */
 export const TICK_MS = 5000;
+
+/** Modelos pedidos guardados (um por sessão, do SessionStart); acima disso, sai o mais antigo. */
+const MAX_SESSION_MODELS = 1000;
+
+/** Fatos que pedem a leitura do contexto do próprio agente (seção 6, "Contexto"). */
+const CONTEXT_FACTS = new Set(['turn.stop', 'subagent.stop', 'compact.post']);
 
 /**
  * @typedef {import('../shared/contract.js').UpdateMessage} UpdateMessage
@@ -79,6 +95,16 @@ export const TICK_MS = 5000;
  * @property {PipelineTimers} [timers]
  * @property {(message: string) => void} [logError]
  * @property {{ apply: typeof apply, tick: typeof tick }} [reducer]   os testes trocam
+ * @property {UsageOptions} [usageOptions]   sonda de contexto (os testes trocam a raiz, a leitura e os temporizadores)
+ */
+
+/**
+ * @typedef {object} UsageOptions
+ * @property {string|null} [root]        pasta permitida; padrão `<homeDir>/.claude/projects`; null desliga a sonda
+ * @property {typeof import('./usage/transcript-usage.js').readContextUsage} [read]
+ * @property {() => number} [clock]      padrão: o relógio do pipeline
+ * @property {import('./usage/transcript-usage.js').ProbeTimers} [timers]
+ * @property {number} [intervalMs]
  */
 
 /**
@@ -88,7 +114,7 @@ export const TICK_MS = 5000;
  *   (`ignored`). Erro do reducer é relançado para a fila contar e registrar.
  * @property {() => void} runTick          uma passada do `tick`, agora
  * @property {() => void} start            liga o `tick` periódico
- * @property {() => void} stop             desliga o `tick` periódico
+ * @property {() => void} stop             desliga o `tick` periódico e cancela as leituras de contexto agendadas
  * @property {() => SnapshotMessage} snapshot    `{ seq, sessions }`, sessões com feed
  * @property {() => number} currentSeq    o último `seq` reservado (retomada do SSE)
  * @property {() => number} sessionCount
@@ -111,6 +137,7 @@ export function createPipeline({
   timers = { setInterval, clearInterval },
   logError = console.error,
   reducer = { apply, tick },
+  usageOptions = {},
 }) {
   const sequence = createSequence(runId);
   const state = createState({ roleOverrides, sequence, homeDir });
@@ -123,6 +150,12 @@ export function createPipeline({
   /** Projetos cuja leitura de .claude/agents/ já foi pedida. @type {Set<string>} */
   const requested = new Set();
   const agentNames = reader ?? createAgentNamesReader({ homeDir, ...readerOptions, onLate: applyAgentNames });
+  /** Modelo pedido de cada sessão (SessionStart), para a janela de 1 milhão. @type {Map<string, string>} */
+  const sessionModels = new Map();
+  const { root: usageRoot = projectsRoot(homeDir), ...probeOptions } = usageOptions;
+  const probe = usageRoot === null
+    ? null
+    : createContextProbe({ clock, logError, ...probeOptions, root: usageRoot, onResult: applyContextUsage });
 
   /**
    * Um `update` por evento, na ordem, com o estado da sessão (sem feed); depois
@@ -177,7 +210,72 @@ export function createPipeline({
     }
     publish(result);
     for (const projectDir of result.newProjects ?? []) readAgentNames(projectDir);
+    requestContextReads(fact, result.events);
     return true;
+  }
+
+  /**
+   * Pede à sonda a leitura do contexto dos agentes que acabaram uma ferramenta
+   * (`tool.finished`) ou o turno, ou que terminaram uma compactação (Stop,
+   * SubagentStop, PostCompact). Nunca lança: o envelope já foi processado.
+   * @param {import('./domain/normalize.js').Fact} fact
+   * @param {readonly import('../shared/contract.js').CanonicalEvent[]} events
+   */
+  function requestContextReads(fact, events) {
+    if (probe === null) return;
+    try {
+      if (fact.kind === 'session.start' && typeof fact.model === 'string') rememberModel(fact.sessionId, fact.model);
+      /** @type {Set<string>} */
+      const keys = new Set();
+      for (const event of events) {
+        if (event.kind === 'tool.finished' && event.agentKey !== null) keys.add(event.agentKey);
+      }
+      if (CONTEXT_FACTS.has(fact.kind)) keys.add(fact.agentId ?? 'main');
+      const agents = state.sessions.get(fact.sessionId)?.agents;
+      for (const agentKey of keys) {
+        if (!agents?.has(agentKey)) continue;
+        const file = transcriptPathFor({
+          agentKey,
+          sessionId: fact.sessionId,
+          transcriptPath: fact.transcriptPath,
+          agentTranscriptPath: fact.kind === 'subagent.stop' && fact.agentId === agentKey ? fact.agentTranscriptPath : null,
+        });
+        if (file === null) continue;
+        const model = agentKey === 'main' ? sessionModels.get(fact.sessionId) ?? null : null;
+        probe.request({ sessionId: fact.sessionId, agentKey, path: file, model });
+      }
+    } catch (err) {
+      logError(`Erro ao pedir o uso de contexto: ${errorKind(err)}`);
+    }
+  }
+
+  /**
+   * @param {string} sessionId
+   * @param {string} model
+   */
+  function rememberModel(sessionId, model) {
+    sessionModels.delete(sessionId);
+    sessionModels.set(sessionId, model);
+    if (sessionModels.size > MAX_SESSION_MODELS) {
+      const oldest = sessionModels.keys().next().value;
+      if (oldest !== undefined) sessionModels.delete(oldest);
+    }
+  }
+
+  /**
+   * Resultado de uma leitura da sonda: `context` do agente no estado e o
+   * `update` (com `context.usage` quando o valor mudou).
+   * @param {string} sessionId
+   * @param {string} agentKey
+   * @param {import('./usage/transcript-usage.js').ContextUsage|null} usage
+   * @param {number} at
+   */
+  function applyContextUsage(sessionId, agentKey, usage, at) {
+    try {
+      publish(setContextUsage(state, sessionId, agentKey, usage, at));
+    } catch (err) {
+      logError(`Erro ao aplicar o uso de contexto: ${errorKind(err)}`);
+    }
   }
 
   /**
@@ -221,6 +319,10 @@ export function createPipeline({
   function runTick() {
     try {
       const result = reducer.tick(state, clock());
+      for (const sessionId of result.removed) {
+        sessionModels.delete(sessionId);
+        probe?.forgetSession(sessionId);
+      }
       publish(result, result.removed);
     } catch (err) {
       logError(`Erro no tick do estado: ${errorKind(err)}`);
@@ -237,6 +339,7 @@ export function createPipeline({
       timer?.unref?.();
     },
     stop() {
+      probe?.stop();
       if (timer === null) return;
       timers.clearInterval(timer);
       timer = null;
@@ -248,6 +351,8 @@ export function createPipeline({
       publisher = next;
     },
     async settled() {
+      while (reading.size > 0) await Promise.all([...reading]);
+      await probe?.settled();
       while (reading.size > 0) await Promise.all([...reading]);
     },
   };
@@ -261,6 +366,16 @@ export function createPipeline({
 function errorKind(err) {
   const e = /** @type {any} */ (err);
   return String(e?.code ?? e?.name ?? 'Error');
+}
+
+/**
+ * Pasta dos transcripts do Claude Code (`~/.claude/projects`), a única que a
+ * sonda de contexto lê.
+ * @param {string|null} homeDir
+ * @returns {string|null}
+ */
+function projectsRoot(homeDir) {
+  return typeof homeDir === 'string' && path.isAbsolute(homeDir) ? path.join(homeDir, '.claude', 'projects') : null;
 }
 
 /** @returns {string|null} */

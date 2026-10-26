@@ -1,0 +1,105 @@
+{
+  "name": "subagente",
+  "description": "SINTÉTICO: transcript de subagente: todas as entradas são isSidechain e contam",
+  "synthetic": true,
+  "options": {
+    "main": false
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000027",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-DO-AGENTE"
+      },
+      "agentId": "a0000000000000001"
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000028",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 500,
+          "cache_read_input_tokens": 19497,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 500
+          }
+        }
+      },
+      "agentId": "a0000000000000001"
+    },
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000029",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:01.000Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01SINTETICO",
+            "content": "SAIDA-SINTETICA"
+          }
+        ]
+      },
+      "agentId": "a0000000000000001"
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000030",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": true,
+      "timestamp": "2026-10-26T12:00:02.000Z",
+      "message": {
+        "id": "msg_01SINTETICO",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [
+          {
+            "type": "text",
+            "text": "RESPOSTA-SINTETICA"
+          }
+        ],
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 800,
+          "cache_read_input_tokens": 29198,
+          "output_tokens": 100,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 800
+          }
+        }
+      },
+      "agentId": "a0000000000000001"
+    }
+  ],
+  "expected": {
+    "usedTokens": 30000,
+    "windowTokens": 200000,
+    "pct": 15
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "name": "formato-desconhecido",
+  "description": "SINTÉTICO: usage em lugares ou formatos que a sonda não conhece: devolve null",
+  "synthetic": true,
+  "options": {
+    "main": true
+  },
+  "lines": [
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000018",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "isSidechain": false,
+      "timestamp": "2026-10-26T12:00:00.000Z",
+      "message": {
+        "role": "user",
+        "content": "PEDIDO-SINTETICO"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000019",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "input_tokens": "1234",
+          "cache_read_input_tokens": 10
+        }
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000020",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "usage": {
+        "input_tokens": 1234
+      },
+      "message": {
+        "role": "assistant",
+        "content": "RESPOSTA-SINTETICA"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000021",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "inputTokens": 1234,
+          "cacheReadInputTokens": 10
+        }
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000022",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "input_tokens": -5
+        }
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000023",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 1.5
+        }
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000024",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 10,
+          "cache_read_input_tokens": "x"
+        }
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "00000000-0000-4000-8000-000000000025",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "assistant",
+        "usage": [
+          1,
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "type": "user",
+      "uuid": "00000000-0000-4000-8000-000000000026",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "message": {
+        "role": "user",
+        "usage": {
+          "input_tokens": 999
+        }
+      }
+    },
+    [
+      "lista",
+      {
+        "usage": {
+          "input_tokens": 5
+        }
+      }
+    ]
+  ],
+  "expected": null
+}

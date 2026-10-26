@@ -46,7 +46,7 @@ Meta: evento no painel em menos de 300 ms, dos quais cerca de 60 ms são o iníc
 | Normalização | `server/domain/normalize.js`, `tools.js`, `redact.js`, `tests-detect.js`, `roles.js` | Payload do hook → fato mínimo e redigido | funções puras |
 | Estado | `server/domain/state/` | Sessões, agentes, tickets, etapas, aprovações, bugs, saúde; emite eventos canônicos | `apply(state, fact, now)` e `tick(state, now)`, determinísticas |
 | Tempo real | `server/http/sse.js` | `hello`, `snapshot`, `update`, retomada por `Last-Event-ID` | cliente SSE de teste |
-| Sonda de contexto (opcional) | `server/usage/transcript-usage.js` | Ler o uso de tokens no fim do transcript | `readContextUsage(path, opts)` → objeto ou `null` |
+| Sonda de contexto (opcional, T15) | `server/usage/transcript-usage.js` | Montar o caminho do transcript de cada agente, ler o uso de tokens no fim dele e agendar as leituras fora do `apply` | `readContextUsage(file, opts)` → `Promise` de objeto ou `null` (nunca rejeita); `transcriptPathFor(...)`, pura; `createContextProbe({ ... })` com leitura, relógio e temporizadores injetáveis |
 | Painel | `web/` | Conexão, store, temas, telas, cena | módulos puros (store, seletores, temas, views que geram HTML) + E2E |
 | Contrato compartilhado | `shared/contract.js` | Tipos de evento, papéis, categorias, etapas, status | importado pelo servidor e pelo navegador |
 
@@ -66,12 +66,18 @@ export function plainText(text) {}           // → texto sem invisíveis, contr
 export function createState({ roleOverrides, sequence, homeDir }) {}   // → State; sequence padrão contador local; homeDir padrão null (a ligação passa os.homedir(), contexto de unidade para /c/...)
 export function apply(state, fact, now) {}   // → { events: CanonicalEvent[] já numerados pelo sequence, changed: string[], newProjects: string[] }
 export function setAgentNames(state, projectDir, names) {}   // → { changed: string[] } (ids de sessão, como apply e tick); roster das sessões do projeto (seção 7)
+export function setContextUsage(state, sessionId, agentKey, usage, at) {}   // → { events, changed } (T15); usage { pct, usedTokens, windowTokens } ou null; at = hora da leitura
+                                                                             //   valor novo: context do agente muda e sai context.usage; mesmo valor: nada (nem o at);
+                                                                             //   null: context vira null, sem evento; sessão ou agente fora da memória: nada
 
 // server/domain/tools.js
 export function canonicalPath(path, { homeDir }) {}   // → forma canônica (seção 2, "Formas de caminho"); usada no displayPath e no project.key
 
 // server/pipeline.js (ligação de ponta a ponta, T9a; fora do domínio e do hub)
-export function createPipeline({ /* state, hub, reader, sequence, relógio */ }) {}   // ingestão → normalize → apply → hub; tick periódico; leitura de agentes
+export function createPipeline({ /* state, hub, reader, sequence, relógio, usageOptions */ }) {}   // ingestão → normalize → apply → hub; tick periódico; leitura de agentes; sonda de contexto
+// usageOptions (T15, opcional): { root, read, clock, timers, intervalMs }. root padrão <homeDir>/.claude/projects; root null (ou sem pasta pessoal) desliga a sonda.
+//   O pipeline pede leituras depois do apply (tool.finished, turn.stop, subagent.stop, compact.post), guarda o model do SessionStart por sessão
+//   e esquece sessão e agentes quando o tick remove a sessão; stop() também cancela as leituras agendadas; settled() espera as leituras em andamento
 // startServer({ …, pipeline }) aceita um pipeline pronto só para testes e devolve o pipeline; createApp({ …, sessionCount, getSeq }) para o /api/health e o hub
 // createSseHub({ …, getSeq }): getSeq ligado a pipeline.currentSeq(), para o hello e a retomada (T9b)
 export function tick(state, now) {}          // → { events, changed, removed }; eventos já numerados pelo sequence
@@ -84,6 +90,17 @@ export function createAgentNamesReader({ homeDir, list, timeoutMs, onLate }) {} 
                                                                                    //   assíncrono, prazo por pasta (500 ms), cache por pasta, ignora UNC e caminho relativo,
                                                                                    //   [] em erro ou prazo; filtra .md antes do limite de 200; no máximo 1 listagem em andamento
                                                                                    //   (fila); onLate(projectDir, names) quando uma listagem termina depois do prazo; list injetável
+
+// server/usage/transcript-usage.js (opcional, T15; fora de server/domain/; modelo de eventos, seção 6, "Contexto")
+export async function readContextUsage(file, { root, model, main, maxBytes }) {}   // → Promise<{ pct, usedTokens, windowTokens } | null>, nunca rejeita
+                                                                                    //   só .jsonl dentro de root (caminho resolvido e caminho real); últimos 64 KiB;
+                                                                                    //   main: ignora entradas isSidechain; para na marca de compactação (null)
+export function contextUsage(usedTokens, model) {}                                  // → { pct, usedTokens, windowTokens }; regra da janela (ADR 0008)
+export function transcriptPathFor({ agentKey, sessionId, transcriptPath, agentTranscriptPath }) {}   // → string | null; só monta o caminho, sem disco
+export function createContextProbe({ root, onResult, read, clock, timers, intervalMs, logError }) {}
+  // → { request({ sessionId, agentKey, path, model }), forgetSession(sessionId), stop(), settled() }
+  //   1 leitura por agente a cada 5 s (a última pedida no intervalo sai no fim dele); 1 leitura por vez no servidor;
+  //   até 2 000 agentes acompanhados; onResult(sessionId, agentKey, usage | null, at); nunca lança
 
 // web/js/store.js
 export function createStore() {}
@@ -131,6 +148,9 @@ export function removeSession(store, sessionId) {}        // → true se a sess�
 | Porta ocupada | Se for outra instância do Agent Quest, avisa o endereço e sai com 0; senão, erro claro sugerindo `--port`. |
 | Captura não instalada | O painel vazio explica como ligar a captura e mostra "nenhum evento recebido desde HH:MM". |
 | Muitos eventos ou sessões | Feed limitado a 200 por sessão; fila limitada (descarta os mais antigos e conta); limpeza de sessões antigas. |
+| Transcript ausente, fora de `~/.claude/projects` (inclui `CLAUDE_CONFIG_DIR`) ou em formato desconhecido | A sonda de contexto devolve `null` e a barra do agente some. Nada mais muda (T15). |
+| Agente acabou de compactar | A barra some até a próxima resposta do agente, como a status line do Claude Code (modelo de eventos, seção 6, "Contexto"). |
+| Leitura do transcript travada | As barras ficam com o último valor até o servidor reiniciar; o resto do painel continua ao vivo. Limitação aceita na v1 (seção 6, "Contexto"). |
 
 ## Segurança (resumo do ADR 0006)
 
@@ -159,7 +179,7 @@ export function removeSession(store, sessionId) {}        // → true se a sess�
 | Clientes SSE | 8; cliente com mais de 1 MiB acumulado é desconectado e volta com snapshot. O envio inicial só conta depois do primeiro `drain` |
 | Limpeza | sessão encerrada: 30 min; sem eventos: 6 h; agente "trabalhando" sem ferramenta rodando e sem eventos: 15 min |
 | Saúde | últimas 10 ações do agente |
-| Sonda de contexto (opcional) | até 1 leitura por agente a cada 5 s; últimos 64 KiB do arquivo |
+| Sonda de contexto (opcional) | até 1 leitura por agente a cada 5 s; 1 leitura por vez no servidor; últimos 64 KiB do arquivo; até 2 000 agentes acompanhados e o modelo pedido de até 1 000 sessões |
 
 ## Estrutura de pastas
 

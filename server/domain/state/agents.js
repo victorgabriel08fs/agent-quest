@@ -73,8 +73,14 @@ const MAX_DEPTH = 16;
  * @property {boolean} revivable          encerrado só pela inferência dos 15 min: um `tool.pre` novo o traz de volta (seção 6)
  * @property {number} pending             pedidos de aprovação pendentes (permissions.js)
  * @property {{ tool: string, category: import('../../../shared/contract.js').ToolCategory, target: string|null }|null} waitingFor
+ * @property {ContextState|null} context  última leitura da sonda de contexto (T15), ou null
  * @property {number} startedAt
  * @property {number} lastEventAt
+ */
+
+/**
+ * Uso aproximado da janela de contexto (seção 6, "Contexto"; seção 9).
+ * @typedef {{ pct: number, usedTokens: number, windowTokens: number, at: number }} ContextState
  */
 
 /**
@@ -318,6 +324,7 @@ function newAgent({ key, agentId, agentType, typeKey, role, status, ts }) {
     revivable: false,
     pending: 0,
     waitingFor: null,
+    context: null,
     startedAt: ts,
     lastEventAt: ts,
   };
@@ -717,8 +724,9 @@ export function recordOutcome(agent, ok, ts) {
 
 /**
  * AgentState do contrato (seção 9), com as chaves na ordem do contrato.
- * `waitingFor` vem do T8 (pedido de aprovação pendente); `context` fica null
- * até o T15. Nenhum campo interno sai daqui, em especial o tipo cru.
+ * `waitingFor` vem do T8 (pedido de aprovação pendente); `context`, da sonda
+ * de contexto (T15), ou null. Nenhum campo interno sai daqui, em especial o
+ * tipo cru.
  * @param {Agent} agent
  * @returns {AgentState}
  */
@@ -738,7 +746,7 @@ export function toAgentState(agent) {
     activity: agent.activity ? { ...agent.activity } : null,
     waitingFor: agent.waitingFor ? { ...agent.waitingFor } : null,
     health: { ok, total: agent.outcomes.length },
-    context: null,
+    context: agent.context ? { ...agent.context } : null,
     startedAt: agent.startedAt,
     lastEventAt: agent.lastEventAt,
   };

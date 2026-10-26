@@ -278,10 +278,14 @@ export const kinds = (events) => events.map((event) => [event.kind, event.agentK
 // ---------------------------------------------------------------------------
 
 /**
- * Tipos que o reducer emite a partir do T8: todos os da seção 3, menos o
- * `context.usage`, que é do T15 (opcional).
+ * Tipos que o servidor emite a partir do T15: todos os da seção 3. O
+ * `context.usage` sai só de `setContextUsage` (leitura da sonda de contexto,
+ * fora do `apply`); o `apply` e o `tick` emitem os de REDUCER_KINDS.
  */
-export const EMITTED_KINDS = Object.freeze(EVENT_KINDS.filter((kind) => kind !== 'context.usage'));
+export const EMITTED_KINDS = Object.freeze([...EVENT_KINDS]);
+
+/** Tipos que o `apply` e o `tick` emitem: todos, menos o `context.usage` (T15). */
+export const REDUCER_KINDS = Object.freeze(EVENT_KINDS.filter((kind) => kind !== 'context.usage'));
 
 /** Os 8 tipos do recorte da Primeira luz (T7). Usado para filtrar listas exatas do T7. */
 export const SLICE_KINDS = Object.freeze([
@@ -290,7 +294,7 @@ export const SLICE_KINDS = Object.freeze([
 ]);
 
 /** Tipos do T8, que não existiam no recorte. */
-export const T8_KINDS = Object.freeze(EMITTED_KINDS.filter((kind) => !SLICE_KINDS.includes(kind)));
+export const T8_KINDS = Object.freeze(REDUCER_KINDS.filter((kind) => !SLICE_KINDS.includes(kind)));
 
 /** Só os tipos do recorte do T7 (para as listas exatas dos testes do T7). */
 export const sliceOnly = (events) => events.filter((event) => SLICE_KINDS.includes(event.kind));
@@ -313,7 +317,21 @@ export const DATA_KEYS = Object.freeze({
   'permission.requested': ['tool', 'category', 'target'],
   'permission.resolved': ['outcome', 'by'],
   'context.compacted': ['trigger'],
+  'context.usage': ['pct', 'usedTokens', 'windowTokens'],
 });
+
+/** Janelas de contexto da seção 6 (T15): 200 mil, ou 1 milhão. */
+export const CONTEXT_WINDOWS = Object.freeze([200_000, 1_000_000]);
+
+/** Uso de contexto (seção 6): `pct` inteiro de 0 a 100, coerente com `usedTokens` e a janela. */
+export function checkContextValue(value, label = 'context') {
+  assert.ok(Number.isSafeInteger(value.usedTokens) && value.usedTokens > 0, `${label}: usedTokens ${value.usedTokens}`);
+  assert.ok(CONTEXT_WINDOWS.includes(value.windowTokens), `${label}: windowTokens ${value.windowTokens}`);
+  assert.ok(Number.isInteger(value.pct) && value.pct >= 0 && value.pct <= 100, `${label}: pct ${value.pct}`);
+  assert.equal(value.pct, Math.min(100, Math.round((value.usedTokens / value.windowTokens) * 100)), `${label}: pct incoerente`);
+  // Acima de 200 mil, a janela é sempre a de 1 milhão.
+  if (value.usedTokens > 200_000) assert.equal(value.windowTokens, 1_000_000, `${label}: uso acima de 200 mil com janela de 200 mil`);
+}
 
 /** CanonicalEvent da seção 3, na ordem do typedef. */
 export const EVENT_KEYS = Object.freeze(['id', 'seq', 'ts', 'sessionId', 'agentKey', 'kind', 'data']);
@@ -434,6 +452,10 @@ export function checkEvent(event, { numbered = false } = {}) {
     case 'context.compacted':
       assert.ok([null, 'manual', 'auto'].includes(data.trigger), `trigger ${data.trigger}`);
       break;
+    case 'context.usage':
+      checkContextValue(data, 'context.usage');
+      assert.ok(!FEED_KINDS.includes('context.usage'), 'context.usage não vai ao feed');
+      break;
     default:
   }
   checkNoRawKeys(event);
@@ -545,7 +567,11 @@ export function checkSession(session, { feed = null } = {}) {
       sameSet(Object.keys(item.waitingFor), ['tool', 'category', 'target'], 'chaves de waitingFor');
       assert.ok(isText(item.waitingFor.tool) && TOOL_CATEGORIES.includes(item.waitingFor.category) && isTextOrNull(item.waitingFor.target));
     }
-    assert.equal(item.context, null);
+    if (item.context !== null) {
+      sameSet(Object.keys(item.context), ['pct', 'usedTokens', 'windowTokens', 'at'], `${item.key}: chaves de context`);
+      checkContextValue(item.context, `${item.key}.context`);
+      assert.ok(isTime(item.context.at), `${item.key}: context.at`);
+    }
     sameSet(Object.keys(item.health), ['ok', 'total'], 'chaves de health');
     assert.ok(Number.isInteger(item.health.ok) && Number.isInteger(item.health.total));
     assert.ok(item.health.ok >= 0 && item.health.ok <= item.health.total && item.health.total <= 10, `health ${JSON.stringify(item.health)}`);
@@ -627,9 +653,11 @@ export class Tracker {
     return entry;
   }
 
-  consume(events, fact = null) {
+  /** `source`: `reducer` (apply e tick) ou `context` (setContextUsage, T15). */
+  consume(events, fact = null, { source = 'reducer' } = {}) {
     for (const event of events) {
       checkEvent(event, { numbered: this.numbered });
+      assert.equal(event.kind === 'context.usage', source === 'context', `${event.kind} saiu de ${source}: context.usage só sai de setContextUsage`);
       if (fact) assert.equal(event.sessionId, fact.sessionId, 'evento em outra sessão que a do fato');
       const s = this.#session(event.sessionId);
       const who = event.agentKey;
