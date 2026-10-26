@@ -678,6 +678,43 @@ describe('createContextProbe: limite de agentes acompanhados (B1 do tester)', ()
     assert.equal(readsAt.get('/agente-0.jsonl').length, before + 1, 'agente de sessão esquecida volta como novo');
   });
 
+  it(`${2 * MAX_TRACKED_AGENTS} agentes distintos com o relógio parado, duas voltas: nenhuma releitura antes de 5 s (O1 do tester)`, async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const timers = dueTimers(clock);
+    /** @type {Map<string, number>} */
+    const readCount = new Map();
+    const probe = createContextProbe({
+      root: ROOT,
+      clock,
+      timers: timers.timers,
+      read: async (file) => {
+        readCount.set(file, (readCount.get(file) ?? 0) + 1);
+        return USAGE;
+      },
+      onResult: () => {},
+    });
+    const total = 2 * MAX_TRACKED_AGENTS;
+    const ask = (i) => probe.request({ sessionId: `sessao-${i % 7}`, agentKey: `a${i}`, path: `/agente-${i}.jsonl` });
+
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < total; i++) {
+        ask(i);
+        await probe.settled();
+      }
+    }
+    assert.equal(readCount.size, total, 'todo agente foi lido');
+    const reread = [...readCount].filter(([, n]) => n !== 1).map(([file]) => file);
+    assert.deepEqual(reread.slice(0, 5), [], `${reread.length} agente(s) relido(s) antes de 5 s`);
+
+    // No fim do intervalo, cada agente pedido de novo é lido mais uma vez.
+    now += READ_INTERVAL_MS;
+    timers.fireDue();
+    await probe.settled();
+    assert.equal(timers.size(), 0);
+    assert.ok([...readCount.values()].every((n) => n === 2), 'cada agente lido duas vezes no total');
+  });
+
   it('o despejado é o de leitura mais antiga sem leitura pendente, e o intervalo continua valendo para ele', async () => {
     const { probe, timers, reads, advance } = setupProbe();
     // Enche a sonda; o agente 0 é lido primeiro, o 1 por último.

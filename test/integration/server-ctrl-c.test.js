@@ -59,9 +59,13 @@ function isAlive(pid) {
   }
 }
 
-/** Ambiente do console emulado: o do processo, com dados e cache do npm temporários. */
+/**
+ * Ambiente do console emulado: o do processo, com dados, cache do npm e pasta
+ * pessoal temporários. Sem trocar USERPROFILE e HOME, o servidor armaria a
+ * sonda de contexto no ~/.claude/projects real e listaria o ~/.claude/agents real.
+ */
 function consoleEnv(dataDir) {
-  const env = { ...process.env, ...npmEnv(), AGENT_QUEST_HOME: dataDir };
+  const env = { ...process.env, ...npmEnv(), AGENT_QUEST_HOME: dataDir, USERPROFILE: dataDir, HOME: dataDir };
   delete env.AGENT_QUEST_PORT;
   return env;
 }
@@ -185,7 +189,7 @@ describe('T2 integração: Ctrl+C emulado no console', { skip: !isWindows && 'Ct
       new Promise((resolve) => {
         const timingFile = `${timer}.${runs++}.txt`;
         const child = spawn(process.execPath, ['--import', pathToFileURL(timer).href, FORWARDER], {
-          env: { ...process.env, AGENT_QUEST_HOME: dataDir, CLAUDE_PROJECT_DIR: REPO, AQ_TEST_TIMING_FILE: timingFile },
+          env: { ...process.env, AGENT_QUEST_HOME: dataDir, USERPROFILE: dataDir, HOME: dataDir, CLAUDE_PROJECT_DIR: REPO, AQ_TEST_TIMING_FILE: timingFile },
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
         });

@@ -530,10 +530,12 @@ export function createContextProbe({
       }
       let entry = agents.get(agentKey);
       if (!entry) {
+        // `recall` antes do `evict`: o despejo grava em `recent` e, se ele
+        // estiver cheio, tiraria justamente o registro deste agente.
+        const lastStart = recall(sessionId, agentKey);
         if (tracked >= MAX_TRACKED_AGENTS) evict();
         // `evict` pode ter tirado a última entrada desta mesma sessão.
         if (!sessions.has(sessionId)) sessions.set(sessionId, agents);
-        const lastStart = recall(sessionId, agentKey);
         entry = { sessionId, agentKey, path: null, model: null, lastStart, timer: null, queued: false, running: false, again: false, forgotten: false };
         agents.set(agentKey, entry);
         tracked++;
