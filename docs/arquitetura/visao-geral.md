@@ -94,8 +94,9 @@ export function createAgentNamesReader({ homeDir, list, timeoutMs, onLate }) {} 
 // server/usage/transcript-usage.js (opcional, T15; fora de server/domain/; modelo de eventos, seção 6, "Contexto")
 export async function readContextUsage(file, { root, model, main, maxBytes }) {}   // → Promise<{ pct, usedTokens, windowTokens } | null>, nunca rejeita
                                                                                     //   só .jsonl dentro de root (caminho resolvido e caminho real); últimos 64 KiB;
-                                                                                    //   main: ignora entradas isSidechain; para na marca de compactação (null)
-export function contextUsage(usedTokens, model) {}                                  // → { pct, usedTokens, windowTokens }; regra da janela (ADR 0008)
+                                                                                    //   main: ignora entradas isSidechain; para na marca de compactação (null);
+                                                                                    //   model = modelo pedido (SessionStart, só main); o modelo da resposta vem da própria entrada
+export function contextUsage(usedTokens, { requested, observed }) {}               // → { pct, usedTokens, windowTokens }; regra da janela (seção 6, "Janela"; ADR 0008, decisão de 26/10/2026)
 export function transcriptPathFor({ agentKey, sessionId, transcriptPath, agentTranscriptPath }) {}   // → string | null; só monta o caminho, sem disco
 export function createContextProbe({ root, onResult, read, clock, timers, intervalMs, logError }) {}
   // → { request({ sessionId, agentKey, path, model }), forgetSession(sessionId), stop(), settled() }

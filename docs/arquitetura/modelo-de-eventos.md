@@ -357,9 +357,17 @@ Janela das últimas 10 ações do agente: `tool.finished` conta como sucesso e `
 
 ### Contexto (opcional, T15)
 
-A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a sessão principal; para subagentes, `<pasta do transcript>/<session_id>/subagents/agent-<agent_id>.jsonl` (caminho documentado) ou o `agent_transcript_path` do SubagentStop. Da última resposta com `message.usage`: `usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. Janela de 200 mil tokens, ou 1 milhão se o uso passar de 200 mil ou o modelo pedido terminar em `[1m]`. No máximo uma leitura por agente a cada 5 s. Só lê arquivos `.jsonl` dentro de `~/.claude/projects/`. Qualquer falha devolve `null` e a barra some.
+A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a sessão principal; para subagentes, `<pasta do transcript>/<session_id>/subagents/agent-<agent_id>.jsonl` (caminho documentado) ou o `agent_transcript_path` do SubagentStop. Da última resposta com `message.usage`: `usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. A janela segue a regra abaixo ("Janela", decisão do usuário de 26/10/2026). No máximo uma leitura por agente a cada 5 s. Só lê arquivos `.jsonl` dentro de `~/.claude/projects/`. Qualquer falha devolve `null` e a barra some.
 
 Regras complementares (revisão do T15, 26/10/2026):
+
+- **Janela** (decisão do usuário de 26/10/2026, ADR 0008, complemento; substitui "200 mil, ou 1 milhão se o uso passar disso ou o modelo pedido terminar em `[1m]`"):
+  1. uso acima de 200 mil tokens → 1 milhão;
+  2. senão, o modelo é o `message.model` da própria resposta lida. Sem ele, ou se não for texto, vale o modelo pedido no SessionStart, só para o `main` e sem o `[1m]`. Sem nenhum dos dois, vale o padrão;
+  3. modelo de uma família sem 1M nativo, e modelo pedido sem `[1m]` no fim → 200 mil. As famílias são Opus e Sonnet até 4.6, Haiku 4.x e Claude 3.x. Padrão de referência, sem diferenciar maiúsculas: `^claude-(?:3(?:-\d)?-[a-z]+|(?:opus|sonnet)-4(?:-[0-6])?|haiku-4(?:-\d)?)(?:-\d{8})?$`. Ele casa com `claude-opus-4-6`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5` e `claude-3-5-sonnet-20241022`, e não casa com `claude-opus-4-7`, `claude-opus-5-5`, `claude-sonnet-5` nem `claude-haiku-5-5`;
+  4. qualquer outro modelo, inclusive desconhecido → 1 milhão (padrão; a documentação diz que os modelos novos já saem com 1M).
+
+  O `[1m]` pedido só é conhecido para o `main`. Um subagente em Opus 4.6 ou Sonnet 4.6 `[1m]` aparece com 200 mil até passar desse uso. Com `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, ou com um gateway limitado a 200 mil, a barra subestima o uso em cerca de 5 vezes. Os dois casos são limitações aceitas.
 
 - **Disparo:** `tool.finished` do agente, Stop (`main`), SubagentStop e PostCompact pedem a leitura do próprio agente. A leitura acontece fora do `apply`, de forma assíncrona. O resultado entra no estado por `setContextUsage` e sai num `update`, com `context.usage` só quando o valor muda. `null` zera o `context` sem evento.
 - **Caminho do transcript** (`transcriptPathFor`):

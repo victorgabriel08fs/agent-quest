@@ -15,7 +15,7 @@ O mockup mostra indicadores simulados: barras de saúde e de contexto, custo da 
 | Trabalhando, aguardando, ocioso | Pre/PostToolUse, PostToolUseFailure, PermissionRequest, SubagentStop, Stop, Notification | Real. "Aguardando" é atribuído por heurística se o PermissionRequest vier sem `agent_id` |
 | Ação atual (balão e cartão) | `tool_name` e campos minimizados de `tool_input` | Real |
 | Barra de saúde (Humor / Vida) | Fração de sucesso nas últimas 10 ações do agente (PostToolUse contra PostToolUseFailure; comando de teste conta pelo resultado do teste) | Aproximada, derivada de dado real |
-| Barra de contexto (Foco / Mana) | `message.usage` da última resposta no transcript do agente; janela de 200 mil tokens, ou 1 milhão se o uso passar disso ou o modelo pedido indicar `[1m]` | Aproximada e opcional (T15 e T16). Some se o formato do transcript mudar |
+| Barra de contexto (Foco / Mana) | `message.usage` da última resposta no transcript do agente; janela pelo modelo dessa resposta: 1 milhão por padrão, 200 mil só para as famílias sem 1M nativo (regra revista pelo usuário em 26/10/2026; ver o complemento) | Aproximada e opcional (T15 e T16). Some se o formato do transcript mudar |
 | Anel de XP e nível | — | Sai (fora do escopo) |
 | Custo da sessão | — | Sai da v1. No lugar, a duração da sessão |
 | Bugs na cena | Comandos de teste no Bash/PowerShell: resultado (PostToolUse ou PostToolUseFailure) e contagem lida do resumo (node:test, Jest, Vitest, pytest, PHPUnit/Pest, go test) | Aproximada |
@@ -55,7 +55,23 @@ Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas defin
 
 ## Complemento (26/10/2026, revisão do T15)
 
-Refinamentos da barra de contexto, sem mudar a decisão nem o contrato. As regras completas estão no modelo de eventos, seção 6, "Contexto".
+Refinamentos da barra de contexto, sem mudar o contrato. As regras completas estão no modelo de eventos, seção 6, "Contexto".
+
+- **Janela de contexto: decisão do usuário de 26/10/2026 (opção A).** Substitui a regra aprovada em 18/10/2026, que era "200 mil, ou 1 milhão se o uso passar disso ou o modelo pedido indicar `[1m]`". A regra antiga errava para o modelo do próprio usuário. O SessionStart real traz `model: "claude-opus-5-5"`, sem `[1m]`, e pela documentação o Opus 4.7 e posteriores, o Sonnet 5 e posteriores, o Haiku 5.5 e os Fable rodam com 1M por padrão, sem sufixo (https://code.claude.com/docs/en/model-config, "1M context window"). Os transcripts locais compactam perto de 967 mil tokens, o padrão dessa janela. Com a regra antiga, 150 mil tokens apareciam como 75%, quando o real é 15%. Regra nova:
+  - a janela sai do modelo da própria resposta lida (`message.model` da entrada com `usage`), que existe também nos transcripts de subagentes;
+  - o padrão é 1 milhão;
+  - 200 mil só para as famílias sem 1M nativo: Opus e Sonnet até 4.6, Haiku 4.x e Claude 3.x. Vale só quando o modelo pedido não termina em `[1m]`;
+  - uso acima de 200 mil continua valendo 1 milhão.
+
+  A lista é de modelos antigos, por isso não envelhece: pela documentação, os modelos novos já saem com 1M. Limitações aceitas:
+  - com `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, ou com um gateway limitado a 200 mil, a barra mostra cerca de 1/5 do uso real;
+  - um subagente em Opus 4.6 ou Sonnet 4.6 `[1m]` aparece com 200 mil até passar desse uso, porque o `[1m]` pedido só é conhecido para a sessão principal (SessionStart).
+
+  Alternativas descartadas:
+  - manter a regra antiga, que erra até 5 vezes abaixo de 200 mil;
+  - sempre 1M, que erra com modelos antigos;
+  - a status line (`context_window_size`), que exige configurar `statusLine`;
+  - deduzir a janela pela compactação, que só funciona depois da primeira.
 
 - **Depois de uma compactação**, a barra some até a próxima resposta do agente. A leitura do transcript para na marca de compactação (`compact_boundary`). Sem isso, a barra mostraria o valor de antes, perto do limite, logo depois de a compactação liberar o contexto. É o mesmo comportamento da status line do Claude Code (`current_usage` fica `null` depois do `/compact`). Alternativas descartadas:
   - manter o último valor: errado justamente no momento em que a compactação aparece no painel;
