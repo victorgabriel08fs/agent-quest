@@ -2,6 +2,7 @@
   "name": "agent-quest",
   "version": "0.1.0",
   "description": "Painel local e gamificado que mostra, em tempo real, o que cada agente do Claude Code está fazendo.",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "engines": {

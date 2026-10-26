@@ -2,7 +2,7 @@
 
 **Veja o seu time de agentes do Claude Code trabalhando, ao vivo, num painel no navegador.** O orquestrador delega, os subagentes leem, editam e rodam comandos, e o Agent Quest mostra tudo como uma equipe num escritório ou uma party numa guilda. Tudo roda na sua máquina.
 
-<!-- idioma: a decidir pelo usuário se o README terá também um resumo em inglês. -->
+**In English:** Agent Quest is a local, gamified dashboard that shows, in real time, what each Claude Code agent is doing: the main session that orchestrates the work and every subagent it calls, drawn as an office team or a guild party. It runs 100% on your machine: the server listens only on `127.0.0.1`, with no cloud services, CDN or telemetry. Events come from a Claude Code plugin with asynchronous hooks, which never slow the agents down. It needs only Node 24, and Windows 11 is the tested platform. The full documentation is in Brazilian Portuguese.
 
 <!-- print: painel principal no tema Escritório, a partir de um cenário sintético injetado (nunca de uma sessão real): ticket com as etapas; equipe com o orquestrador, dois devs em paralelo e o tester; cena com os tokens nas salas, um agente na copa e bugs na sala de testes; atividade com delegações, ferramentas, uma falha e um resultado de testes. Largura de 1280 px, até 1 MB, com texto alternativo. -->
 
@@ -206,7 +206,7 @@ As regras de ticket, aprovação e testes foram testadas com cenários sintétic
 
 - **a Primeira luz:** a sessão de teste dos hooks no Claude Code real, a liberação do design e a primeira instalação da captura;
 - conferir com os eventos reais as regras que dependem deles e fazer os ajustes que eles mostrarem;
-- os prints deste README, a licença e o roteiro de aceite da v1 com o Claude Code real;
+- os prints deste README e o roteiro de aceite da v1 com o Claude Code real;
 - opcional: uma barra com o uso aproximado do contexto de cada agente.
 
 **Depois da v1:** XP e níveis, conquistas, replay e custo da sessão.
@@ -225,6 +225,4 @@ O plano completo está em [docs/plano/v1.md](docs/plano/v1.md), e o que muda em 
 
 ## Licença
 
-A definir.
-
-<!-- licença: a definir pelo usuário antes de fechar o T17; até lá, não há arquivo LICENSE. -->
+[MIT](LICENSE).
