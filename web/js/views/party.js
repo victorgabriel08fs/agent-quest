@@ -12,10 +12,16 @@
 //
 // Modo discreto (T14): a sessão chega sem os rótulos das instâncias (descrição
 // da delegação), e a linha de ação usa as frases só de categoria do tema.
+//
+// Barra de contexto (T16; ADR 0008; modelo de eventos, seções 6 e 9): ao lado
+// da saúde, com o nome do tema (Foco ou Mana). Como no mockup, mostra o
+// contexto que ainda cabe na janela do agente; o tooltip e o rótulo para
+// leitores de tela trazem o valor com "≈" e a fonte. Sem leitura (`context`
+// nulo), a barra some. São só números, por isso ela continua no modo discreto.
 
 import { maskSession } from '../discreet.js';
-import { ROLE_TITLES, healthOf, partySummary, teamView } from '../selectors.js';
-import { createHelpers, esc, plural } from '../themes/helpers.js';
+import { ROLE_TITLES, contextOf, healthOf, partySummary, teamView } from '../selectors.js';
+import { createHelpers, esc, formatTokens, formatTokensPhrase, plural } from '../themes/helpers.js';
 import { ALL, agentFilter, roleFilter } from './feed.js';
 
 /** @typedef {import('../../../shared/contract.js').SessionState} SessionState */
@@ -23,6 +29,10 @@ import { ALL, agentFilter, roleFilter } from './feed.js';
 /** @typedef {import('../themes/contract.js').Theme} Theme */
 /** @typedef {import('../themes/contract.js').ThemeHelpers} ThemeHelpers */
 /** @typedef {import('../selectors.js').RoleGroup} RoleGroup */
+/** @typedef {import('../selectors.js').ContextView} ContextView */
+
+/** Fonte da barra de contexto, no tooltip (igual nos dois temas). */
+export const CONTEXT_SOURCE = 'fonte: uso da última resposta no transcript do agente';
 
 /** Status para leitores de tela (igual nos dois temas). */
 const STATUS_TEXT = Object.freeze({
@@ -48,10 +58,43 @@ export function renderParty({ session, theme, filter = ALL, discreet = false }) 
   const h = createHelpers(theme, session.agents ?? [], { discreet });
   const { active, present } = partySummary(session);
   const count = `<span class="muted" id="party-count">${active}/${present} ${plural(active, 'ativo', 'ativos')}</span>`;
-  const members = teamView(session).map((group) => memberHTML(group, theme, h, filter)).join('');
+  const groups = teamView(session);
+  const members = groups.map((group) => memberHTML(group, theme, h, filter)).join('');
+  // A linha da barra de contexto só aparece quando alguma instância mostrada tem a barra.
+  const withContext = groups.some((group) => group.instances.some((agent) => contextOf(agent) !== null));
+  const contextLegend = withContext
+    ? `<span><i class="sw mana" aria-hidden="true"></i>${esc(theme.bars.context)}: ≈ contexto que ainda cabe na janela do agente</span>`
+    : '';
   return `<div class="card-head">${title}${count}</div>` +
     `<ul class="roster">${members}</ul>` +
-    `<div class="mini-legend"><span><i class="sw hp" aria-hidden="true"></i>${esc(theme.bars.health)}: ≈ fração das últimas 10 ações sem erro</span></div>`;
+    `<div class="mini-legend"><span><i class="sw hp" aria-hidden="true"></i>${esc(theme.bars.health)}: ≈ fração das últimas 10 ações sem erro</span>${contextLegend}</div>`;
+}
+
+/**
+ * Texto da barra de contexto (tooltip e rótulo para leitores de tela), com
+ * "≈" e a fonte. Ex.: "Foco ≈ 70% livre · 60 mil de 200 mil tokens usados
+ * (30%) · fonte: uso da última resposta no transcript do agente".
+ * @param {ContextView} context
+ * @param {Theme} theme
+ * @returns {string}
+ */
+export function contextText(context, theme) {
+  return `${theme.bars.context} ≈ ${context.freePct}% livre · ` +
+    `${formatTokens(context.usedTokens)} de ${formatTokensPhrase(context.windowTokens)} usados (${context.pct}%) · ${CONTEXT_SOURCE}`;
+}
+
+/**
+ * Barra de contexto de uma instância, ou '' sem leitura.
+ * @param {AgentState} agent
+ * @param {Theme} theme
+ * @returns {string}
+ */
+function contextBarHTML(agent, theme) {
+  const context = contextOf(agent);
+  if (!context) return '';
+  const text = esc(contextText(context, theme));
+  return `<span class="mb mb-context" title="${text}"><span class="mb-l" aria-hidden="true">${esc(theme.bars.context)}</span>` +
+    `<span class="mbar mana" role="img" aria-label="${text}"><i data-fill="${context.tenths}"></i></span></span>`;
 }
 
 /**
@@ -85,7 +128,7 @@ function memberHTML(group, theme, h, filter) {
 }
 
 /**
- * Uma instância: rótulo (se houver), linha de ação e saúde, dentro do botão
+ * Uma instância: rótulo (se houver), linha de ação, saúde e contexto (se houver), dentro do botão
  * que filtra a atividade pela instância (por isso só elementos de frase).
  * @param {AgentState} agent
  * @param {Theme} theme
@@ -114,7 +157,8 @@ function instanceHTML(agent, theme, h, filter) {
   const content = labelLine +
     `<span class="m-action"><span class="sr-only">${statusText}: </span>${esc(theme.actionText(agent, h))}</span>` +
     `<span class="m-bars"><span class="mb" title="${esc(healthText)}"><span class="mb-l" aria-hidden="true">${esc(theme.bars.health)}</span>` +
-    `<span class="mbar hp" role="img" aria-label="${esc(healthText)}"><i data-fill="${health.tenths}"></i></span></span></span>`;
+    `<span class="mbar hp" role="img" aria-label="${esc(healthText)}"><i data-fill="${health.tenths}"></i></span></span>` +
+    `${contextBarHTML(agent, theme)}</span>`;
   // Sem chave não há como filtrar: a linha aparece, sem botão.
   const row = key === ''
     ? `<span class="inst-pick is-static">${content}</span>`

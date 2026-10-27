@@ -209,6 +209,9 @@ test.describe('várias sessões (tester)', () => {
       await page.goto(`${srv().base}/#guilda`);
       await expect(page.locator('#conn')).toHaveText('ao vivo');
       await inject(srv(), a);
+      // O painel precisa estar seguindo A antes de B chegar; senão, quando os
+      // dois chegam no mesmo lote, ele segue B (corrida do teste, não do produto).
+      await expect(page.locator('#session-select')).toHaveValue(a.sessionId);
       const state = await inject(srv(), b);
       // Seguindo: fica na primeira (A), que ainda não está parada.
       await expect(page.locator('#session-select')).toHaveValue(a.sessionId);

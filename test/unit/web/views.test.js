@@ -142,7 +142,8 @@ describe('snapshot da Primeira luz', () => {
     it(`${theme.id}: barra de saúde por instância, com a fração no tooltip`, () => {
       assert.ok(views.party.includes(`${esc(theme.bars.health)} ≈ 7 de 8 ações sem erro (últimas 10)`));
       assert.match(views.party, /data-fill="9"/);
-      assert.ok(!views.party.includes(theme.bars.context), 'a barra de contexto é do T16');
+      assert.ok(!views.party.includes(theme.bars.context), 'sem contexto no snapshot, a barra de contexto e a linha dela na mini-legenda somem (T16)');
+      assert.ok(!views.party.includes('mbar mana'));
     });
 
     it(`${theme.id}: sem ticket no recorte, cartão vazio do tema`, () => {

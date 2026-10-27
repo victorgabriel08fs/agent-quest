@@ -110,6 +110,12 @@ describe('lugares, estados e fontes', () => {
       assert.equal(byName.get(theme.words.party)?.[1], 'Real');
       // Fontes de cada um (ADR 0008).
       assert.match(byName.get(theme.bars.health)?.[0] ?? '', /últimas 10 ações/);
+      // Barra de contexto (T16), com o nome do tema, a fonte e a regra da janela.
+      assert.equal(byName.get(theme.bars.context)?.[1], 'Aproximado (≈)');
+      const context = byName.get(theme.bars.context)?.[0] ?? '';
+      assert.match(context, /message\.usage.*transcript.*~\/\.claude\/projects/);
+      assert.match(context, /1 milhão de tokens por padrão; 200 mil para Opus e Sonnet até 4\.6, Haiku 4\.x e Claude 3\.x/);
+      assert.match(context, /some .*compactação/);
       assert.match(byName.get(label('pending'))?.[0] ?? '', /PermissionRequest/);
       assert.match(byName.get(theme.words.quest)?.[0] ?? '', /UserPromptSubmit.*Stop/);
       for (const phase of Object.values(theme.phases)) assert.ok(byName.get('Etapas do ticket')?.[0].includes(phase), phase);

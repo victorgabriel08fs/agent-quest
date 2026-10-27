@@ -64,6 +64,41 @@ export function formatDuration(ms) {
 }
 
 /**
+ * Número com no máximo uma casa decimal e vírgula (pt-BR), sem depender do ICU.
+ * @param {number} n
+ */
+const oneDecimal = (n) => String(Math.round(n * 10) / 10).replace('.', ',');
+
+/**
+ * Quantidade de tokens por extenso e arredondada: "850", "1,5 mil", "150 mil",
+ * "1 milhão", "1,2 milhão", "2 milhões".
+ * @param {number} n
+ * @returns {string}
+ */
+export function formatTokens(n) {
+  const value = Math.max(0, Number.isFinite(n) ? n : 0);
+  if (Math.round(value / 1000) >= 1000) {
+    const millions = Math.round(value / 100_000) / 10;
+    return `${oneDecimal(millions)} ${millions >= 2 ? 'milhões' : 'milhão'}`;
+  }
+  if (value >= 10_000) return `${Math.round(value / 1000)} mil`;
+  if (value >= 1000) return `${oneDecimal(value / 1000)} mil`;
+  return String(Math.round(value));
+}
+
+/**
+ * Quantidade de tokens com a palavra "tokens": "200 mil tokens", "1 milhão de
+ * tokens", "1 token".
+ * @param {number} n
+ * @returns {string}
+ */
+export function formatTokensPhrase(n) {
+  const text = formatTokens(n);
+  if (/milh/.test(text)) return `${text} de tokens`;
+  return `${text} ${text === '1' ? 'token' : 'tokens'}`;
+}
+
+/**
  * Hora local de um instante, em "HH:MM:SS" (ou "HH:MM" sem os segundos).
  * @param {number} ts   ms desde a época
  * @param {{ seconds?: boolean }} [options]

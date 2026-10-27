@@ -180,6 +180,9 @@ function sourcesHTML(theme) {
     ['Trabalhando, aguardando, ocioso', '<code>PreToolUse</code>, <code>PostToolUse</code>, <code>PostToolUseFailure</code>, <code>PermissionRequest</code>, <code>SubagentStop</code>, <code>Stop</code> e <code>Notification</code>. "Aguardando" é atribuído por heurística se o pedido vier sem <code>agent_id</code>', 'Real'],
     ['Ação atual (balão e cartão)', 'Nome da ferramenta e campos minimizados da entrada (caminho, comando, padrão de busca), já cortados e redigidos pelo servidor', 'Real'],
     [esc(theme.bars.health), 'Fração de sucesso nas últimas 10 ações do agente; comando de teste conta pelo resultado do teste', 'Aproximado (≈)'],
+    [esc(theme.bars.context), 'Contexto que ainda cabe na janela do agente. Vem do uso de tokens da última resposta (<code>message.usage</code>) no transcript local do agente, em <code>~/.claude/projects</code>, lido no máximo a cada 5 s. ' +
+      'A janela sai do modelo dessa resposta: 1 milhão de tokens por padrão; 200 mil para Opus e Sonnet até 4.6, Haiku 4.x e Claude 3.x, enquanto o uso não passar disso. ' +
+      'A barra some quando o transcript não pode ser lido e depois de uma compactação, até a próxima resposta', 'Aproximado (≈)'],
     [`Bugs na cena (${esc(theme.rooms.test.name)})`, 'Comandos de teste no <code>Bash</code> ou <code>PowerShell</code>: o resultado e a contagem lida do resumo (node:test, Jest, Vitest, pytest, PHPUnit/Pest, go test)', 'Aproximado (≈)'],
     [esc(theme.words.quest), 'Do pedido (<code>UserPromptSubmit</code>) até <code>Stop</code> ou <code>StopFailure</code>; o título é a primeira linha do pedido', 'Real'],
     ['Etapas do ticket', `Delegações a papéis do time dentro do ticket: ${phases}. Só aparecem quando o ticket envolve papéis do time`, 'Derivado'],

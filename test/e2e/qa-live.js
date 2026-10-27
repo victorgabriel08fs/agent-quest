@@ -186,10 +186,16 @@ const toolUseIdFor = (/** @type {string} */ label) =>
 
 /**
  * Monta um cenário de uma sessão, evento a evento.
- * @param {{ label: string, projectDir?: string, entrypoint?: string, dt?: number }} options
+ * `transcriptDir` (T16): pasta do transcript da sessão principal, para a sonda
+ * de contexto ler um transcript sintético (dentro de `<home>/.claude/projects`
+ * do servidor de teste). Sem ela, o caminho é fictício e a sonda não lê nada.
+ * @param {{ label: string, projectDir?: string, entrypoint?: string, dt?: number, transcriptDir?: string }} options
  */
-export function createScenario({ label, projectDir = PROJECT_DIR, entrypoint = 'cli', dt = 15 }) {
+export function createScenario({ label, projectDir = PROJECT_DIR, entrypoint = 'cli', dt = 15, transcriptDir }) {
   const sessionId = uuid(`sessao:${label}`);
+  const transcriptPath = transcriptDir
+    ? path.join(transcriptDir, `${sessionId}.jsonl`)
+    : `${projectDir}\\.transcripts\\${sessionId}.jsonl`;
   /** @type {{ dt: number, env: { projectDir: string, entrypoint: string }, payload: Record<string, unknown> }[]} */
   const events = [];
   /** @type {string|null} */
@@ -203,7 +209,7 @@ export function createScenario({ label, projectDir = PROJECT_DIR, entrypoint = '
    */
   const base = (hook, agent) => ({
     session_id: sessionId,
-    transcript_path: `${projectDir}\\.transcripts\\${sessionId}.jsonl`,
+    transcript_path: transcriptPath,
     cwd: projectDir,
     permission_mode: 'default',
     hook_event_name: hook,
@@ -217,6 +223,7 @@ export function createScenario({ label, projectDir = PROJECT_DIR, entrypoint = '
 
   const api = {
     sessionId,
+    transcriptPath,
     events,
     /** Agente fictício desta sessão. */
     agent(/** @type {string} */ name, /** @type {string} */ type) {

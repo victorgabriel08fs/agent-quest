@@ -191,6 +191,34 @@ export function healthOf(agent) {
 }
 
 /**
+ * @typedef {object} ContextView
+ * @property {number} pct          uso da janela, 0 a 100 (inteiro)
+ * @property {number} freePct      o que ainda cabe na janela: 100 - pct
+ * @property {number} usedTokens
+ * @property {number} windowTokens
+ * @property {number} tenths       décimos de `freePct`, para a barra (0 a 10)
+ */
+
+/**
+ * Contexto aproximado de um agente para a barra (Foco ou Mana; T16; modelo de
+ * eventos, seções 6 e 9). Como no mockup, a barra mostra o contexto que ainda
+ * cabe na janela, e ela some (`null`) quando não há leitura: `context` nulo ou
+ * fora da forma do contrato (ADR 0008: o indicador some em vez de mostrar zero).
+ * @param {AgentState} agent
+ * @returns {ContextView|null}
+ */
+export function contextOf(agent) {
+  const context = agent?.context;
+  if (!context || typeof context !== 'object') return null;
+  const { pct, usedTokens, windowTokens } = context;
+  const finite = (/** @type {unknown} */ value) => typeof value === 'number' && Number.isFinite(value);
+  if (!finite(pct) || !finite(usedTokens) || !finite(windowTokens) || windowTokens <= 0 || usedTokens < 0) return null;
+  const used = Math.min(100, Math.max(0, Math.round(pct)));
+  const freePct = 100 - used;
+  return { pct: used, freePct, usedTokens, windowTokens, tenths: Math.round(freePct / 10) };
+}
+
+/**
  * @typedef {object} PhaseView
  * @property {PhaseId} id
  * @property {Phase} state

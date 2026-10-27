@@ -132,6 +132,7 @@ button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--s
 .mbar { display: block; height: 5px; overflow: hidden; background: var(--surface-3); border-radius: 99px; }
 .mbar i { display: block; width: 0; height: 100%; background: var(--bar); border-radius: inherit; transition: width .5s ease; }
 .mbar.hp { --bar: var(--hp); }
+.mbar.mana { --bar: var(--mana); }
 .mbar i[data-fill="1"] { width: 10%; }
 .mbar i[data-fill="2"] { width: 20%; }
 .mbar i[data-fill="3"] { width: 30%; }
@@ -145,6 +146,7 @@ button.inst-pick:hover { background: color-mix(in srgb, var(--agent) 6%, var(--s
 .m-more { margin-top: 6px; font-size: 11.5px; color: var(--muted); }
 .mini-legend { display: grid; gap: 4px; margin-top: auto; padding: 12px 18px 14px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--border); }
 .sw { display: inline-block; width: 14px; height: 5px; margin-right: 7px; vertical-align: middle; background: var(--hp); border-radius: 4px; }
+.sw.mana { background: var(--mana); }
 
 /* ===== Ticket ===== */
 .quest { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 28px; padding: 18px 22px; }
