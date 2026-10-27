@@ -6,7 +6,7 @@
 
 <!-- print: painel principal no tema Escritório, a partir de um cenário sintético injetado (nunca de uma sessão real): ticket com as etapas; equipe com o orquestrador, dois devs em paralelo e o tester; cena com os tokens nas salas, um agente na copa e bugs na sala de testes; atividade com delegações, ferramentas, uma falha e um resultado de testes. Largura de 1280 px, até 1 MB, com texto alternativo. -->
 
-> **Situação:** em desenvolvimento, rumo à v1. O código da v1 está pronto e testado com cenários sintéticos, menos uma barra opcional. A instalação da captura no Claude Code real e a conferência com eventos reais ainda esperam a sessão de teste dos hooks. Veja [Situação e roteiro](#situação-e-roteiro).
+> **Situação:** em desenvolvimento, rumo à v1. O código da v1 está pronto e testado com cenários sintéticos, inclusive a barra de contexto de cada agente. A instalação da captura no Claude Code real e a conferência com eventos reais ainda esperam a sessão de teste dos hooks. Veja [Situação e roteiro](#situação-e-roteiro).
 
 ## O que é
 
@@ -15,6 +15,7 @@ O Agent Quest é um painel local e gamificado que mostra, em tempo real, o que c
 ## Destaques
 
 - **Equipe e cena ao vivo.** Cada subagente aparece com a descrição da tarefa que recebeu, a ação atual ("Editando `server/http/app.js`") e uma barra de saúde. Quem termina caminha até a copa.
+- **Contexto de cada agente.** A barra Foco (Mana, na Guilda) mostra quanto da janela de contexto ainda está livre: começa cheia, esvazia com a conversa e volta a encher depois de uma compactação.
 - **Cada pedido vira um ticket,** com as etapas do time (arquitetura, desenvolvimento, QA e documentação) e um cartão final quando é entregue.
 - **Testes viram bugs na cena.** Um run que falha solta bugs na sala de testes; o run seguinte que passa os esmaga.
 - **Aprovações à vista.** Quem espera a sua aprovação ganha um "!", e o topo conta os pedidos pendentes.
@@ -35,7 +36,7 @@ Claude Code ──hook──▶ encaminhador ──POST /hooks──▶ servidor
 
 1. O plugin `agent-quest` registra 15 hooks assíncronos no Claude Code. A cada evento (pedido, ferramenta, subagente, fim de turno), o Claude Code inicia o encaminhador em segundo plano e segue sem esperar.
 2. O encaminhador lê o `runtime.json` para saber se o servidor está no ar e envia o evento só para `127.0.0.1`, com o token da execução. Ele nunca imprime nada e termina em cerca de 2 segundos; sem servidor, sai na hora.
-3. O servidor responde na hora e só depois processa: tira o conteúdo do evento, redige segredos, atualiza o estado das sessões em memória e envia a mudança aos painéis abertos.
+3. O servidor responde na hora e só depois processa: tira o conteúdo do evento, redige segredos, atualiza o estado das sessões em memória e envia a mudança aos painéis abertos. Para a barra de contexto, ele também lê, à parte, o fim do transcript de cada agente.
 4. O painel aplica a mudança e a mostra no tema escolhido.
 
 Mais detalhes: [visão geral da arquitetura](docs/arquitetura/visao-geral.md), [modelo de eventos](docs/arquitetura/modelo-de-eventos.md) e as [decisões de design (ADRs)](docs/README.md#decisões-adrs).
@@ -45,6 +46,7 @@ Mais detalhes: [visão geral da arquitetura](docs/arquitetura/visao-geral.md), [
 Os eventos do Claude Code podem conter código, comandos e segredos. Por isso, o Agent Quest é seguro por padrão:
 
 - **O que é capturado:** o evento que o Claude Code entrega a cada hook, com textos longos já cortados, mais a pasta do projeto. Ele só vai para o servidor na sua máquina.
+- **O que o servidor lê do disco:** para a barra de contexto, os últimos 64 KiB do transcript de cada agente, o arquivo `.jsonl` que o próprio Claude Code grava em `~/.claude/projects/`, no máximo uma vez a cada 5 segundos por agente. Só lê dentro dessa pasta e só tira dali três números (tokens usados, janela e porcentagem): nenhum conteúdo do transcript vai ao painel nem é guardado.
 - **O que o painel mostra:** nomes de ferramentas, a primeira linha dos comandos, caminhos relativos ao projeto, descrições e erros curtos, tudo cortado e com segredos redigidos (`API_KEY=•••`). Para compartilhar a tela, o modo discreto esconde esses textos; o nome do projeto continua visível.
 - **O que nunca é guardado:** conteúdo de arquivos, trechos editados, saídas de comandos, o texto do assistente, a instrução passada a cada subagente e o pedido completo.
 - **Nada de eventos em disco.** O estado fica só na memória e some quando o servidor para. A única exceção é a gravação de depuração `--debug-dump`, que você liga de propósito. O `runtime.json`, que diz à captura onde o servidor está, guarda só porta, token e processo, numa pasta fora do OneDrive.
@@ -122,6 +124,7 @@ Quem termina vai para a Copa (no Escritório) ou para a Taverna (na Guilda). Age
 | "A porta 47821 já está em uso por outro programa." | [Porta ocupada](docs/guias/servidor.md#a-porta-47821-já-está-em-uso-por-outro-programa) |
 | Nenhum evento chegando | [Nenhum evento chegando](docs/guias/servidor.md#nenhum-evento-chegando) |
 | Os eventos chegam, mas a sessão não aparece | [A sessão não aparece no painel](docs/guias/servidor.md#os-eventos-chegam-mas-a-sessão-não-aparece-no-painel) |
+| A barra de contexto (Foco ou Mana) não aparece | [Quando a barra some](docs/guias/painel.md#quando-a-barra-some): sem leitura ainda, logo depois de um `/compact` ou com `CLAUDE_CONFIG_DIR` definida |
 | Servidor desligado | A captura sai em silêncio, e o painel mostra "reconectando". Inicie o servidor de novo ([Selo de conexão](docs/guias/painel.md#selo-de-conexão)) |
 
 ## Desenvolvimento e contribuição
@@ -196,6 +199,7 @@ Abra uma issue com a versão do Agent Quest (campo `version` do `/api/health`), 
 - tickets por pedido, etapas do time, aprovações pendentes, bugs abertos pelos testes e esmagados no run seguinte, e os indicadores do topo;
 - painel ao vivo com ticket, equipe, cena animada, atividade com filtros, os dois temas e layout responsivo;
 - várias sessões: seletor agrupado por projeto, "seguir atividade" e aviso de aprovação pendente em outra sessão;
+- barra de contexto (Foco ou Mana) de cada agente, calculada a partir do fim do transcript dele, com a janela pelo modelo da resposta;
 - modo discreto, legenda "Como ler o painel" e atalhos de teclado;
 - reconexão do painel sem baixar o estado inteiro de novo;
 - injetor de cenários para desenvolvimento (`npm run inject`).
@@ -206,8 +210,7 @@ As regras de ticket, aprovação e testes foram testadas com cenários sintétic
 
 - **a Primeira luz:** a sessão de teste dos hooks no Claude Code real, a liberação do design e a primeira instalação da captura;
 - conferir com os eventos reais as regras que dependem deles e fazer os ajustes que eles mostrarem;
-- os prints deste README e o roteiro de aceite da v1 com o Claude Code real;
-- opcional: uma barra com o uso aproximado do contexto de cada agente.
+- os prints deste README e o roteiro de aceite da v1 com o Claude Code real.
 
 **Depois da v1:** XP e níveis, conquistas, replay e custo da sessão.
 

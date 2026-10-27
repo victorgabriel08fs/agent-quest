@@ -134,7 +134,7 @@ Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft E
 ### O que você vê
 
 - **Ticket:** cada pedido seu vira um ticket, com título, situação e as etapas do time (Arquitetura, Desenvolvimento, QA e Documentação). Quando ele é entregue, aparece o cartão final com o resumo.
-- **Equipe:** o orquestrador e cada subagente que ele chamar, com o papel, a descrição da delegação, o status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa) e a ação atual, como "Editando `server/http/app.js`" ou "Rodando os testes". Dois subagentes em paralelo aparecem como duas instâncias.
+- **Equipe:** o orquestrador e cada subagente que ele chamar, com o papel, a descrição da delegação, o status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa) e a ação atual, como "Editando `server/http/app.js`" ou "Rodando os testes". Dois subagentes em paralelo aparecem como duas instâncias. Cada instância tem a barra de saúde e a barra de contexto (Foco ou Mana), que mostra ≈ o contexto que ainda cabe na janela do agente: começa cheia, esvazia com a conversa e volta a encher depois de uma compactação.
 - **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto, e filtros por papel ou por agente.
 - **Cena:** um token por agente na sala do seu papel, com a ida à copa, o envelope da delegação, o tranco das falhas, o selo "!" de aprovação e os bugs abertos pelos testes na sala de testes.
 - **Topo:** duração, bugs esmagados, tickets entregues e aprovações pendentes.
@@ -144,15 +144,21 @@ Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft E
 
 O guia [O painel](painel.md) explica cada área em detalhe. As regras de ticket, aprovação e testes ainda vão ser conferidas com os eventos reais da sessão de teste do T0.
 
+### A barra de contexto
+
+A barra de contexto (Foco no Escritório, Mana na Guilda) não vem dos eventos da captura. Para calculá-la, o servidor lê o fim do transcript de cada agente, o arquivo `.jsonl` que o próprio Claude Code grava em `~/.claude/projects/`:
+
+- lê só os últimos 64 KiB do arquivo, no máximo uma vez a cada 5 segundos por agente;
+- do arquivo, tira só três números (tokens usados, tamanho da janela e a porcentagem); nada do conteúdo vai ao painel nem é guardado;
+- a janela é de 1 milhão de tokens por padrão, e de 200 mil para Opus e Sonnet até a versão 4.6, Haiku 4.x e Claude 3.x;
+- passe o mouse na barra para ver o valor com "≈" e a fonte;
+- a barra some quando não há leitura: antes da primeira, logo depois de um `/compact` até a próxima resposta do agente, ou quando o transcript não pode ser lido.
+
+**Se você usa `CLAUDE_CONFIG_DIR`,** o Claude Code grava os transcripts em outra pasta, e a barra não aparece: o servidor só lê `~/.claude/projects/`. O resto do painel funciona normalmente. Os detalhes estão em [Barra de contexto](painel.md#barra-de-contexto-foco-ou-mana).
+
 ### O que o painel ainda não mostra
 
-Do painel da v1, falta só a barra de contexto, opcional:
-
-| O que | Quando chega |
-|---|---|
-| Barra de contexto, com o uso aproximado do contexto de cada agente; opcional e pode ficar fora da v1 | T15 e T16 |
-
-Os detalhes estão em [O que ainda não está ligado](painel.md#o-que-ainda-não-está-ligado).
+Todas as áreas do painel da v1 já estão no ar. O que falta é conferir algumas regras com os eventos reais da sessão de teste do T0: veja [O que ainda não está ligado](painel.md#o-que-ainda-não-está-ligado).
 
 ## Pausar, retomar e remover a captura
 

@@ -592,7 +592,7 @@ O `received` do `/api/health` sobe, mas o painel continua sem a sessão que voc�
 
 ## Segurança em resumo
 
-Os eventos podem conter código, comandos e segredos. Por isso, o servidor só atende o seu navegador e a captura, na sua máquina ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)):
+Os eventos e os transcripts podem conter código, comandos e segredos. Por isso, o servidor só atende o seu navegador e a captura, na sua máquina ([ADR 0006](../adr/0006-seguranca-do-servidor-local.md)):
 
 - **Só `127.0.0.1`.** O servidor nunca escuta na rede: outros computadores não o alcançam.
 - **Só endereços locais.** Todo pedido precisa chegar como `127.0.0.1:<porta>` ou `localhost:<porta>`. Qualquer outro nome, como o nome da máquina, recebe 403 ("Acesso negado."). Isso barra o ataque de DNS rebinding, em que um site faz o próprio domínio apontar para `127.0.0.1`.
@@ -600,6 +600,7 @@ Os eventos podem conter código, comandos e segredos. Por isso, o servidor só a
 - **Só a captura envia eventos.** O `POST /hooks` exige o token do `runtime.json`, que muda a cada início, e recusa qualquer pedido vindo de navegador.
 - **Nada da internet.** A página só carrega scripts e estilos do próprio servidor (política de segurança de conteúdo restrita), e o servidor só entrega arquivos das pastas `web/` e `shared/`.
 - **Logs sem conteúdo.** O terminal do servidor nunca mostra o corpo, os cabeçalhos nem o caminho dos pedidos, nem o conteúdo dos eventos. Nos erros, aparece só o tipo do erro.
+- **Leitura do transcript, só para a barra de contexto.** Para calcular o uso de contexto de cada agente, o servidor lê os últimos 64 KiB do transcript dele, o arquivo `.jsonl` que o Claude Code grava em `~/.claude/projects/`, no máximo uma vez a cada 5 segundos por agente. Só lê arquivos `.jsonl` dentro dessa pasta, conferidos também pelo caminho real (um link para fora dela é recusado). Do arquivo, só saem três números (tokens usados, janela e porcentagem): nenhum conteúdo vai ao painel nem é guardado ([Barra de contexto](painel.md#barra-de-contexto-foco-ou-mana)).
 
 Risco aceito: programas que rodam com o seu usuário do Windows conseguem ler o token e abrir o painel, do mesmo jeito que já conseguem ler os seus arquivos.
 

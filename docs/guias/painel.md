@@ -2,9 +2,9 @@
 
 O painel é a página do Agent Quest no navegador. Ele mostra, ao vivo, o que cada agente de uma sessão do Claude Code está fazendo: quem está na equipe, o pedido em andamento, onde cada agente está na cena e o que acabou de acontecer. Tudo roda na sua máquina, sem nada carregado da internet.
 
-Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, como compartilhar a tela com o modo discreto e o que ainda falta.
+Este guia explica como abrir o painel, o que cada área mostra com os dados ao vivo, como trocar de tema e de sessão, como compartilhar a tela com o modo discreto e o que ainda falta conferir.
 
-> **Situação nesta fase.** O painel da v1 está completo: com a captura ligada, ticket e etapas, equipe, aprovações, testes e bugs, a cena animada, a atividade com filtros e as várias sessões acompanham cada evento do Claude Code. Falta só a barra de contexto, opcional. As regras de ticket, aprovação e testes seguem o design e ainda vão ser conferidas com os eventos reais da sessão de teste do T0 (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
+> **Situação nesta fase.** O painel da v1 está completo: com a captura ligada, ticket e etapas, equipe, aprovações, testes e bugs, a cena animada, a atividade com filtros, as várias sessões e a barra de contexto de cada agente acompanham o Claude Code ao vivo. As regras de ticket, aprovação e testes seguem o design e ainda vão ser conferidas com os eventos reais da sessão de teste do T0 (veja [O que ainda não está ligado](#o-que-ainda-não-está-ligado)). Para ligar tudo pela primeira vez, siga [Primeira luz: ligar o painel e a captura](primeira-luz.md). Sem a captura instalada, o painel fica no [estado sem sessões](#sem-sessões).
 
 ## Resumo rápido
 
@@ -30,7 +30,7 @@ Este guia explica como abrir o painel, o que cada área mostra com os dados ao v
 
 - **Seletor de sessão:** as sessões do Claude Code que o servidor conhece, de todos os projetos, agrupadas por projeto, com status e aprovações pendentes. Cada sessão aparece com o primeiro evento dela, mesmo que o servidor tenha sido iniciado no meio da sessão. Por padrão, o painel segue a sessão com atividade, e um aviso no topo mostra quando outra sessão espera a sua aprovação.
 - **Ticket:** cada pedido seu vira um ticket, com título, situação, duração, ações e as etapas do time.
-- **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", e a barra de saúde.
+- **Equipe:** o orquestrador e cada subagente chamado, com papel, rótulo (a descrição da delegação), status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa), a ação atual, como "Editando `server/http/app.js`", a barra de saúde e a barra de contexto (Foco ou Mana), que mostra quanto da janela de contexto do agente ainda está livre.
 - **Cena:** um token por agente na sala do seu papel, com o balão da ação atual. Os agentes caminham até a copa quando terminam, a delegação voa como um envelope, as falhas dão um tranco, e os bugs abertos pelos testes aparecem na sala de testes.
 - **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto. Dá para filtrar por papel ou por agente.
 - **Topo:** a duração da sessão, os bugs esmagados, os tickets entregues, as aprovações pendentes, o selo de conexão, o modo discreto, a legenda e a alternância de tema.
@@ -86,10 +86,53 @@ Em cada bloco:
 - **"×N"** aparece quando há mais de uma instância do papel em andamento ao mesmo tempo, e conta só as que não terminaram. Dois subagentes em paralelo aparecem como duas instâncias, cada uma com as próprias ações.
 - **Linha de ação:** o que a instância está fazendo agora, na voz do tema. Por exemplo, "Editando `server/http/app.js`" no Escritório ou "Conjurando `git status`" na Guilda. Também mostra "Delegando: ...", "Rodando os testes" durante um comando de teste, "✋ Aguardando sua aprovação" quando o agente espera você ou, quando parada, "Tomando café na copa" (na Guilda, "Descansando na taverna"). A sessão principal parada mostra "Aguardando o próximo pedido".
 - **Barra de saúde** (Humor no Escritório, Vida na Guilda): ≈ a fração das últimas 10 ações sem erro. Um comando de teste conta uma vez, pelo resultado dos testes, e uma ação que você interrompeu não conta. Passe o mouse para ver, por exemplo, "Humor ≈ 8 de 10 ações sem erro (últimas 10)".
+- **Barra de contexto** (Foco no Escritório, Mana na Guilda): ≈ o contexto que ainda cabe na janela do agente. Ela começa cheia e esvazia conforme a conversa cresce, e some quando não há leitura (veja [Barra de contexto](#barra-de-contexto-foco-ou-mana)).
 - **Instâncias encerradas** do ticket atual continuam visíveis, até 3 por papel. As demais viram "+N instâncias encerradas". As de tickets anteriores saem do cartão. O servidor guarda os 50 subagentes encerrados mais recentes de cada sessão; os mais antigos somem também do "+N".
 - **Filtro da atividade:** o nome do papel e cada instância são botões. Clique para ver na atividade só aquele papel ou aquela instância; clique de novo para voltar a todos (veja [Filtros](#filtros)).
 
-O cabeçalho mostra quantos agentes estão ativos entre os presentes, como "2/3 ativos".
+O cabeçalho mostra quantos agentes estão ativos entre os presentes, como "2/3 ativos". Embaixo do cartão, uma legenda curta explica a barra de saúde e, quando alguma instância mostra a barra de contexto, também ela.
+
+### Barra de contexto (Foco ou Mana)
+
+Cada instância da equipe pode ter, ao lado da barra de saúde, a barra de contexto: **Foco** no Escritório, **Mana** na Guilda. Ela mostra, de forma aproximada, quanto da janela de contexto do agente ainda está livre.
+
+- **Começa cheia e esvazia.** A barra mostra o contexto livre, não o usado: um agente no começo da conversa tem a barra quase cheia, e ela vai esvaziando conforme a conversa cresce. Uma compactação (o `/compact` ou a automática) recupera o contexto: a barra some por um instante e volta mais cheia na resposta seguinte.
+- **Passe o mouse para ver o valor,** sempre com "≈" e a fonte. Por exemplo: "Foco ≈ 70% livre · 60 mil de 200 mil tokens usados (30%) · fonte: uso da última resposta no transcript do agente". Leitores de tela leem o mesmo texto.
+- **No modo discreto, a barra continua,** porque ela só mostra números.
+
+#### De onde vem o valor
+
+O Claude Code grava a conversa de cada agente num arquivo de transcript (`.jsonl`) dentro de `~/.claude/projects/`. O servidor lê o fim desse arquivo e pega o uso de tokens da última resposta do agente: os tokens de entrada mais os de cache (`input_tokens`, `cache_creation_input_tokens` e `cache_read_input_tokens`, do `message.usage`).
+
+- Lê só os últimos 64 KiB do arquivo, e no máximo uma vez a cada 5 segundos por agente.
+- A leitura acontece depois de cada ferramenta concluída, no fim do turno da sessão principal, no fim de um subagente e no fim de uma compactação. Por isso o valor pode chegar alguns segundos depois do `/context` do Claude Code.
+- Do transcript, só saem três números: tokens usados, tamanho da janela e a porcentagem. Nada do conteúdo vai ao painel nem é guardado.
+- A leitura roda à parte, sem segurar a chegada dos eventos nem o Claude Code.
+
+#### Tamanho da janela
+
+A janela sai do modelo da própria resposta lida:
+
+| Modelo | Janela |
+|---|---|
+| Opus e Sonnet até a versão 4.6, Haiku 4.x e Claude 3.x | 200 mil tokens |
+| Qualquer outro, inclusive os modelos novos e os desconhecidos | 1 milhão de tokens (o padrão) |
+
+- Uso acima de 200 mil tokens vale sempre 1 milhão, qualquer que seja o modelo.
+- Na sessão principal, um modelo pedido que termina em `[1m]` vale 1 milhão. Se a resposta não diz o modelo, vale o modelo pedido no início da sessão; sem nenhum dos dois, o padrão.
+- **Limitações aceitas:** o `[1m]` só é conhecido na sessão principal, então um subagente em Opus 4.6 ou Sonnet 4.6 com `[1m]` aparece com janela de 200 mil até passar desse uso. Com `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, ou com um gateway limitado a 200 mil, a barra conta uma janela de 1 milhão para os modelos novos e mostra muito mais contexto livre do que há de verdade (o uso aparece cerca de 5 vezes menor).
+
+#### Quando a barra some
+
+Sem leitura, a barra não aparece, em vez de mostrar zero:
+
+- logo que o agente aparece, até a primeira leitura;
+- logo depois de uma compactação, até a próxima resposta do agente (como a linha de status do Claude Code);
+- quando o transcript não pode ser lido: o arquivo não existe, o formato mudou (ele é interno do Claude Code e muda entre versões) ou o caminho fica fora de `~/.claude/projects/`.
+
+> **Quem usa `CLAUDE_CONFIG_DIR` fica sem a barra.** Com essa variável, o Claude Code grava os transcripts em outra pasta, e o servidor só lê `~/.claude/projects/`. É uma limitação da v1, feita para o servidor nunca ler arquivos fora dessa pasta.
+
+Os detalhes das regras estão no [modelo de eventos](../arquitetura/modelo-de-eventos.md), seção 6, "Contexto", e no [ADR 0008](../adr/0008-fontes-dos-indicadores.md).
 
 ### Ticket e etapas
 
@@ -218,7 +261,7 @@ O que o modo discreto esconde, só na tela:
 - os erros do ticket e das ferramentas;
 - a pasta do projeto, que o seletor mostra ao passar o mouse. Projetos com o mesmo nome aparecem como "(1)" e "(2)", em vez de com a pasta.
 
-No lugar, entram frases só de categoria, como "Rodando um comando" ou "Editando um arquivo". Continuam visíveis os papéis, os tipos de agente, os nomes de ferramenta, as categorias, as contagens, os horários, os status e o motivo do fim da sessão.
+No lugar, entram frases só de categoria, como "Rodando um comando" ou "Editando um arquivo". Continuam visíveis os papéis, os tipos de agente, os nomes de ferramenta, as categorias, as contagens, as barras de saúde e de contexto, os horários, os status e o motivo do fim da sessão.
 
 O modo discreto muda só o que o painel mostra: o servidor continua com os mesmos dados, e o `/api/state` continua trazendo os textos redigidos. A legenda mostra as frases no modo em que você está.
 
@@ -310,11 +353,10 @@ As colunas de equipe e atividade mostram "Ninguém no escritório ainda" e "Nenh
 
 ## O que ainda não está ligado
 
-| O que | Quando chega |
-|---|---|
-| Barra de contexto (Foco ou Mana), com o uso aproximado do contexto de cada agente; opcional e pode ficar fora da v1 | T15 e T16 |
+Todas as áreas do painel da v1 já estão no ar. O que falta é conferência:
 
-Fora isso, o que falta é conferência. As regras de ticket, aprovação, testes e compactação seguem o design e foram testadas com cenários sintéticos. Elas ainda vão ser conferidas com os eventos reais da sessão de teste do T0, e podem mudar em detalhes depois dela.
+- As regras de ticket, aprovação, testes e compactação seguem o design e foram testadas com cenários sintéticos. Elas ainda vão ser conferidas com os eventos reais da sessão de teste do T0, e podem mudar em detalhes depois dela.
+- A barra de contexto dos subagentes depende do caminho do transcript que o Claude Code manda nos eventos de ferramenta dentro deles, que a documentação não garante. O código cobre os dois casos esperados; se a sessão de teste do T0 mostrar outra forma, a barra de um subagente pode aparecer só quando ele termina, até o ajuste.
 
 ## Testes de ponta a ponta (para quem desenvolve)
 
@@ -344,7 +386,7 @@ npm run test:e2e
 - [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Iniciar e parar o servidor](servidor.md) e [Ligar, pausar e remover a captura](captura.md).
 - [ADR 0004](../adr/0004-tempo-real-com-sse.md): tempo real com Server-Sent Events.
-- [ADR 0008](../adr/0008-fontes-dos-indicadores.md): de onde vem cada indicador, e o que é real ou aproximado.
+- [ADR 0008](../adr/0008-fontes-dos-indicadores.md): de onde vem cada indicador, e o que é real ou aproximado, inclusive a barra de contexto.
 - [ADR 0009](../adr/0009-tema-como-camada.md): tema como camada de apresentação.
-- [Modelo de eventos](../arquitetura/modelo-de-eventos.md), seções 6 (regras de ticket, etapa, aprovação, bugs, copa e saúde) e 9 (o estado que o servidor envia ao painel).
+- [Modelo de eventos](../arquitetura/modelo-de-eventos.md), seções 6 (regras de ticket, etapa, aprovação, bugs, copa, saúde e contexto) e 9 (o estado que o servidor envia ao painel).
 - [Mockup do painel](../../mockups/painel.html): a referência visual aprovada.
