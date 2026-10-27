@@ -1,7 +1,7 @@
 # Visão geral da arquitetura (v1)
 
 > **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026.
-> Decisões do usuário na aprovação: captura em escopo de usuário (ADR 0002); painel mostra comandos, caminhos e títulos já redigidos, com modo discreto opcional (ADR 0006); `@playwright/test` como única devDependency (ADR 0010); barra de contexto opcional no fim da v1 e custo fora da v1 (ADR 0008). A ordem de construção, com o marco "Primeira luz", está em `docs/plano/v1.md`.
+> Decisões do usuário na aprovação: captura em escopo de usuário (ADR 0002); painel mostra comandos, caminhos e títulos já redigidos, com modo discreto opcional (ADR 0006); `@playwright/test` como única devDependency (ADR 0010); barra de contexto opcional no fim da v1 (a decisão 10, de 26/10/2026, a pôs na v1) e custo fora da v1 (ADR 0008). A ordem de construção, com o marco "Primeira luz", está em `docs/plano/v1.md`.
 > **Ambiente de referência:** Windows 11, Node 24.20, Claude Code 2.1.301 (terminal e extensão do VS Code).
 
 ## Em uma frase
@@ -46,7 +46,7 @@ Meta: evento no painel em menos de 300 ms, dos quais cerca de 60 ms são o iníc
 | Normalização | `server/domain/normalize.js`, `tools.js`, `redact.js`, `tests-detect.js`, `roles.js` | Payload do hook → fato mínimo e redigido | funções puras |
 | Estado | `server/domain/state/` | Sessões, agentes, tickets, etapas, aprovações, bugs, saúde; emite eventos canônicos | `apply(state, fact, now)` e `tick(state, now)`, determinísticas |
 | Tempo real | `server/http/sse.js` | `hello`, `snapshot`, `update`, retomada por `Last-Event-ID` | cliente SSE de teste |
-| Sonda de contexto (opcional, T15) | `server/usage/transcript-usage.js` | Montar o caminho do transcript de cada agente, ler o uso de tokens no fim dele e agendar as leituras fora do `apply` | `readContextUsage(file, opts)` → `Promise` de objeto ou `null` (nunca rejeita); `transcriptPathFor(...)`, pura; `createContextProbe({ ... })` com leitura, relógio e temporizadores injetáveis |
+| Sonda de contexto (T15) | `server/usage/transcript-usage.js` | Montar o caminho do transcript de cada agente, ler o uso de tokens no fim dele e agendar as leituras fora do `apply` | `readContextUsage(file, opts)` → `Promise` de objeto ou `null` (nunca rejeita); `transcriptPathFor(...)`, pura; `createContextProbe({ ... })` com leitura, relógio e temporizadores injetáveis |
 | Painel | `web/` | Conexão, store, temas, telas, cena | módulos puros (store, seletores, temas, views que geram HTML) + E2E |
 | Contrato compartilhado | `shared/contract.js` | Tipos de evento, papéis, categorias, etapas, status | importado pelo servidor e pelo navegador |
 
@@ -75,7 +75,7 @@ export function canonicalPath(path, { homeDir }) {}   // → forma canônica (se
 
 // server/pipeline.js (ligação de ponta a ponta, T9a; fora do domínio e do hub)
 export function createPipeline({ /* state, hub, reader, sequence, relógio, usageOptions */ }) {}   // ingestão → normalize → apply → hub; tick periódico; leitura de agentes; sonda de contexto
-// usageOptions (T15, opcional): { root, read, clock, timers, intervalMs }. root padrão <homeDir>/.claude/projects; root null (ou sem pasta pessoal) desliga a sonda.
+// usageOptions (T15; parâmetro opcional): { root, read, clock, timers, intervalMs }. root padrão <homeDir>/.claude/projects; root null (ou sem pasta pessoal) desliga a sonda.
 //   O pipeline pede leituras depois do apply (tool.finished, turn.stop, subagent.stop, compact.post), guarda o model do SessionStart por sessão
 //   e esquece sessão e agentes quando o tick remove a sessão; stop() também cancela as leituras agendadas; settled() espera as leituras em andamento
 // startServer({ …, pipeline }) aceita um pipeline pronto só para testes e devolve o pipeline; createApp({ …, sessionCount, getSeq }) para o /api/health e o hub
@@ -91,7 +91,7 @@ export function createAgentNamesReader({ homeDir, list, timeoutMs, onLate }) {} 
                                                                                    //   [] em erro ou prazo; filtra .md antes do limite de 200; no máximo 1 listagem em andamento
                                                                                    //   (fila); onLate(projectDir, names) quando uma listagem termina depois do prazo; list injetável
 
-// server/usage/transcript-usage.js (opcional, T15; fora de server/domain/; modelo de eventos, seção 6, "Contexto")
+// server/usage/transcript-usage.js (T15; fora de server/domain/; modelo de eventos, seção 6, "Contexto")
 export async function readContextUsage(file, { root, model, main, maxBytes }) {}   // → Promise<{ pct, usedTokens, windowTokens } | null>, nunca rejeita
                                                                                     //   só .jsonl dentro de root (caminho resolvido e caminho real); últimos 64 KiB;
                                                                                     //   main: ignora entradas isSidechain; para na marca de compactação (null);
@@ -180,7 +180,7 @@ export function removeSession(store, sessionId) {}        // → true se a sess�
 | Clientes SSE | 8; cliente com mais de 1 MiB acumulado é desconectado e volta com snapshot. O envio inicial só conta depois do primeiro `drain` |
 | Limpeza | sessão encerrada: 30 min; sem eventos: 6 h; agente "trabalhando" sem ferramenta rodando e sem eventos: 15 min |
 | Saúde | últimas 10 ações do agente |
-| Sonda de contexto (opcional) | até 1 leitura por agente a cada 5 s; 1 leitura por vez no servidor; últimos 64 KiB do arquivo; até 2 000 agentes acompanhados e o modelo pedido de até 1 000 sessões |
+| Sonda de contexto | até 1 leitura por agente a cada 5 s; 1 leitura por vez no servidor; últimos 64 KiB do arquivo; até 2 000 agentes acompanhados e o modelo pedido de até 1 000 sessões |
 
 ## Estrutura de pastas
 
@@ -208,7 +208,7 @@ agents-quest/
 │   ├── ingest/      envelope.js, dedupe.js, queue.js, debug-dump.js (só com --debug-dump)
 │   ├── domain/      normalize.js, tools.js, redact.js, tests-detect.js, roles.js
 │   │   └── state/   index.js, sessions.js, agents.js, quests.js, permissions.js
-│   └── usage/       transcript-usage.js            (opcional, T15)
+│   └── usage/       transcript-usage.js            (T15)
 ├── shared/
 │   └── contract.js                  constantes e typedefs do contrato
 ├── web/
@@ -306,4 +306,4 @@ claude plugin install agent-quest@agent-quest-local
 
 ## Fora da v1
 
-XP, níveis, conquistas, replay, custo da sessão, regressão de testes, início automático do servidor com o Windows e token de acesso ao painel. O custo tem caminho registrado no ADR 0008 (OpenTelemetry), que só entra depois da v1 e com nova aprovação do usuário. A barra de contexto (T15 e T16) é opcional e fica para o fim da v1.
+XP, níveis, conquistas, replay, custo da sessão, regressão de testes, início automático do servidor com o Windows e token de acesso ao painel. O custo tem caminho registrado no ADR 0008 (OpenTelemetry), que só entra depois da v1 e com nova aprovação do usuário. A barra de contexto (T15 e T16) entrou na v1 pela decisão 10 do usuário (26/10/2026).

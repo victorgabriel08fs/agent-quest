@@ -15,7 +15,7 @@ O mockup mostra indicadores simulados: barras de saúde e de contexto, custo da 
 | Trabalhando, aguardando, ocioso | Pre/PostToolUse, PostToolUseFailure, PermissionRequest, SubagentStop, Stop, Notification | Real. "Aguardando" é atribuído por heurística se o PermissionRequest vier sem `agent_id` |
 | Ação atual (balão e cartão) | `tool_name` e campos minimizados de `tool_input` | Real |
 | Barra de saúde (Humor / Vida) | Fração de sucesso nas últimas 10 ações do agente (PostToolUse contra PostToolUseFailure; comando de teste conta pelo resultado do teste) | Aproximada, derivada de dado real |
-| Barra de contexto (Foco / Mana) | `message.usage` da última resposta no transcript do agente; janela pelo modelo dessa resposta: 1 milhão por padrão, 200 mil só para as famílias sem 1M nativo (regra revista pelo usuário em 26/10/2026; ver o complemento) | Aproximada e opcional (T15 e T16). Some se o formato do transcript mudar |
+| Barra de contexto (Foco / Mana) | `message.usage` da última resposta no transcript do agente; janela pelo modelo dessa resposta: 1 milhão por padrão, 200 mil só para as famílias sem 1M nativo (regra revista pelo usuário em 26/10/2026; ver o complemento) | Aproximada (T15 e T16, na v1 pela decisão 10). Some se o formato do transcript mudar |
 | Anel de XP e nível | — | Sai (fora do escopo) |
 | Custo da sessão | — | Sai da v1. No lugar, a duração da sessão |
 | Bugs na cena | Comandos de teste no Bash/PowerShell: resultado (PostToolUse ou PostToolUseFailure) e contagem lida do resumo (node:test, Jest, Vitest, pytest, PHPUnit/Pest, go test) | Aproximada |
@@ -50,7 +50,7 @@ Sobre o custo, as fontes possíveis e por que nenhuma entra na v1:
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão, com estas definições:
 
-- **Barra de contexto (Foco / Mana):** opcional, no fim da v1 (T15 e T16). Pode sair da v1 sem afetar o resto.
+- **Barra de contexto (Foco / Mana):** opcional, no fim da v1 (T15 e T16). Pode sair da v1 sem afetar o resto. **Revisto em 26/10/2026:** pela decisão 10 do usuário (`docs/plano/v1.md`), a barra entrou na v1 e deixou de ser opcional; T15 e T16 já foram entregues.
 - **Custo da sessão:** fora da v1. OpenTelemetry, ou qualquer outra fonte de custo, só entra depois da v1 e com nova aprovação do usuário, porque exige mudar o `env` do `~/.claude/settings.json` e criar um receptor OTLP local.
 
 ## Complemento (26/10/2026, revisão do T15)

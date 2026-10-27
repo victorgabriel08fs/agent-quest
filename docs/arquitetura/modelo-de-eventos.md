@@ -178,7 +178,7 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido,
 | `permission.requested` | o agente | `{ tool, category, target }` | sim |
 | `permission.resolved` | o agente | `{ outcome, by }`; `outcome`: `approved`, `denied` ou `unknown`; `by`: `user`, `auto` ou `inferred`. O `denied` sai mesmo sem pedido pendente (PermissionDenied, seção 4) | sim |
 | `context.compacted` | o agente | `{ trigger }` | sim |
-| `context.usage` | o agente | `{ pct, usedTokens, windowTokens }` (opcional, T15) | não |
+| `context.usage` | o agente | `{ pct, usedTokens, windowTokens }` (T15) | não |
 
 `shared/contract.js` exporta essas listas (`EVENT_KINDS`, `FEED_KINDS`, `ROLES`, `TOOL_CATEGORIES`, `PHASES`, `AGENT_STATUS`, `SESSION_STATUS`, `QUEST_STATUS`).
 
@@ -355,7 +355,7 @@ Janela das últimas 10 ações do agente: `tool.finished` conta como sucesso e `
 - PreCompact deixa a atividade do agente em "compactando". PostCompact, ou SessionStart com `source: compact`, emite `context.compacted`.
 - **Par e duplicata** (T8, confirmado em 19/10/2026): um sinal de fim de compactação até 60 s depois do anúncio, sem PreCompact novo no meio, é o par desse anúncio, ou uma duplicata se o par já chegou. Ele não gera um segundo `context.compacted`.
 
-### Contexto (opcional, T15)
+### Contexto (T15)
 
 A sonda lê os últimos 64 KiB do transcript do agente: `transcript_path` para a sessão principal; para subagentes, `<pasta do transcript>/<session_id>/subagents/agent-<agent_id>.jsonl` (caminho documentado) ou o `agent_transcript_path` do SubagentStop. Da última resposta com `message.usage`: `usedTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. A janela segue a regra abaixo ("Janela", decisão do usuário de 26/10/2026). No máximo uma leitura por agente a cada 5 s. Só lê arquivos `.jsonl` dentro de `~/.claude/projects/`. Qualquer falha devolve `null` e a barra some.
 
