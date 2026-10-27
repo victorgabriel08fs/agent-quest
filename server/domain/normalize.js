@@ -89,11 +89,22 @@ const AGENT_LAUNCHES = ['completed', 'async_launched'];
 
 /**
  * Marcas que o Claude Code põe no início do pedido quando o UserPromptSubmit é
- * do sistema (retorno de subagente em segundo plano, por exemplo). Formato a
- * confirmar no T0 (V7); o G0b acrescenta as que aparecerem.
+ * do sistema (seção 6, "Origem do sistema"; V7, revisto no G0b): retorno de
+ * subagente em segundo plano no terminal (`<task-notification>`) e na extensão
+ * do VS Code (`<agent-message from="…">`).
  */
-export const SYSTEM_PROMPT_TAGS = Object.freeze(['task-notification']);
+export const SYSTEM_PROMPT_TAGS = Object.freeze(['task-notification', 'agent-message']);
 const SYSTEM_PROMPT = new RegExp(`^<(?:${SYSTEM_PROMPT_TAGS.join('|')})(?=[\\s>])`);
+
+/**
+ * Preâmbulo que a extensão do VS Code põe antes do texto do usuário no primeiro
+ * pedido da conversa (seção 1, "Preâmbulo do cliente"; seção 2, "Título com
+ * preâmbulo do VS Code"). Não é marca de sistema: o pedido continua do usuário.
+ * A captura 0.1.3 já o tira; para envelopes de capturas anteriores, o título
+ * ignora o bloco. Mesma lista e mesma regra de início do encaminhador.
+ */
+export const CLIENT_PREAMBLE_TAGS = Object.freeze(['browser_instruction']);
+const PREAMBLE_START = new RegExp(`^<(${CLIENT_PREAMBLE_TAGS.join('|')})[ >]`);
 
 /** Pasta pessoal padrão para abreviar caminhos com `~`. */
 const DEFAULT_HOME_DIR = defaultHomeDir();
@@ -325,8 +336,10 @@ function buildFact(envelope, receivedAt, homeDir) {
 /**
  * V7: origem do pedido. O UserPromptSubmit também dispara para retorno de
  * subagente em segundo plano, tarefa agendada, `/loop` e mensagem de outra
- * sessão, sem campo que diferencie. Regra provisória (seção 6): pedido que
- * começa com uma das marcas de `SYSTEM_PROMPT_TAGS` é do sistema.
+ * sessão, sem campo que diferencie. Regra (seção 6; confirmada no T0 e revista
+ * no G0b): pedido que, depois de espaços iniciais, começa com uma das marcas de
+ * `SYSTEM_PROMPT_TAGS`, seguida de espaço ou `>`, é do sistema. O preâmbulo
+ * `<browser_instruction>` não é marca: o pedido continua do usuário.
  * @param {unknown} prompt
  * @returns {'user'|'system'|null}       null se o pedido não for texto
  */
@@ -449,14 +462,37 @@ function testResult(kind, payload) {
 /**
  * Título do pedido (seção 6): primeira linha, até 80, redigida. Pedido que
  * começa com `/` usa só o comando.
+ *
+ * Preâmbulo do VS Code (seção 2, G0b): pedido que, depois de espaços iniciais,
+ * começa com `<browser_instruction>` ou `<browser_instruction ` tem o título
+ * tirado do texto depois do último `</browser_instruction>`, com as mesmas
+ * regras. Sem essa tag no texto recebido (o corte do encaminhador a engoliu), o
+ * título é null: o começo do pedido do usuário se perdeu.
  * @param {unknown} prompt
  * @returns {string|null}
  */
 export function promptTitle(prompt) {
-  const line = firstRedactedLine(prompt);
+  const text = withoutClientPreamble(prompt);
+  const line = firstRedactedLine(text);
   if (line === null) return null;
   const title = line.startsWith('/') ? line.split(/\s/, 1)[0] : line;
   return textLine(title, LIMITS.title);
+}
+
+/**
+ * Texto do pedido sem o preâmbulo do cliente (`CLIENT_PREAMBLE_TAGS`): o que vem
+ * depois do último fechamento da tag de abertura. Sem o fechamento, null. Pedido
+ * sem preâmbulo (ou que não é texto) volta como veio.
+ * @param {unknown} prompt
+ * @returns {unknown}
+ */
+function withoutClientPreamble(prompt) {
+  if (typeof prompt !== 'string') return prompt;
+  const start = PREAMBLE_START.exec(prompt.trimStart());
+  if (!start) return prompt;
+  const end = `</${start[1]}>`;
+  const at = prompt.lastIndexOf(end);
+  return at < 0 ? null : prompt.slice(at + end.length);
 }
 
 /**

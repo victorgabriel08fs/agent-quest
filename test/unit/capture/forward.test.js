@@ -37,9 +37,14 @@ import {
   SHORTCUT_STDIN_BYTES,
   STEP2_RULES,
   TAIL_CHARS,
+  CLIENT_PREAMBLE_TAGS,
+  PREAMBLE_SCAN_CHARS,
+  applyClientPreamble,
   buildBody,
   buildEnvelope,
   cutString,
+  entrypointOf,
+  stripClientPreamble,
   isPidAlive,
   isValidPort,
   minimalPayload,
@@ -588,6 +593,150 @@ describe('teto do corpo: 1 000 000 bytes em até três passos (modelo de eventos
   });
 });
 
+// Captura 0.1.3 (plano, T4; modelo de eventos, seção 1, "env.entrypoint" e
+// "Preâmbulo do cliente"). Os vetores do preâmbulo seguem o formato observado no
+// T0 (docs/pesquisa/validacao-captura.md, V7): a sanitização trocou o texto real
+// por marcadores, então o bloco é remontado aqui (ADR 0010, complemento de 26/10/2026).
+describe('captura 0.1.3: preâmbulo do cliente e env.entrypoint', () => {
+  const env = { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' };
+  /** Bloco de cerca de 4 100 caracteres, no formato do VS Code. */
+  const BLOCK = `<browser_instruction>\n${'Instrução da extensão sobre o navegador. '.repeat(100).slice(0, 4100)}\n</browser_instruction>`;
+  const prompt = (text, extra = {}) => ({
+    session_id: 'sessao-teste',
+    hook_event_name: 'UserPromptSubmit',
+    prompt_id: 'p-1',
+    prompt: text,
+    ...extra,
+  });
+  /** Envelope enviado por `buildBody` (o caminho real do encaminhador). */
+  const sent = (payload, options = {}) => JSON.parse(buildBody(payload, { sentAt: 1, env, now: () => 0, ...options }));
+
+  it('constantes da decisão', () => {
+    assert.deepEqual(CLIENT_PREAMBLE_TAGS, ['browser_instruction']);
+    assert.equal(PREAMBLE_SCAN_CHARS, 65_536);
+    assert.equal(FORWARDER_VERSION, '0.1.3');
+  });
+
+  it('bloco de cerca de 4 100 caracteres + "\\n\\n" + pedido curto: chega só o pedido, com truncated false', () => {
+    assert.ok(BLOCK.length > 4100);
+    const envelope = sent(prompt(`${BLOCK}\n\nLeia o CLAUDE.md`));
+    assert.equal(envelope.payload.prompt, 'Leia o CLAUDE.md');
+    assert.equal(envelope.truncated, false);
+    assert.deepEqual(Object.keys(envelope.payload), ['session_id', 'hook_event_name', 'prompt_id', 'prompt'], 'o resto do payload não muda');
+    // Espaços antes do bloco e atributos na tag de abertura.
+    assert.equal(sent(prompt(`  \n${BLOCK} \n\t Pedido`)).payload.prompt, 'Pedido');
+    assert.equal(sent(prompt('<browser_instruction mode="x">abc</browser_instruction>\n\nPedido\nsegunda linha')).payload.prompt, 'Pedido\nsegunda linha');
+    // Só o primeiro fechamento conta, e só os espaços seguintes saem.
+    assert.equal(sent(prompt('<browser_instruction>a</browser_instruction> b </browser_instruction> c ')).payload.prompt, 'b </browser_instruction> c ');
+    assert.equal(sent(prompt(`${BLOCK}\n\n`)).payload.prompt, '');
+  });
+
+  it('bloco + pedido de 5 000 caracteres: chega o começo do pedido, cortado em 1 KiB + 3 KiB, com truncated true', () => {
+    const request = `Começo do pedido. ${'p'.repeat(5000 - 18)}`;
+    assert.equal(request.length, 5000);
+    const envelope = sent(prompt(`${BLOCK}\n\n${request}`));
+    assert.equal(envelope.payload.prompt, cutString(request));
+    assert.ok(envelope.payload.prompt.startsWith('Começo do pedido.'));
+    assert.equal(envelope.truncated, true);
+  });
+
+  it('bloco sem fechamento, ou com o fechamento depois das 65 536 unidades: fica como está e passa pelo corte normal', () => {
+    const open = `<browser_instruction>\n${'x'.repeat(4100)}\n\nPedido`;
+    assert.equal(stripClientPreamble(open), open);
+    const envelope = sent(prompt(open));
+    assert.equal(envelope.payload.prompt, cutString(open));
+    assert.equal(envelope.truncated, true);
+
+    const far = `<browser_instruction>${'y'.repeat(PREAMBLE_SCAN_CHARS)}</browser_instruction>Pedido`;
+    assert.equal(stripClientPreamble(far), far);
+    assert.equal(sent(prompt(far)).payload.prompt, cutString(far));
+    // Fechamento terminando exatamente na última unidade da janela: sai.
+    const edge = `<browser_instruction>${'y'.repeat(PREAMBLE_SCAN_CHARS - 21 - 22)}</browser_instruction>Pedido`;
+    assert.equal(edge.indexOf('</browser_instruction>') + 22, PREAMBLE_SCAN_CHARS);
+    assert.equal(stripClientPreamble(edge), 'Pedido');
+    const past = `<browser_instruction>${'y'.repeat(PREAMBLE_SCAN_CHARS - 21 - 21)}</browser_instruction>Pedido`;
+    assert.equal(stripClientPreamble(past), past, 'uma unidade além da janela');
+  });
+
+  it('tag no meio do texto, ou noutro evento: nada muda', () => {
+    const middle = `Pedido ${BLOCK} fim`;
+    assert.equal(sent(prompt(middle)).payload.prompt, cutString(middle));
+    const short = 'Veja <browser_instruction>x</browser_instruction> aqui';
+    assert.equal(sent(prompt(short)).payload.prompt, short);
+    // PreToolUse com o bloco num tool_input, e até num campo "prompt".
+    const pre = {
+      session_id: 's',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Agent',
+      prompt: '<browser_instruction>a</browser_instruction>b',
+      tool_input: { prompt: '<browser_instruction>a</browser_instruction>b', description: '<browser_instruction>x</browser_instruction>' },
+    };
+    assert.deepEqual(sent(structuredClone(pre)).payload, pre);
+  });
+
+  it('outro nome (<browser_instructions>) e prompt que não é texto: nada muda', () => {
+    for (const text of ['<browser_instructions>a</browser_instructions>b', '<browser_instruction_x>a</browser_instruction_x>b', '<browser_instructionx>a</browser_instruction>b', '<browser_instruction\n>a</browser_instruction>b']) {
+      assert.equal(sent(prompt(text)).payload.prompt, text, text);
+    }
+    for (const value of [null, 42, true, ['<browser_instruction>a</browser_instruction>b'], { text: '<browser_instruction>a</browser_instruction>b' }]) {
+      assert.deepEqual(sent(prompt(structuredClone(value))).payload.prompt, value, JSON.stringify(value));
+    }
+    assert.equal(sent({ session_id: 's', hook_event_name: 'UserPromptSubmit' }).payload.prompt, undefined);
+  });
+
+  it('o preâmbulo vale também no buildEnvelope (passo 1 isolado)', () => {
+    assert.equal(buildEnvelope(prompt(`${BLOCK}\n\nPedido`), { sentAt: 1, env }).payload.prompt, 'Pedido');
+  });
+
+  it('env.entrypoint: CLAUDE_CODE_ENTRYPOINT só quando casa com ^[A-Za-z0-9_.-]{1,64}$', () => {
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'cli' }), 'cli');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' }), 'claude-vscode');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'sdk_ts.1-2' }), 'sdk_ts.1-2');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'a'.repeat(64) }), 'a'.repeat(64));
+    assert.equal(entrypointOf({}), null, 'ausente');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: '' }), null, 'vazio');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'claude vscode' }), null, 'com espaço');
+    assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: 'a'.repeat(65) }), null, '65 caracteres');
+    for (const value of [' cli', 'cli\n', 'ação', 'cli/x', 'x=1']) assert.equal(entrypointOf({ CLAUDE_CODE_ENTRYPOINT: value }), null, JSON.stringify(value));
+    assert.deepEqual(buildEnvelope({}, { sentAt: 1, env: { ...env, CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' } }).env, {
+      projectDir: 'C:\\projetos\\exemplo',
+      entrypoint: 'claude-vscode',
+    });
+    // Também no envelope de emergência (atalho de 8 MiB) e no passo 3.
+    const ids = { session_id: 's', hook_event_name: 'PostToolUse' };
+    assert.equal(sent(ids, { env: { CLAUDE_CODE_ENTRYPOINT: 'cli' }, inputBytes: SHORTCUT_STDIN_BYTES + 1 }).env.entrypoint, 'cli');
+    assert.equal(sent({ ...ids, big: 'x'.repeat(2000) }, { env: { CLAUDE_CODE_ENTRYPOINT: 'cli' }, maxBytes: 300 }).env.entrypoint, 'cli');
+  });
+
+  it('custo do preâmbulo num prompt de 16 MiB: limitado pela janela de 64 Ki unidades (medido)', (t) => {
+    const MiB16 = 16 * 1024 * 1024;
+    const cases = {
+      'bloco + 16 MiB de pedido': `${BLOCK}\n\n${'q'.repeat(MiB16)}`,
+      'bloco + 16 MiB de espaços': `${BLOCK}${' '.repeat(MiB16)}x`,
+      '16 MiB sem fechamento': `<browser_instruction>${'r'.repeat(MiB16)}`,
+      '16 MiB de espaços antes': `${' '.repeat(MiB16)}<browser_instruction>a</browser_instruction>b`,
+      '16 MiB sem preâmbulo': 's'.repeat(MiB16),
+    };
+    for (const [label, text] of Object.entries(cases)) {
+      const times = [];
+      let out;
+      for (let i = 0; i < 5; i++) {
+        const begin = performance.now();
+        out = applyAndRead(prompt(text));
+        times.push(performance.now() - begin);
+      }
+      const ms = median(times);
+      t.diagnostic(`${label}: ${ms.toFixed(2)} ms (mediana de 5)`);
+      assert.ok(ms < 100, `${label}: ${ms.toFixed(1)} ms`);
+      assert.ok(typeof out === 'string');
+    }
+    function applyAndRead(payload) {
+      applyClientPreamble(payload);
+      return payload.prompt;
+    }
+  });
+});
+
 describe('orçamento de tempo da redução (captura 0.1.2)', () => {
   const ids = { session_id: '5f1c0000-aaaa-bbbb-cccc-1234567890ab', hook_event_name: 'PostToolUse' };
   const env = { CLAUDE_PROJECT_DIR: 'C:\\projetos\\exemplo' };
@@ -844,6 +993,51 @@ describe('encaminhador como processo: sempre sai 0 e em silêncio', () => {
       truncated: false,
       payload,
     });
+  });
+
+  it('0.1.3: UserPromptSubmit no formato do VS Code chega sem o preâmbulo e com env.entrypoint, em até 300 ms', async (t) => {
+    const home = newHome();
+    const server = await captureServer();
+    writeRuntime(home, { port: server.port, token: 't', pid: process.pid, version: '0.1.0', startedAt: 1 });
+    const block = `<browser_instruction>\n${'Instrução da extensão. '.repeat(180)}\n</browser_instruction>`;
+    const payload = {
+      session_id: 'sessao-vscode',
+      transcript_path: 'C:\\Users\\usuario\\.claude\\projects\\exemplo\\sessao-vscode.jsonl',
+      cwd: 'C:\\projetos\\exemplo',
+      permission_mode: 'default',
+      hook_event_name: 'UserPromptSubmit',
+      prompt_id: 'p-vscode',
+      prompt: `${block}\n\nLeia o CLAUDE.md e me diga o que achou`,
+    };
+    assert.ok(block.length > 4000);
+    await assertFast(t, () => runForwarder({ home, stdin: JSON.stringify(payload), env: { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' } }), FAST_MS, 'VS Code');
+    const envelope = JSON.parse(server.requests.at(-1).body);
+    assert.deepEqual(envelope.env, { projectDir: 'C:\\projetos\\exemplo', entrypoint: 'claude-vscode' });
+    assert.equal(envelope.truncated, false);
+    assert.deepEqual(envelope.payload, { ...payload, prompt: 'Leia o CLAUDE.md e me diga o que achou' });
+    assert.equal(envelope.forwarder, '0.1.3');
+
+    // Terminal: entrypoint cli; valor fora do padrão: null.
+    assertSilentExit(await runForwarder({ home, stdin: JSON.stringify(hookPayload()), env: { CLAUDE_CODE_ENTRYPOINT: 'cli' } }));
+    assert.equal(JSON.parse(server.requests.at(-1).body).env.entrypoint, 'cli');
+    assertSilentExit(await runForwarder({ home, stdin: JSON.stringify(hookPayload()), env: { CLAUDE_CODE_ENTRYPOINT: 'claude vscode' } }));
+    assert.equal(JSON.parse(server.requests.at(-1).body).env.entrypoint, null);
+  });
+
+  it('0.1.3: UserPromptSubmit de 16 MiB com o preâmbulo sai 0, em silêncio e no prazo (custo do preâmbulo medido)', async (t) => {
+    const home = newHome();
+    const server = await captureServer();
+    writeRuntime(home, { port: server.port, token: 't', pid: process.pid, version: '0.1.0', startedAt: 1 });
+    const head = { session_id: 'sessao-16', hook_event_name: 'UserPromptSubmit', prompt_id: 'p-16' };
+    const block = `<browser_instruction>${'b'.repeat(4100)}</browser_instruction>\n\n`;
+    const stdin = JSON.stringify({ ...head, prompt: `${block}${'q'.repeat(16 * 1024 * 1024 - 4400)}` });
+    assert.ok(Buffer.byteLength(stdin) <= 16 * 1024 * 1024);
+    const result = await assertFast(t, () => runForwarder({ home, stdin }), STUCK_MS, '16 MiB com preâmbulo');
+    t.diagnostic(`16 MiB com preâmbulo: ${result.ownMs.toFixed(0)} ms (processo inteiro)`);
+    if (server.requests.length === 0) return; // prazo esgotado com a máquina carregada: perda aceita (seção 1)
+    const envelope = JSON.parse(server.requests.at(-1).body);
+    assert.equal(envelope.truncated, true);
+    assert.deepEqual(envelope.payload, { session_id: 'sessao-16', hook_event_name: 'UserPromptSubmit', prompt_id: 'p-16' }, 'atalho de 8 MiB: sem prompt');
   });
 
   it('strings acima de 4 KiB chegam cortadas (1 KiB + 3 KiB) com truncated: true', async () => {

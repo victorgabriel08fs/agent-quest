@@ -17,7 +17,10 @@
 //   Node 18 imprime um aviso de recurso experimental.
 //
 // O corpo enviado nunca passa de 1 000 000 bytes: a redução tem até três passos
-// genéricos, parando no primeiro que couber (`buildBody`).
+// genéricos, parando no primeiro que couber (`buildBody`). A única regra que
+// conhece o conteúdo é o preâmbulo do cliente (ADR 0001, complemento de
+// 26/10/2026): o bloco `<browser_instruction>` do VS Code sai do início do
+// `prompt` do UserPromptSubmit antes de qualquer corte (`stripClientPreamble`).
 //
 // Ordem (ADR 0001): lê o stdin até o fim, depois o runtime.json; sem servidor
 // no ar, sai sem nem interpretar o JSON. Tudo fica num arquivo só, para um
@@ -39,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 const startedAt = Date.now();
 
 /** Versão do encaminhador (igual à do plugin.json; um teste confere). */
-export const FORWARDER_VERSION = '0.1.2';
+export const FORWARDER_VERSION = '0.1.3';
 
 /** Único destino possível (ADR 0006). */
 export const HOST = '127.0.0.1';
@@ -97,6 +100,23 @@ export const SHORT_STRING_CHARS = 512;
 export const SHORT_HEAD_CHARS = 128;
 export const SHORT_TAIL_CHARS = 384;
 export const MAX_LIST_ITEMS = 100;
+
+/**
+ * Preâmbulo do cliente (modelo de eventos, seção 1; captura 0.1.3, decisão 13):
+ * blocos que o cliente põe antes do texto do usuário no UserPromptSubmit. A
+ * extensão do VS Code põe `<browser_instruction>…</browser_instruction>`, cerca
+ * de 4 mil caracteres, no primeiro pedido da conversa. O fechamento é procurado
+ * só nas primeiras 64 Ki unidades, para o custo não depender do tamanho do prompt.
+ */
+export const CLIENT_PREAMBLE_TAGS = Object.freeze(['browser_instruction']);
+export const PREAMBLE_SCAN_CHARS = 65_536;
+
+/**
+ * `env.entrypoint` (modelo de eventos, seção 1; V11): o valor de
+ * `CLAUDE_CODE_ENTRYPOINT` (`cli` no terminal, `claude-vscode` na extensão) só
+ * se casar com este padrão; senão, `null`.
+ */
+export const ENTRYPOINT_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
  * @typedef {object} Runtime
@@ -361,9 +381,55 @@ export function truncateStrings(root) {
 }
 
 /**
+ * Valor de `env.entrypoint`: `CLAUDE_CODE_ENTRYPOINT` se casar com
+ * `ENTRYPOINT_PATTERN`; ausente, vazio ou fora do padrão, `null`.
+ * @param {Record<string, string|undefined>} env
+ * @returns {string|null}
+ */
+export function entrypointOf(env) {
+  const value = env.CLAUDE_CODE_ENTRYPOINT;
+  return typeof value === 'string' && ENTRYPOINT_PATTERN.test(value) ? value : null;
+}
+
+/**
+ * Tira o preâmbulo do cliente do início do `prompt` (modelo de eventos, seção 1,
+ * "Preâmbulo do cliente"). Se o texto, depois de espaços iniciais, começa com
+ * `<tag>` ou `<tag ` de `CLIENT_PREAMBLE_TAGS`, e o primeiro `</tag>` está nas
+ * primeiras `PREAMBLE_SCAN_CHARS` unidades, sai tudo do começo até o fim dessa
+ * tag e os espaços seguintes. Senão, o texto volta como veio. Não é corte: não
+ * marca `truncated`.
+ * @param {string} prompt
+ * @returns {string}
+ */
+export function stripClientPreamble(prompt) {
+  const window = prompt.slice(0, PREAMBLE_SCAN_CHARS);
+  const head = window.trimStart();
+  for (const tag of CLIENT_PREAMBLE_TAGS) {
+    if (!head.startsWith(`<${tag}>`) && !head.startsWith(`<${tag} `)) continue;
+    const close = `</${tag}>`;
+    const at = window.indexOf(close);
+    return at < 0 ? prompt : prompt.slice(at + close.length).trimStart();
+  }
+  return prompt;
+}
+
+/**
+ * Aplica o preâmbulo do cliente ao payload, só no UserPromptSubmit com `prompt`
+ * de texto. Altera o `prompt` no próprio objeto, que é do encaminhador: copiar o
+ * payload listaria todas as chaves, o que custa caro em payloads patológicos
+ * (seção 1, "Orçamento de tempo da redução").
+ * @param {Record<string, unknown>} payload
+ */
+export function applyClientPreamble(payload) {
+  if (payload.hook_event_name !== 'UserPromptSubmit' || typeof payload.prompt !== 'string') return;
+  const prompt = stripClientPreamble(payload.prompt);
+  if (prompt !== payload.prompt) payload.prompt = prompt;
+}
+
+/**
  * Monta o envelope v1 (modelo de eventos, seção 1) com um payload já reduzido.
- * Das variáveis de ambiente, só vai `CLAUDE_PROJECT_DIR`. `entrypoint` fica
- * `null` até o T0 confirmar qual variável diz se a sessão é do terminal ou do VS Code.
+ * Das variáveis de ambiente, só vão `CLAUDE_PROJECT_DIR` e
+ * `CLAUDE_CODE_ENTRYPOINT` (validada, `entrypointOf`).
  * @param {unknown} payload
  * @param {boolean} truncated
  * @param {{ sentAt: number, env: Record<string, string|undefined> }} options
@@ -374,7 +440,7 @@ function envelopeOf(payload, truncated, { sentAt, env }) {
     v: 1,
     sentAt,
     forwarder: FORWARDER_VERSION,
-    env: { projectDir: typeof projectDir === 'string' && projectDir !== '' ? projectDir : null, entrypoint: null },
+    env: { projectDir: typeof projectDir === 'string' && projectDir !== '' ? projectDir : null, entrypoint: entrypointOf(env) },
     truncated,
     payload,
   };
@@ -386,6 +452,7 @@ function envelopeOf(payload, truncated, { sentAt, env }) {
  * @param {{ sentAt: number, env: Record<string, string|undefined> }} options
  */
 export function buildEnvelope(payload, options) {
+  applyClientPreamble(payload);
   const { value, truncated } = truncateStrings(payload);
   return envelopeOf(value, truncated, options);
 }
@@ -410,6 +477,10 @@ export function buildEnvelope(payload, options) {
  *
  * Atalho: com `inputBytes` (tamanho do stdin) acima de 8 MiB, sai direto o
  * envelope de emergência, sem passar pelos passos.
+ *
+ * Antes de tudo, o preâmbulo do cliente sai do `prompt` do UserPromptSubmit
+ * (`applyClientPreamble`, captura 0.1.3), para o corte e a redução valerem só
+ * para o texto do usuário. Custo limitado: procura só nas primeiras 64 Ki unidades.
  * @param {{ sentAt: number, env: Record<string, string|undefined>, maxBytes?: number, now?: () => number, budgetMs?: number, inputBytes?: number }} options
  * @returns {string|null}
  */
@@ -417,6 +488,7 @@ export function buildBody(
   payload,
   { sentAt, env, maxBytes = MAX_BODY_BYTES, now = elapsedSinceStart, budgetMs = REDUCTION_BUDGET_MS, inputBytes = 0 },
 ) {
+  applyClientPreamble(payload);
   const fits = (/** @type {string} */ body) => Buffer.byteLength(body, 'utf8') <= maxBytes;
   const emergency = () => {
     const body = JSON.stringify(envelopeOf(emergencyPayload(payload), true, { sentAt, env }));

@@ -454,7 +454,7 @@ describe('fato de cada hook (seção 2)', () => {
 
 describe('itens a confirmar no T0 (leitura defensiva)', () => {
   it('V7: origem do pedido pela marca do sistema no início', () => {
-    assert.deepEqual(SYSTEM_PROMPT_TAGS, ['task-notification']);
+    assert.deepEqual(SYSTEM_PROMPT_TAGS, ['task-notification', 'agent-message']);
     assert.equal(promptOrigin('<task-notification>\n<task-id>x</task-id>\n</task-notification>'), 'system');
     assert.equal(promptOrigin('  \n<task-notification> x'), 'system');
     assert.equal(promptOrigin('Implementar a ingestão'), 'user');
@@ -493,6 +493,91 @@ describe('título do pedido', () => {
     assert.equal(promptTitle('/review src/a.js com token=abc'), '/review');
     assert.equal(promptTitle('\n\n  Olá  \nmundo'), 'Olá');
     assert.equal(promptTitle('   '), null);
+  });
+});
+
+// Vetores sintéticos no formato observado no T0 (docs/pesquisa/validacao-captura.md,
+// V7): a sanitização trocou os textos dos cenários reais por marcadores, então o
+// formato é remontado aqui (ADR 0010, complemento de 26/10/2026).
+describe('G0b, V7: marcas de retorno e preâmbulo do VS Code (seções 2 e 6)', () => {
+  /** Bloco `<browser_instruction>` de cerca de 4,1 mil caracteres, como o do VS Code. */
+  const BLOCK = `<browser_instruction>\n${'Instrução da extensão sobre o navegador. '.repeat(100).slice(0, 4100)}\n</browser_instruction>`;
+  /** Corte do passo 1 do encaminhador 0.1.2 (1 KiB + 3 KiB) num prompt acima de 4 KiB. */
+  const cut012 = (text) => (text.length > 4096 ? cutString(text) : text);
+
+  it('retornos do sistema: <task-notification> e <agent-message>, com ou sem espaços antes', () => {
+    for (const prompt of [
+      '<task-notification>\n<task-id>a1b2c3</task-id>\n<status>completed</status>\n</task-notification>',
+      '<agent-message from="a1b2c3">\nO revisor terminou.\n</agent-message>',
+      '<agent-message>texto</agent-message>',
+      '   <task-notification> x',
+      '\n\n<agent-message from="a1b2c3">x</agent-message>',
+      ' \t\r\n<agent-message\nfrom="a1b2c3">x</agent-message>',
+    ]) {
+      assert.equal(promptOrigin(prompt), 'system', JSON.stringify(prompt));
+      assert.equal(run('UserPromptSubmit', { prompt }).origin, 'system', JSON.stringify(prompt));
+    }
+  });
+
+  it('outros nomes, preâmbulo, texto comum: user; não texto: null', () => {
+    for (const prompt of [
+      '<agent-messages>x</agent-messages>',
+      '<task-notifications>x</task-notifications>',
+      '<agent-message-x>',
+      `${BLOCK}\n\nRode X`,
+      '<browser_instruction>…</browser_instruction>\n\nRode X',
+      'Rode os testes',
+      'olhe <agent-message> no meio',
+    ]) {
+      assert.equal(promptOrigin(prompt), 'user', JSON.stringify(prompt.slice(0, 40)));
+    }
+    for (const value of [undefined, null, 42, {}, ['<agent-message>']]) assert.equal(promptOrigin(value), null, String(value));
+  });
+
+  it('título ignora o bloco: bloco + "\\n\\nLeia o CLAUDE.md"', () => {
+    const prompt = `${BLOCK}\n\nLeia o CLAUDE.md`;
+    assert.equal(promptTitle(prompt), 'Leia o CLAUDE.md');
+    const fact = run('UserPromptSubmit', { prompt });
+    assert.equal(fact.title, 'Leia o CLAUDE.md');
+    assert.equal(fact.origin, 'user');
+    assert.equal(promptTitle('<browser_instruction attr="1">x</browser_instruction>Pedido'), 'Pedido');
+    assert.equal(promptTitle('  \n<browser_instruction>x</browser_instruction>\n\n  Pedido\noutra'), 'Pedido');
+  });
+
+  it('depois do corte real do encaminhador 0.1.2 (bloco de 4 100 + pedido curto), o título é o pedido', () => {
+    const prompt = cut012(`${BLOCK}\n\nLeia o CLAUDE.md`);
+    assert.ok(prompt.includes('…[cortado '), 'o vetor passa pelo corte');
+    assert.ok(prompt.startsWith('<browser_instruction>'));
+    assert.equal(promptTitle(prompt), 'Leia o CLAUDE.md');
+  });
+
+  it('bloco + pedido de 5 000 caracteres cortado (sem a tag de fechamento): título null', () => {
+    const prompt = cut012(`${BLOCK}\n\n${'Pedido longo do usuário. '.repeat(200)}`);
+    assert.ok(!prompt.includes('</browser_instruction>'), 'o corte engoliu o fechamento');
+    assert.equal(promptTitle(prompt), null);
+    const fact = run('UserPromptSubmit', { prompt });
+    assert.equal(fact.title, null);
+    assert.equal(fact.origin, 'user');
+    assert.equal(promptTitle('<browser_instruction>sem fechamento'), null);
+  });
+
+  it('bloco + /comando: só o comando', () => {
+    assert.equal(promptTitle(`${BLOCK}\n\n/review src/a.js`), '/review');
+  });
+
+  it('segredo no pedido depois do bloco sai redigido', () => {
+    const token = `ghp_${'Zq7Wx'.repeat(8)}`;
+    const title = promptTitle(`${BLOCK}\n\nUse o token ${token} no deploy`);
+    assert.ok(title.startsWith('Use o token '), title);
+    assert.ok(!title.includes(token.slice(4, 14)), title);
+    assert.ok(title.includes('•••'), title);
+  });
+
+  it('o título sai depois do último fechamento; outros nomes e tag no meio não mudam nada', () => {
+    assert.equal(promptTitle('<browser_instruction>a</browser_instruction>b</browser_instruction>\nPedido'), 'Pedido');
+    assert.equal(promptTitle('<browser_instructions>x</browser_instructions> Pedido'), '<browser_instructions>x</browser_instructions> Pedido');
+    assert.equal(promptTitle('Pedido <browser_instruction>x</browser_instruction> fim'), 'Pedido <browser_instruction>x</browser_instruction> fim');
+    assert.equal(promptTitle('<browser_instruction>x</browser_instruction>   \n  '), null);
   });
 });
 

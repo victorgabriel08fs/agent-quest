@@ -21,6 +21,7 @@ import {
   agentQuestHomeWarning,
   checkHooks,
   deployCapture,
+  readCaptureVersion,
   runDeploy,
   validateCapture,
 } from '../../../scripts/deploy-capture.mjs';
@@ -221,6 +222,17 @@ describe('runDeploy (npm run capture:deploy)', () => {
     }
   });
 
+  it('imprime a versão copiada, lida do plugin.json da cópia (captura 0.1.3)', async () => {
+    const home = newDir();
+    const io = quiet();
+    assert.equal(await runDeploy({ env: { AGENT_QUEST_HOME: home }, platform: process.platform, homedir: home, ...io }), 0);
+    const version = readJson(path.join(SOURCE_DIR, PLUGIN_FILE)).version;
+    assert.equal(version, '0.1.3');
+    assert.ok(io.out.includes(`  Versão da captura: ${version}`), io.out.join('\n'));
+    assert.equal(await readCaptureVersion(path.join(home, 'marketplace')), version);
+    assert.equal(await readCaptureVersion(newDir()), 'desconhecida', 'sem plugin.json');
+  });
+
   it('rodar duas vezes dá o mesmo resultado', async () => {
     const home = newDir();
     const env = { AGENT_QUEST_HOME: home };
@@ -339,6 +351,7 @@ describe('script de deploy pela linha de comando', () => {
     const result = spawnSync(process.execPath, [SCRIPT], { cwd: REPO, env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
     assert.match(result.stdout, /Captura copiada para/);
+    assert.match(result.stdout, /Versão da captura: \d+\.\d+\.\d+/);
     assert.ok(result.stdout.includes(path.join(home, 'marketplace')), result.stdout);
     assert.equal(existsSync(path.join(home, 'marketplace', FORWARDER_FILE)), true);
     assert.equal(existsSync(marker), false, 'o script chamou o claude');

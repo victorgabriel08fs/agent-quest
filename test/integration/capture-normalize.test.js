@@ -102,14 +102,14 @@ describe('T5 integração: envelope real do encaminhador → normalize()', () =>
    * normalizador sobre o envelope completo: o teste tenta de novo e, se só
    * vierem envelopes reduzidos, pula com as medidas (o pulo impede a aprovação).
    */
-  async function deliver(t, label, fields) {
+  async function deliver(t, label, fields, extraEnv = {}) {
     const reduced = [];
     for (let round = 0; round < 3; round++) {
       let sentKeys = [];
       const envelope = await assertDelivered(t, label, async () => {
         const payload = hookPayload(fields);
         sentKeys = Object.keys(payload);
-        const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home, CLAUDE_PROJECT_DIR: PROJECT }), stdin: JSON.stringify(payload) });
+        const result = await runForwarder({ env: forwarderEnv({ AGENT_QUEST_HOME: home, CLAUDE_PROJECT_DIR: PROJECT, ...extraEnv }), stdin: JSON.stringify(payload) });
         return { result, delivered: () => server.dumped().find((e) => e.payload.tool_use_id === payload.tool_use_id) };
       });
       if (!envelope) return null;
@@ -140,6 +140,46 @@ describe('T5 integração: envelope real do encaminhador → normalize()', () =>
       assertSection10(fact, hook);
     });
   }
+
+  // Captura 0.1.3 (plano, T4): env.entrypoint vira o `client` do fato (V11).
+  for (const [entrypoint, client] of [['cli', 'terminal'], ['claude-vscode', 'vscode']]) {
+    it(`0.1.3: CLAUDE_CODE_ENTRYPOINT=${entrypoint} chega como env.entrypoint, e o fato tem client '${client}'`, async (t) => {
+      const envelope = await deliver(t, `entrypoint ${entrypoint}`, { hook_event_name: 'PreToolUse' }, { CLAUDE_CODE_ENTRYPOINT: entrypoint });
+      if (!envelope) return;
+      assert.equal(envelope.env.entrypoint, entrypoint);
+      const fact = normalize(envelope, { receivedAt: Date.now(), homeDir: HOME });
+      assert.equal(fact.client, client);
+    });
+  }
+
+  it('0.1.3: sem CLAUDE_CODE_ENTRYPOINT, env.entrypoint é null e o fato tem client null', async (t) => {
+    const envelope = await deliver(t, 'sem entrypoint', { hook_event_name: 'PreToolUse' });
+    if (!envelope) return;
+    assert.equal(envelope.env.entrypoint, null);
+    assert.equal(normalize(envelope, { receivedAt: Date.now(), homeDir: HOME }).client, null);
+  });
+
+  it('0.1.3: pedido do VS Code com <browser_instruction> chega sem o bloco; título do pedido, origem user', async (t) => {
+    // Formato observado no T0 (V7), remontado: bloco de cerca de 4,1 mil caracteres + "\n\n" + pedido.
+    const block = `<browser_instruction>\n${'Instrução da extensão sobre o navegador. '.repeat(100)}\n</browser_instruction>`;
+    const request = `Revise o README ${'e confira os links '.repeat(250)}`;
+    const envelope = await deliver(
+      t,
+      'preâmbulo do VS Code',
+      { hook_event_name: 'UserPromptSubmit', prompt: `${block}\n\n${request}` },
+      { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' },
+    );
+    if (!envelope) return;
+    assert.ok(envelope.payload.prompt.startsWith('Revise o README'), 'o começo do pedido sobrevive ao corte');
+    assert.doesNotMatch(envelope.payload.prompt, /browser_instruction/);
+    assert.equal(envelope.truncated, true, 'o pedido de 4,7 mil caracteres ainda passa pelo corte de 1 KiB + 3 KiB');
+    const fact = normalize(envelope, { receivedAt: Date.now(), homeDir: HOME });
+    assert.equal(fact.kind, 'prompt.submit');
+    assert.equal(fact.client, 'vscode');
+    assert.equal(fact.origin, 'user');
+    assert.ok(fact.title.startsWith('Revise o README'), fact.title);
+    assertSection10(fact, 'preâmbulo do VS Code');
+  });
 
   it('evento fora dos 15 é aceito pela ingestão e vira null no normalizador', async (t) => {
     const envelope = await deliver(t, 'PostToolBatch', { hook_event_name: 'PostToolBatch', tool_calls: [] });

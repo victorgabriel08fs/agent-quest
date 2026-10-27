@@ -136,6 +136,22 @@ export async function validateCapture(dir) {
 }
 
 /**
+ * Versão da captura numa pasta, lida do plugin.json (igual à do marketplace.json
+ * e do encaminhador; `validateCapture` e um teste conferem). Impressa no deploy,
+ * para o usuário saber qual versão copiou.
+ * @param {string} dir
+ * @returns {Promise<string>}
+ */
+export async function readCaptureVersion(dir) {
+  try {
+    const plugin = JSON.parse(await readFile(path.join(dir, PLUGIN_FILE), 'utf8'));
+    return typeof plugin?.version === 'string' && plugin.version !== '' ? plugin.version : 'desconhecida';
+  } catch {
+    return 'desconhecida';
+  }
+}
+
+/**
  * Regras do hooks.json (T4): exatamente os 15 eventos, cada um com um único
  * hook igual a `EXPECTED_HOOK` e sem `matcher`.
  * @param {any} data
@@ -288,6 +304,7 @@ export async function runDeploy({ env, platform, homedir, sourceDir = SOURCE_DIR
   const count = (/** @type {DeployStep['op']} */ op) => steps.filter((step) => step.op === op).length;
   log(`Captura copiada para ${targetDir}`);
   log(`  ${count('write')} arquivo(s) gravado(s), ${count('unchanged')} sem mudança, ${count('remove')} removido(s).`);
+  log(`  Versão da captura: ${await readCaptureVersion(targetDir)}`);
   // ADR 0005, complemento: o encaminhador resolve o diretório com o ambiente do Claude Code.
   if (env.AGENT_QUEST_HOME) log(agentQuestHomeWarning(dataDir));
   if (isInsideOneDrive(dataDir, { env, platform })) log(oneDriveWarning(dataDir));

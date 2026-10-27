@@ -101,8 +101,9 @@ describe('T4 integração: matriz de falhas do encaminhador (servidor real do T3
   it('caso normal: o servidor real aceita o envelope v1 correto, em até 300 ms', async (t) => {
     const projectDir = 'C:\\Users\\usuario\\Projetos\\ação com espaço & (1)';
     // Variáveis que o encaminhador NUNCA pode mandar (modelo de eventos, seção 1).
+    // Desde a captura 0.1.3, só CLAUDE_CODE_ENTRYPOINT vai, validada, em env.entrypoint.
+    const entrypoint = { CLAUDE_CODE_ENTRYPOINT: 'cli' };
     const decoys = {
-      CLAUDE_CODE_ENTRYPOINT: 'cli',
       TERM_PROGRAM: 'vscode',
       ANTHROPIC_API_KEY: 'sk-ant-api03-ISCA-NAO-PODE-SAIR-0000000000',
       AWS_SECRET_ACCESS_KEY: 'ISCA/aws/segredo/0000000000',
@@ -119,7 +120,7 @@ describe('T4 integração: matriz de falhas do encaminhador (servidor real do T3
           tool_input: { command: 'npm test', description: 'Roda os testes ✓ 😀 ação' },
           nested: { list: [1, 'dois', { tres: null, quatro: true }], empty: {}, arr: [] },
         });
-        const result = await runForwarder({ env: envFor(home, { CLAUDE_PROJECT_DIR: projectDir, ...decoys }), stdin: JSON.stringify(payload) });
+        const result = await runForwarder({ env: envFor(home, { CLAUDE_PROJECT_DIR: projectDir, ...entrypoint, ...decoys }), stdin: JSON.stringify(payload) });
         sent.push({ payload, result });
         return result;
       },
@@ -142,7 +143,7 @@ describe('T4 integração: matriz de falhas do encaminhador (servidor real do T3
     assert.deepEqual(Object.keys(envelope.env).sort(), ['entrypoint', 'projectDir']);
     assert.equal(envelope.v, 1);
     assert.equal(envelope.forwarder, PLUGIN_VERSION);
-    assert.deepEqual(envelope.env, { projectDir, entrypoint: null });
+    assert.deepEqual(envelope.env, { projectDir, entrypoint: 'cli' });
     assert.equal(envelope.truncated, false);
     assert.deepEqual(envelope.payload, last);
     assert.equal(typeof envelope.sentAt, 'number');
