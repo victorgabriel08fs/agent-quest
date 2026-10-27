@@ -74,3 +74,19 @@ O item 4 da decisão ("se encerra sozinho em no máximo 2 s") passa a ser lido a
 - um atalho: com stdin acima de 8 MiB, vai direto ao envelope de emergência. Motivo: o `JSON.parse` e a listagem das chaves de um objeto não podem ser interrompidos, e somados passam de 2 s no extremo de 16 MiB.
 
 Detalhes na seção 1 do modelo de eventos, "Orçamento de tempo da redução". O Claude Code nunca espera nenhum desses casos, porque o hook é assíncrono. O que está em jogo é CPU e a perda do evento, não o bloqueio do agente.
+
+## Complemento de 26/10/2026: resultado do T0 (V10) e captura 0.1.3
+
+Revisão do G0b com a sessão de teste do T0 (`docs/pesquisa/validacao-captura.md`; Claude Code 2.1.310, terminal e VS Code). A decisão continua a mesma.
+
+- **V10 confirmado.** As 298 execuções da sonda registradas no log foram para segundo plano. Nenhuma foi síncrona, nenhum `hook error` apareceu, e o usuário não viu janela piscando nem aviso, no terminal e no VS Code. O log usa dois formatos, e a prova de que não bloqueia passa a aceitar os dois:
+  - "`Hooks: <Evento>` [...] moved to the background (N ms)", na maioria dos eventos;
+  - "`<Evento>:<matcher>` [...] completed with status 0", no mesmo milissegundo de "Config-based async hook, backgrounding process", em Notification, SessionEnd, PreCompact, PostCompact e StopFailure.
+- **Correção da consequência "o custo é só iniciar o processo, fora do caminho do agente".** Parte desse custo fica no caminho do Claude Code. Pelo formato do log, que não é documentado, o "(N ms)" parece ser o tempo entre o disparo do hook e a passagem dele para segundo plano. Nas 264 linhas da sessão: mediana de 39 ms, p95 de 878 ms, máximo de 3 448 ms. O script só começou a rodar depois disso, então o Claude Code espera a criação do processo, não o encaminhador. A decisão se mantém, porque a alternativa (`http`) gera aviso visível com o servidor desligado. **Validação:** no passo 3 do marco "Primeira luz", o usuário anota o maior N com o `forward.mjs`. Se o p95 passar de 500 ms com a máquina calma, ou se ele sentir lentidão, a alternativa registrada nas consequências (`http` só em Pre/PostToolUse) volta para decisão dele.
+- **Eventos finais na saída do modo interativo também podem se perder.** 1 de 3 SessionEnd foi para segundo plano mas não gravou o evento, porque o Claude Code saiu antes. Antes, isso só estava previsto para `claude -p`. O servidor cobre o caso pelas regras de inatividade (`visao-geral.md`, "Limpeza").
+- **Captura 0.1.3** (decisões 13 e 16 do usuário, 26/10/2026; detalhes na seção 1 do modelo de eventos). São duas mudanças compatíveis, num só deploy:
+  1. **Preâmbulo do cliente.** No UserPromptSubmit, se o `prompt` começa com o bloco `<browser_instruction>…</browser_instruction>` que a extensão do VS Code injeta, o encaminhador tira o bloco antes de qualquer corte. É a única exceção à regra "o encaminhador não sabe o que o normalizador usa". Justificativa:
+     - minimização: são cerca de 4 mil caracteres que não são do usuário;
+     - com o corte de 1 KiB + 3 KiB, um pedido do usuário com mais de cerca de 3 mil caracteres perdia o começo, de onde sai o título.
+  2. **`env.entrypoint`** passa a levar o valor de `CLAUDE_CODE_ENTRYPOINT` (V11: `cli` no terminal, `claude-vscode` na extensão), validado contra `^[A-Za-z0-9_.-]{1,64}$`. Fora disso, vai `null`.
+- **Limites do encaminhador mantidos** (decisão 14). O maior payload real teve 10,6 KB. Ficam o corte de 4 096 unidades, o teto de 1 000 000 bytes e o atalho de 8 MiB, com a perda aceita nos dois casos patológicos da captura 0.1.2: passo 1 sem orçamento e CPU a 100% logo abaixo de 8 MiB.

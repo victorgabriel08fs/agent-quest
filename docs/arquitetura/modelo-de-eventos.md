@@ -1,7 +1,7 @@
 # Modelo de eventos
 
-> **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026. **Base:** Claude Code 2.1.301.
-> Contrato entre a captura, o servidor e o painel na v1. Itens marcados **[T0]** dependem da validação prática da primeira tarefa do plano (`docs/plano/v1.md`). Decisões relacionadas: ADRs 0001, 0005, 0007 e 0008.
+> **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026. **Base:** Claude Code 2.1.301. **Revisto no G0b** (26/10/2026) com a sessão de teste do T0, na 2.1.310 (`docs/pesquisa/validacao-captura.md`).
+> Contrato entre a captura, o servidor e o painel na v1. Itens marcados **[T0]** dependiam da validação prática da primeira tarefa do plano (`docs/plano/v1.md`); o resultado de cada um está na seção 11. Decisões relacionadas: ADRs 0001, 0005, 0007 e 0008.
 > Nos exemplos, `<repo>` é o caminho absoluto do repositório (no ambiente de referência, uma pasta dentro do OneDrive) e `<agent-id>` é um `agent_id` real qualquer.
 
 ## Camadas
@@ -31,7 +31,46 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 ```
 
 - `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos. Se o `sentAt` estiver a mais de 5 min da hora de chegada, para mais ou para menos, o normalizador usa a hora de chegada. Assim, um relógio errado ou um `sentAt` forjado não mantém a sessão viva além da limpeza (observação 5 do tester do T7; entra no T6).
-- `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: valor de uma variável que diga se a sessão é do terminal ou do VS Code, se o T0 encontrar uma **[T0]**; senão `null`. A candidata é `CLAUDE_CODE_ENTRYPOINT`, que a sonda do T0 registra junto com `TERM_PROGRAM` (V11). O encaminhador nunca manda outras variáveis de ambiente.
+- `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). `env.entrypoint`: o valor de `CLAUDE_CODE_ENTRYPOINT` (confirmado no T0, V11: `cli` no terminal, `claude-vscode` na extensão), a partir da captura 0.1.3. Valor fora de `^[A-Za-z0-9_.-]{1,64}# Modelo de eventos
+
+> **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026. **Base:** Claude Code 2.1.301. **Revisto no G0b** (26/10/2026) com a sessão de teste do T0, na 2.1.310 (`docs/pesquisa/validacao-captura.md`).
+> Contrato entre a captura, o servidor e o painel na v1. Itens marcados **[T0]** dependiam da validação prática da primeira tarefa do plano (`docs/plano/v1.md`); o resultado de cada um está na seção 11. Decisões relacionadas: ADRs 0001, 0005, 0007 e 0008.
+> Nos exemplos, `<repo>` é o caminho absoluto do repositório (no ambiente de referência, uma pasta dentro do OneDrive) e `<agent-id>` é um `agent_id` real qualquer.
+
+## Camadas
+
+| Camada | Quem produz | Onde está definida | Quem depende dela |
+|---|---|---|---|
+| Payload do hook | Claude Code | https://code.claude.com/docs/en/hooks | encaminhador |
+| Envelope v1 | `forward.mjs` | seção 1 | ingestão do servidor |
+| Fato | normalizador (`server/domain/normalize.js`) | seção 2 (interno do servidor) | reducer de estado |
+| Evento canônico e estado da sessão | reducer (`server/domain/state/`) | seções 3, 6 e 9 | painel e temas |
+
+Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos canônicos ou no estado da sessão é mudança de contrato e precisa da aprovação do usuário.
+
+## 1. Envelope v1 (encaminhador → servidor)
+
+`POST http://127.0.0.1:<porta>/hooks` com `Content-Type: application/json` e `X-Agent-Quest-Token: <token>`, sem `Origin`.
+
+```json
+{
+  "v": 1,
+  "sentAt": 1760731234567,
+  "forwarder": "0.1.0",
+  "env": { "projectDir": "<repo>", "entrypoint": null },
+  "truncated": false,
+  "payload": { "hook_event_name": "PreToolUse", "session_id": "…", "tool_name": "Read", "…": "…" }
+}
+```
+
+- `sentAt`: `Date.now()` no início do encaminhador. Vira o `ts` dos eventos. Se o `sentAt` estiver a mais de 5 min da hora de chegada, para mais ou para menos, o normalizador usa a hora de chegada. Assim, um relógio errado ou um `sentAt` forjado não mantém a sessão viva além da limpeza (observação 5 do tester do T7; entra no T6).
+- `env.projectDir`: `CLAUDE_PROJECT_DIR` do processo do hook (a documentação de plugins garante que é exportado). , ou ausente, vai `null`. Até a 0.1.2, ia sempre `null`. O encaminhador nunca manda outras variáveis de ambiente.
+- **Preâmbulo do cliente** (captura 0.1.3, decisão 13 do usuário, 26/10/2026). Antes de qualquer corte ou redução, e só no UserPromptSubmit com `prompt` de texto:
+  - se o `prompt`, depois de espaços iniciais, começa com `<browser_instruction>` ou `<browser_instruction ` (o bloco que a extensão do VS Code põe antes do texto do usuário no primeiro pedido da conversa), o encaminhador procura o primeiro `</browser_instruction>` nas primeiras 65 536 unidades;
+  - se achar, tira tudo do começo até o fim dessa tag e os espaços seguintes. Se não achar, o `prompt` fica como está;
+  - não marca `truncated`, porque não é corte. O resto do payload não muda, e nenhum outro texto é tocado.
+
+  Motivo: são cerca de 4 mil caracteres que não são do usuário (minimização), e com o corte de 1 KiB + 3 KiB um pedido do usuário com mais de cerca de 3 mil caracteres perdia o começo, de onde sai o título. A lista de tags tratadas é uma constante do encaminhador (`CLIENT_PREAMBLE_TAGS = ["browser_instruction"]`); acrescentar outra é mudança da captura.
 - `payload`: o JSON do hook, com toda string acima de 4 KiB cortada em 1 KiB do início + 3 KiB do fim, separados por `…[cortado N caracteres]…`. O fim é preservado porque o resumo dos testes fica no fim da saída. `truncated` diz se algo foi cortado. O formato exato do marcador faz parte deste contrato: o normalizador o reconhece por `…\[cortado \d+ caracteres\]…` e descarta as palavras partidas encostadas nele (seção 2, "Marcador de corte do encaminhador"). Mudar o marcador exige mudar os dois lados.
 - **Unidades no encaminhador** (definidas em 18/10/2026):
   - os cortes de string contam **unidades UTF-16** (`String.length`): "4 KiB" quer dizer 4096 unidades, e o `N` do marcador também conta unidades;
@@ -65,9 +104,9 @@ Mudança no formato dos hooks afeta só o normalizador. Mudança em eventos can�
 
     Somadas, as duas etapas passam de 2 s no extremo;
   - **atalho por tamanho** (decidido em 18/10/2026): com stdin acima de 8 MiB, o encaminhador vai direto ao envelope de emergência depois do `JSON.parse`, sem listar chaves. Os obrigatórios e os prioritários são lidos por acesso direto (`payload.session_id` e afins), que não depende do número de chaves. Até 8 MiB, os três passos rodam com o orçamento de 1 s. Pelas medidas, 8 MiB dá cerca de 0,9 s de `JSON.parse` mais uma listagem de cerca de 0,4 s, ainda dentro do prazo;
-  - custo aceito do atalho: acima de 8 MiB, o envelope não leva `tool_response`. Um comando de teste com saída gigante perde o resultado do teste. O limite é provisório: o G0b o revisa com os tamanhos reais de payload medidos no T0 (V14).
+  - custo aceito do atalho: acima de 8 MiB, o envelope não leva `tool_response`. Um comando de teste com saída gigante perde o resultado do teste. Revisto no G0b: o limite fica (decisão 14). O maior payload real do T0 teve 10,6 KB (V14).
 
-  Na v1, por isso, "até 2 s" vale salvo payloads patológicos com centenas de milhares de chaves. Numa máquina calma, a exceção aparece perto dos 16 MiB. **Sob carga, aparece abaixo de 8 MiB**: com a CPU a 100%, um stdin logo abaixo de 8 MiB com cerca de 930 mil chaves levou de 2,2 a 5,9 s e não foi enviado. Nesse caso o evento se perde em silêncio, sem afetar o Claude Code. Duas observações não bloqueantes da 0.1.2 ficaram para o G0b (plano): o passo 1 sem orçamento e o limite de 8 MiB calibrado com a máquina calma.
+  Na v1, por isso, "até 2 s" vale salvo payloads patológicos com centenas de milhares de chaves. Numa máquina calma, a exceção aparece perto dos 16 MiB. **Sob carga, aparece abaixo de 8 MiB**: com a CPU a 100%, um stdin logo abaixo de 8 MiB com cerca de 930 mil chaves levou de 2,2 a 5,9 s e não foi enviado. Nesse caso o evento se perde em silêncio, sem afetar o Claude Code. As duas observações não bloqueantes da 0.1.2 (o passo 1 sem orçamento e o limite de 8 MiB calibrado com a máquina calma) foram decididas no G0b: a perda nesses casos patológicos é aceita, sem mudança no encaminhador (decisão 14).
 
   Em qualquer passo além do primeiro, `truncated` é `true`. O encaminhador continua sem saber o que o normalizador usa: os passos são genéricos. Perda aceita no passo 3: um Stop gigante perde `background_tasks`, e o reducer trata como Stop sem tarefas.
 - Respostas: 204 aceito; 400 envelope inválido; 401 token ausente ou errado; 403 `Host` ou `Origin` inválido; 405 método diferente de `POST`; 413 acima de 1 MiB; 415 tipo de conteúdo errado. O encaminhador ignora todas.
@@ -128,6 +167,10 @@ Campos comuns: `hook`, `sessionId`, `agentId` (ou `null`), `agentType` (exibido,
 - **Valores fora da lista** viram `null`. Valem para `source`, `reason`, `trigger`, `notification_type` e o `status` do `Agent`. Notification de outro tipo gera o fato `notice` com `type: null`, não um fato `null`. `agent_type` vazio vira `null`, mas o evento continua: o tipo é opcional, e só o `agent_id` identifica a instância.
 - **`origin` do pedido:** `null` quando o `prompt` não é texto. O reducer (T8) trata `null` como pedido do usuário.
 - **Título de pedido que começa com `/`:** só o comando (`/review`, sem os argumentos).
+- **Título com preâmbulo do VS Code** (G0b, 26/10/2026): para envelopes de capturas anteriores à 0.1.3, o normalizador repete a regra do preâmbulo da seção 1 antes de tomar o título.
+  - Se o pedido começa com `<browser_instruction`, o título sai do texto depois do último `</browser_instruction>`.
+  - Sem essa tag no texto recebido (o corte do encaminhador a engoliu), o título é `null`.
+  - O `origin` continua `user`: é pedido do usuário.
 - **Limites sem número na tabela da seção 10** (todos contados com `charLength`):
   - caminho exibido (`target` de arquivo): até 200, cortado com `redactAndCut`;
   - nomes (skill, tipo de agente, modelo, nome de ferramenta, alvo MCP, campos de `background_tasks`): até 80;
@@ -220,13 +263,14 @@ O normalizador gera o fato; o reducer aplica as regras da seção 6 e emite os e
 | PermissionDenied | — | `permission.resolved(denied, auto)`, mesmo sem pedido pendente. A chamada negada termina: a atividade vai para `failed`, sem `tool.failed` e sem contar na saúde, e um PostToolUseFailure posterior da mesma chamada é ignorado (T8) |
 | Notification | `permission_prompt` | `permission.requested` só se não houver pedido pendente na sessão |
 | Notification | `idle_prompt` | `quest.finished(interrupted)` só se o ticket estava `open` (não em `waiting_background`). Compensa um Stop perdido: `main` fica `idle`, os agentes em primeiro plano são liberados e as aprovações pendentes do `main` viram `unknown`. `session.idle` sai sempre, menos em sessão `ended` (T8) |
-| SubagentStart | `agent_type` não vazio | `agent.started`; nada se o agente já existe (retomada ou criado antes sob demanda) |
+| SubagentStart | `agent_type` não vazio | `agent.started`; nada se o agente já existe e não está encerrado (criado antes sob demanda). **Retomada** (V6, G0b): agente conhecido, encerrado por SubagentStop e com `ts` deste fato maior que o do encerramento volta a `working` com `finished: false` e emite `agent.started` de novo; com `ts` menor ou igual, é atraso e não muda nada |
 | (estado) | primeiro evento de um `agent_id` desconhecido (ferramenta, ou SubagentStop com tipo) | `agent.started` para o agente criado sob demanda (T7, ponto 2). No SubagentStop de desconhecido com tipo, sai `agent.started` e logo `agent.finished` |
 | SubagentStop | agente conhecido ou `agent_type` não vazio | `agent.finished`; `quest.phase(done)` se era o último agente do papel em execução |
-| Stop ou StopFailure | sempre | `main` fica `idle`. Subagentes em primeiro plano ainda marcados como trabalhando recebem `agent.finished(unknown)`, em todo Stop: um subagente em primeiro plano bloqueia o turno, então não pode estar rodando quando o Stop chega. Os de segundo plano seguem (T7, ponto 5) |
+| Stop ou StopFailure | da sessão principal (sem `agent_id`) | `main` fica `idle`. Subagentes em primeiro plano ainda marcados como trabalhando recebem `agent.finished(unknown)`, em todo Stop: um subagente em primeiro plano bloqueia o turno, então não pode estar rodando quando o Stop chega. Os de segundo plano seguem (T7, ponto 5) |
 | Stop | sem tarefa em segundo plano rodando | `quest.finished(done)` (T8) |
 | Stop | com tarefa em segundo plano rodando | ticket passa a `waiting_background`, sem evento (T8) |
-| StopFailure | — | `quest.finished(failed)` com o tipo de erro (T8) |
+| StopFailure | da sessão principal | `quest.finished(failed)` com o tipo de erro (T8) |
+| StopFailure | de subagente (com `agent_id`; visto no T0 com `rate_limit`) | nada: não mexe no `main`, no ticket nem no agente, que pode ser retomado. Se não for, a regra dos 15 min o encerra (G0b) |
 | PreCompact | — | atividade do agente vira "compactando", sem evento |
 | PostCompact | — | `context.compacted` |
 | (estado) | atividade sem ticket aberto | `quest.started(implicit)` |
@@ -250,6 +294,8 @@ Decisão em ADR 0007. Regras operacionais:
 
      A instância recebe `label` igual à `description` e `parentKey` igual a quem delegou. Isso chega no estado do `update` que leva o `agent.delegated` desse mesmo Pre; não há `update` separado, nem tipo de evento novo (confirmado em 19/10/2026). O `agent.started` já emitido não se repete nem muda, porque o estado da instância é que carrega o rótulo. Sem instância elegível, a delegação fica pendente, como no passo 1;
   3. `tool.post` de `Agent` com `linkedAgentId`: se o elo provisório (passo 2 ou 2a) apontava para outro agente, troca as descrições e corrige `parentKey`. Para subagente em segundo plano (`launch: async_launched`), esse fato chega logo no início.
+
+  **Segundo plano é o padrão** (T0, ADR 0007, complemento de 26/10/2026). Nas sessões interativas atuais, toda delegação sai com `async_launched`, e `run_in_background` não aparece no `tool_input`. O primeiro plano (Post só no fim do subagente) continua previsto para `claude -p`, o Agent SDK e quem desliga o *fork mode*.
 - **Aninhados:** `from` é o `agentKey` de quem chamou `Agent`, seja a sessão principal ou outro subagente. O painel anima a delegação de quem delegou para quem recebeu.
 - **Agentes internos:** `subagent.stop` com `agentType` vazio e agente desconhecido é descartado.
 - **Várias instâncias do mesmo papel:** todas aparecem; o painel agrupa por papel. O rótulo de cada uma é a descrição da delegação; sem ela, o `agent_type`.
@@ -259,13 +305,20 @@ Decisão em ADR 0007. Regras operacionais:
 ### Ticket (quest)
 
 - **Começa** em `UserPromptSubmit` de origem do usuário. `questId` = `prompt_id`; `n` = contador da sessão; `title` = primeira linha do pedido (até 80 caracteres, redigida). Pedido que começa com `/` usa o comando como título.
-- **Origem do sistema.** A documentação diz que UserPromptSubmit também dispara para retorno de subagente em segundo plano, tarefa agendada, `/loop` e mensagem de outra sessão, sem campo que diferencie. Regra provisória: texto que começa com a marca que o Claude Code usa nessas notificações (formato **[T0]**). Pedido do sistema não abre ticket: reabre o ticket em `waiting_background` ou o último ticket encerrado há menos de 30 min; senão abre um implícito, "Retorno de tarefa em segundo plano".
+- **Origem do sistema.** A documentação diz que UserPromptSubmit também dispara para retorno de subagente em segundo plano, tarefa agendada, `/loop` e mensagem de outra sessão, sem campo que diferencie. Regra (confirmada no T0, V7; revista no G0b): é do sistema o texto que, depois de espaços iniciais, começa com uma das marcas `<task-notification` ou `<agent-message`, seguidas de espaço ou `>` (`SYSTEM_PROMPT_TAGS`).
+  - `<task-notification>` é o retorno no terminal.
+  - `<agent-message from="<agent_id>">` é o retorno na extensão do VS Code, e pode chegar antes do SubagentStop do mesmo agente.
+  - `<browser_instruction>` **não** é marca de sistema: é o preâmbulo de um pedido do usuário (seção 2). Pedido do sistema não abre ticket: reabre o ticket em `waiting_background` ou o último ticket encerrado há menos de 30 min; senão abre um implícito, "Retorno de tarefa em segundo plano".
 - **Termina:**
   - `Stop` sem tarefa em segundo plano rodando → `done`;
   - `Stop` com alguma tarefa de `background_tasks` ainda ativa → fica `waiting_background` até um próximo `Stop` sem tarefas;
   - `StopFailure` → `failed`, com o tipo de erro;
   - novo pedido do usuário com ticket aberto, `idle_prompt` ou `SessionEnd` → `interrupted`. O Claude Code não dispara Stop quando o usuário interrompe com Esc.
 - Fato com `promptId` de ticket já encerrado atualiza agentes e feed, mas não reabre o ticket. Fato sem `promptId` vai para o ticket aberto.
+- **`prompt_id` dos subagentes** (V8, G0b, 26/10/2026). O T0 mostrou que o subagente em segundo plano recebe o `prompt_id` **atual da sessão principal**, não o do pedido que o delegou: depois de um retorno, de um novo pedido ou de um comando local (`/compact`, `/clear`, saída), os eventos dele passam a trazer o `prompt_id` novo. Comandos locais também geram `prompt_id` sem UserPromptSubmit. Regras:
+  - a chave do ticket (`questKeyOf`) é o `promptId` só para fatos da sessão principal. Para fatos de subagente, ela é `null`: a atividade vai para o ticket aberto, ou em `waiting_background`, como um fato sem `promptId`;
+  - um `promptId` da sessão principal sem UserPromptSubmit (comando local) não abre ticket por si só. A atividade com ele segue as regras de sempre: vai para o ticket aberto ou, sem ticket aberto, abre um implícito;
+  - limitação aceita: um novo pedido do usuário fecha como `interrupted` o ticket em `waiting_background` (decidido em 19/10/2026). Daí em diante, o subagente que continua em segundo plano e o retorno dele contam no ticket novo. Com segundo plano por padrão, isso fica frequente. O desfecho continua o do contrato (`done`, `failed`, `interrupted`), sem valor novo.
 - **Stop atrasado** (A-T8-1, decidido em 20/10/2026). Um Stop (ou StopFailure) com `ts` menor que o `startedAt` do ticket aberto é do turno anterior: chegou depois do pedido seguinte por corrida entre processos. Isso é comum quando o usuário deixa a próxima mensagem na fila e o Claude Code a envia logo depois do Stop. Esse Stop não fecha o ticket aberto e não deixa o `main` `idle`.
 - **Desfecho do ticket anterior nesse caso: `done`.** Para não emitir dois `quest.finished`, um pedido novo do usuário não fecha o ticket aberto na hora: ele fica **em fechamento** por até 2 s (medidos pela hora de chegada), enquanto o ticket novo já começa (`quest.started`).
   - Se nesse intervalo chegar um Stop com `ts` entre o `startedAt` do ticket anterior e o do novo, sai `quest.finished(done)`, ou `failed` se for StopFailure.
@@ -285,7 +338,7 @@ Decisão em ADR 0007. Regras operacionais:
 ### Aguardando aprovação
 
 - `PermissionRequest` não traz `tool_use_id`. Atribuição, em ordem:
-  1. `agent_id` do próprio payload, se vier **[T0]**;
+  1. `agent_id` do próprio payload. Confirmado no T0 (V2): o PermissionRequest de subagente traz o `agent_id` (9 de 9, todos em segundo plano), e o da sessão principal não traz;
   2. a chamada pendente mais recente da sessão com o mesmo `tool_name` e o mesmo `inputHash` (o PreToolUse dispara antes da checagem de permissão);
   3. senão, `main`.
 - O agente fica `waiting`, com `waitingFor: { tool, category, target }`, e `pendingApprovals` da sessão aumenta.
@@ -293,6 +346,7 @@ Decisão em ADR 0007. Regras operacionais:
   - chegou PostToolUse ou PostToolUseFailure da chamada → `approved` (`by: user`);
   - `PermissionDenied` → `denied` (`by: auto`; só acontece no modo auto);
   - outra ação do mesmo agente, fim do agente, fim do turno ou novo pedido **do usuário** → `unknown` (`by: inferred`), exibido como "negado ou cancelado". "Outra ação" só resolve se o `ts` da chamada nova for maior ou igual ao do pedido. Pedido de origem do sistema não resolve aprovações. Aprovação de agente removido pelo limite de agentes vira `unknown`. A documentação confirma que uma permissão negada dispara o PreToolUse e nada depois, nem PostToolUseFailure.
+- O `Notification` `permission_prompt` nunca traz `agent_id`, nem quando o pedido é de subagente (V2, 0 de 8). Por isso ele serve só de reserva no nível da sessão. Ele chega segundos depois do PermissionRequest, então quase sempre já encontra o pedido pendente e não muda nada.
 - `Notification` do tipo `permission_prompt` sem pedido pendente marca `main` como `waiting`, para o aviso aparecer mesmo se o PermissionRequest se perder. Sem chamada aberta para descrever o pedido, `waitingFor` fica `{ tool: '', category: 'other', target: null }`, e o painel mostra o texto genérico de aprovação do tema.
 - Agente `waiting` não é encerrado pela regra dos 15 min: aprovar pode demorar.
 - **PermissionRequest repetido** (mesmo agente, mesma chamada e mesmo `inputHash`) é ignorado pelo reducer. Um pedido atrasado de um agente que não pode mais trabalhar (encerrado, ou `main` depois do Stop) também é ignorado.
@@ -320,7 +374,7 @@ Decisão em ADR 0007. Regras operacionais:
     - **sem resumo**, se o texto tem a lista de falhas do node:test (`✖ failing tests:` ou o marcador de corte do encaminhador seguido de itens `test at …`), `failed` é o número de itens visíveis cuja linha seguinte começa com `✖` e não tem `# TODO`, e `passed` e `total` ficam `null`. O framework é `node:test`, e o fato marca `testResult.partial: true`, um campo interno que não vai ao evento canônico;
     - esse `failed` é um **mínimo** e só conta os itens de falha que estão no trecho final de 3 KiB. Com 1 falha, dá `failed: 1` quando o item dela está nesse trecho; sem item de falha visível, o resultado é desconhecido (`failed: null`). Isso acontece quando `todo` ou diferenças longas depois da falha empurram o item para fora do trecho, como numa das saídas reais do `npm test` daqui, em que o trecho final só tem itens `⚠`. Nesse caso o T8 aplica `failed ?? 1`, e 1 bug costuma ser o número certo. Com mais falhas, conta só as visíveis. A legenda do painel diz que bugs são aproximados (ADR 0008; texto corrigido em 20/10/2026).
 
-    O encaminhador não muda. Contagem exata com muitas falhas exigiria que ele preservasse as linhas de resumo do meio, ou aumentasse o trecho final. Isso muda o envelope (seção 1) e a versão da captura, então precisaria de aprovação do usuário. Fica como opção para o G0b avaliar com os tamanhos reais do V14; não é recomendado na v1.
+    O encaminhador não muda. Contagem exata com muitas falhas exigiria que ele preservasse as linhas de resumo do meio, ou aumentasse o trecho final. Isso muda o envelope (seção 1) e a versão da captura, então precisaria de aprovação do usuário. Fora da v1 (decisão 14 do usuário, 26/10/2026).
 - **Teste interrompido pelo usuário** (decidido em 19/10/2026): PostToolUseFailure com `interrupted: true` (o `is_interrupt` do hook, **[T0]** V12) não emite `test.finished` e não muda `bugs`: um Esc não é bug. O feed mostra o `tool.failed` com `interrupted`.
 - **Contagem**, lida do texto do resultado (fim do stdout ou do `error`): node:test (`ℹ fail N`, `# fail N`), Jest (`Tests: N failed, M passed, T total`), Vitest (`Tests  N failed | M passed`), pytest (`N failed, M passed`), PHPUnit (`Failures: N`), Pest (`Tests: N failed, M passed`), go test (quantidade de `--- FAIL:`), Playwright (`N failed`, `N passed (duração)`, cada um numa linha). Sem resumo reconhecido: `failed: null`. Os padrões são testados no texto limpo pelas etapas 1 e 7 da redação (seção 10), sem redigir, porque resumos coloridos são comuns.
 - **Formato do Playwright**, conferido no código-fonte em 19/10/2026 (`packages/playwright/src/reporters/base.ts` e `packages/isomorphic/formatUtils.ts`):
@@ -382,7 +436,7 @@ Regras complementares (revisão do T15, 26/10/2026):
 
 ## 7. Sessões e projetos
 
-- **Chave:** `session_id`. Eventos de subagentes chegam com o `session_id` da sessão principal **[T0]**.
+- **Chave:** `session_id`. Eventos de subagentes chegam com o `session_id` da sessão principal (confirmado no T0, V9: 131 de 131).
 - **Projeto:** `env.projectDir`; se faltar, o `cwd` do primeiro evento. `project.key` é o caminho normalizado (barras `/`, letra de unidade minúscula, sem barra no fim); `project.name` é a última parte do caminho. Sem nenhum dos dois, o projeto fica `{ key: '', name: '', dir: '' }`, porque o contrato não admite `project: null`. O painel mostra o texto de "projeto desconhecido" do tema e agrupa essas sessões juntas (T7, ponto 11).
 - **Rótulo:** `session_title`, senão o título do primeiro ticket (até 48 caracteres), senão `Sessão a1b2c3`.
 - **Status:** `waiting` (aprovação pendente) tem prioridade sobre `active` (algum agente trabalhando ou evento há menos de 2 min), que tem prioridade sobre `idle`. `ended` após SessionEnd.
@@ -422,13 +476,15 @@ Hooks não têm número de sequência, e cada evento vem de um processo próprio
 1. O primeiro evento de um `toolUseId` (Pre, Post ou Failure) gera `tool.started`, porque Post e Failure também trazem `tool_input`. Os seguintes só atualizam.
 2. PreToolUse que chega depois do Post da mesma chamada é ignorado.
 3. Evento de ferramenta com `agent_id` desconhecido cria o agente na hora (papel pelo `agentTypeKey`) e emite `agent.started` (T7, ponto 2). Se o tipo só chegar depois, por exemplo num SubagentStart ou num evento seguinte com `agent_type`, o papel e o `agentType` exibido são atualizados (de `aux` para `tes`, por exemplo) e o `roster` acompanha (T7, ponto 9). O SubagentStart que chegar depois só completa o elo.
-4. Depois do SubagentStop, eventos atrasados do agente atualizam saúde e feed, mas não o devolvem a "trabalhando". O mesmo vale para a sessão principal depois do Stop, até o próximo pedido.
+4. Depois do SubagentStop, eventos atrasados do agente atualizam saúde e feed, mas não o devolvem a "trabalhando". Exceção (G0b): um SubagentStart com `ts` maior que o do encerramento é retomada e devolve o agente (seção 4). O mesmo vale para a sessão principal depois do Stop, até o próximo pedido.
 5. Fato com `promptId` de ticket encerrado não reabre o ticket. Pedido do usuário com `prompt_id` já conhecido não muda nada.
 6. Atividade sem `promptId` com `ts` menor ou igual ao fim do último ticket é atraso: não abre ticket implícito (T8).
 
 **Duplicatas:** o mesmo payload (hash) repetido em até 5 s é descartado. Cobre, por exemplo, o plugin carregado duas vezes. **Exceção: o PermissionRequest não passa pela deduplicação do servidor** (decidido em 19/10/2026). Ele não tem `tool_use_id`, então dois pedidos legítimos e idênticos, como um comando negado e tentado de novo, viravam um só, e o segundo "aguardando" sumia (o cenário da sonda tem isso a 500 ms). As duplicatas verdadeiras são descartadas pelo reducer (seção 6, "PermissionRequest repetido"), porque elas caem na mesma chamada, e a nova tentativa cai numa chamada nova.
 
 **Lacunas:** eventos perdidos (Esc sem Stop, processo encerrado) são compensados pelo próximo pedido, pelo `idle_prompt`, pelo SessionEnd e pela regra de 15 min dos agentes.
+
+**Esc na sessão principal** (V12, G0b). No T0, o Esc deixou a ferramenta do `main` sem Post nem Failure (nenhum `is_interrupt`) e o turno sem Stop. Quando o turno termina sem Stop (pedido seguinte do usuário ou `idle_prompt`, a regra `turnEndedWithoutStop`) e no SessionEnd, as chamadas ainda abertas do `main` são encerradas sem evento: a atividade do `main` deixa de mostrar a ferramenta e a chamada não conta na saúde. Um Post ou Failure que chegue depois cai na regra "chamada já encerrada" e é ignorado. O `tool.failed` com `interrupted: true` continua tratado como antes, se aparecer.
 
 ## 9. Contrato servidor → painel
 
@@ -808,3 +864,26 @@ V1, V9 e V10 liberam o recorte da Primeira luz e a instalação da captura (G0a 
 | V12 | Esc no meio de um turno: quais eventos chegam; SubagentStop de subagente interrompido | ajustar limpeza |
 | V13 | `background_tasks[].id` do Stop igual ao `agent_id` | casar tarefas por `agent_type` |
 | V14 | Frequência de Post chegando antes do Pre e tamanho dos payloads por evento | calibrar corte de strings e regras de ordem |
+
+### Resultado do T0 (G0b, 26/10/2026)
+
+Sessão de teste com o Claude Code 2.1.310, no terminal e no VS Code. Números em `docs/pesquisa/validacao-captura.md`.
+
+| # | Resultado | O que mudou no design |
+|---|---|---|
+| V1 | confirmado (37 de 37) | nada |
+| V2 | o PermissionRequest de subagente traz `agent_id` (9 de 9); o Notification nunca traz (0 de 8) | o Notification fica como reserva no nível da sessão (seção 6, "Aguardando aprovação") |
+| V3 | confirmado (5 de 5, Bash e PowerShell) | nada |
+| V4 | confirmado; não há PermissionDenied na negação manual | nada; o PermissionDenied fica só com cenário sintético |
+| V5 | `agentId` (16 de 16) e `async_launched` confirmados; `run_in_background` ausente; primeiro plano não observado | segundo plano por padrão (seção 5; ADR 0007) |
+| V6 | confirmado; SubagentStart repetido na retomada | a retomada devolve o agente (seções 4 e 8) |
+| V7 | `<task-notification>` no terminal e `<agent-message from>` no VS Code; no VS Code, `<browser_instruction>` vem antes do pedido do usuário | duas marcas de sistema (seção 6); o preâmbulo é removido pelo encaminhador 0.1.3 (seção 1) e ignorado no título (seção 2) |
+| V8 | `prompt_id` presente, mas o do subagente acompanha o pedido atual da sessão principal (6 de 16 mudaram) | a chave do ticket vale só para fatos do `main` (seção 6, "Ticket") |
+| V9 | confirmado (131 de 131) | nada |
+| V10 | confirmado; dois formatos no log; custo de partida no caminho do Claude Code (p95 de 878 ms) | ADR 0001, complemento de 26/10/2026; validação no marco |
+| V11 | `CLAUDE_CODE_ENTRYPOINT` vale `cli` ou `claude-vscode` | o encaminhador 0.1.3 preenche `env.entrypoint` (seção 1) |
+| V12 | Esc sem Stop e sem Post nem Failure (0 `is_interrupt`); o subagente em segundo plano não é interrompido | as chamadas abertas do `main` são encerradas no fim do turno sem Stop (seção 8) |
+| V13 | confirmado (52 de 52) | nada |
+| V14 | Post antes do Pre em 13,3% dos pares; maior payload de 10,6 KB | limites mantidos (decisão 14) |
+
+Também apareceram um StopFailure com `agent_id` de subagente (seção 4) e o tipo de Notification `quota_auto_resume_fired`, que vira `type: null`, como já previsto.

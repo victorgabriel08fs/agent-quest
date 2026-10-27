@@ -2,7 +2,7 @@
 
 > **Status:** aceita em 18/10/2026 (aprovada pelo usuário). **Data da proposta:** 17/10/2026.
 > Decisões do usuário na aprovação: captura em escopo de usuário (ADR 0002); painel mostra comandos, caminhos e títulos já redigidos, com modo discreto opcional (ADR 0006); `@playwright/test` como única devDependency (ADR 0010); barra de contexto opcional no fim da v1 (a decisão 10, de 26/10/2026, a pôs na v1) e custo fora da v1 (ADR 0008). A ordem de construção, com o marco "Primeira luz", está em `docs/plano/v1.md`.
-> **Ambiente de referência:** Windows 11, Node 24.20, Claude Code 2.1.301 (terminal e extensão do VS Code).
+> **Ambiente de referência:** Windows 11, Node 24.20, Claude Code 2.1.301 (terminal e extensão do VS Code); a sessão de teste do T0 rodou na 2.1.310, e o G0b (26/10/2026) revisou o design com ela.
 
 ## Em uma frase
 

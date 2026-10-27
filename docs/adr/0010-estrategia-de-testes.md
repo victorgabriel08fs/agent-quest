@@ -145,3 +145,11 @@ Testes que medem tempo seguem estas regras:
 - se todas as tentativas foram desculpadas, o caso é pulado, e o teste registra as medidas no relatório. Um caso pulado nunca conta como aprovado. O tester confere que, com a máquina em repouso, nenhum caso é pulado.
 
 O tester mostrou que cópias regressivas do encaminhador (sem orçamento de tempo, sem atalho de 8 MiB) reprovam em repouso, então a desculpa não esconde regressão.
+
+## Complemento de 26/10/2026: cenários reais e sintéticos depois do T0
+
+- Os cenários reais de `test/fixtures/hooks/`, gerados pelo `sanitize.mjs` a partir da sessão do T0, substituem os sintéticos nos critérios **[T0]**. Os sintéticos continuam em `test/unit/tools/probe-synthetic.js` para o que a sessão real não mostra:
+  - subagente em primeiro plano, que não é mais o padrão do Claude Code (decisão 15 do usuário);
+  - SubagentStop de subagente interrompido e PostToolUseFailure com `is_interrupt`;
+  - PermissionDenied, que só existe no modo automático.
+- Os pedidos viram marcadores na sanitização. Por isso, o preâmbulo `<browser_instruction>` do VS Code, o título e as marcas de retorno (`<task-notification>`, `<agent-message from="…">`) são testados com vetores sintéticos montados no formato observado. O `report.mjs` ainda reconhece as marcas nos cenários pelas tags que a sanitização mantém. Cada teste diz de qual observação do T0 o vetor veio (`docs/pesquisa/validacao-captura.md`).

@@ -51,3 +51,18 @@ O painel mostra quem fez cada ação. Segundo a documentação dos hooks:
 ## Aprovação
 
 Aprovada pelo usuário em 18/10/2026, sem mudanças na decisão. A confirmação do V1 e do V9 no T0 é condição para o recorte da Primeira luz (G0a em `docs/plano/v1.md`). Se o V1 for refutado, esta ADR é reaberta com o usuário antes do T5.
+
+## Complemento de 26/10/2026: resultado do T0 (V1, V5, V6, V9 e V13)
+
+Revisão do G0b com a sessão de teste do T0 (`docs/pesquisa/validacao-captura.md`). A decisão continua a mesma.
+
+- **V1 e V9 confirmados.**
+  - Os eventos de ferramenta dos subagentes trazem `agent_id` e `agent_type` (37 de 37).
+  - Os subagentes usam o `session_id` da sessão principal (131 de 131).
+  - Os eventos de ferramenta dos subagentes trazem o `transcript_path` da sessão principal. O do subagente vem só no `agent_transcript_path` do SubagentStop, ou é montado como `<pasta>/<sessão>/subagents/agent-<agent_id>.jsonl` (17 de 17).
+- **Segundo plano é o padrão.** Na 2.1.310, as 16 delegações saíram com `status: "async_launched"`. Pela documentação, com o *fork mode* ligado (padrão desde a 2.1.302) o Claude não espera subagente em sessão interativa; o primeiro plano só aparece com `CLAUDE_CODE_FORK_SUBAGENT=0`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, em `claude -p` ou no Agent SDK (https://code.claude.com/docs/en/sub-agents). Consequências:
+  - o PostToolUse do `Agent` chega logo depois do lançamento, então a correção do elo pelo `tool_response.agentId` (16 de 16) acontece em milissegundos. A alternativa rejeitada "elo só pelo PostToolUse" voltaria a ser viável, mas a fila por tipo continua valendo para o primeiro plano;
+  - `run_in_background` não aparece no `tool_input` (0 de 16). O segundo plano é decidido pelo `async_launched` e pelo `background_tasks` do Stop, cujo `id` é o `agent_id` (V13, 52 de 52);
+  - o caminho de primeiro plano continua no código e é coberto só por cenários sintéticos (decisão 15 do usuário).
+- **Retomada (V6).** Um subagente pode receber um novo SubagentStart depois do próprio SubagentStop. Na sessão, isso aconteceu com um subagente que delegou em segundo plano e foi retomado para receber o retorno. Regra nova, sem mudar o contrato: SubagentStart de agente conhecido e encerrado, com `ts` maior que o do encerramento, devolve o agente a "trabalhando" e emite `agent.started` de novo. Um SubagentStart com `ts` anterior é atraso e não muda nada (modelo de eventos, seções 4 e 8).
+- **StopFailure de subagente.** O StopFailure pode trazer `agent_id` (1 de 2, por limite de uso). Ele não mexe no `main` nem no ticket. O subagente continua como está, porque pode ser retomado, e foi o que aconteceu. Se não for retomado, a regra dos 15 min o encerra.

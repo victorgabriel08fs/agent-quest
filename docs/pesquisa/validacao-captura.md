@@ -4,7 +4,7 @@ Resultado da sessão de teste do T0 (`docs/plano/v1.md`), feita pelo usuário em
 
 Este documento traz só contagens, nomes de campos e formatos. Os dados brutos ficam em `%LOCALAPPDATA%\agent-quest\probe\` e nunca entram no repositório.
 
-> **A completar pelo dev-backend (entrega do T0):** o resultado detalhado de V1 a V14, os números do `report.mjs` sobre as fixtures sanitizadas e o que muda no design. A seção abaixo é a do arquiteto (G0a). A seção seguinte é a leitura do arquiteto dos demais itens, que serve de insumo para o G0b.
+> **A completar pelo dev-backend (entrega do T0):** o resultado detalhado de V1 a V14 e os números do `report.mjs` sobre as fixtures sanitizadas. A seção abaixo é a do arquiteto (G0a). A seção seguinte é a leitura do arquiteto dos demais itens. O que mudou no design foi decidido no G0b (26/10/2026) e está no modelo de eventos, seção 11, "Resultado do T0".
 
 ## Volume da sessão
 
@@ -68,7 +68,7 @@ Resumo do arquiteto, sem decisão tomada. As decisões ficam no G0b (`docs/plano
 - **V7 (refutado no relatório):** o retorno do segundo plano dispara UserPromptSubmit em 16 de 17 casos. Três formatos apareceram no início do `prompt`:
   - `<task-notification>` (13, no terminal);
   - `<agent-message from="<agent-id>">` (2, no VS Code). O `from` é o `agent_id` do subagente, e um deles chegou antes do SubagentStop do mesmo agente;
-  - `<browser_instruction>…</browser_instruction>` seguido do pedido do usuário (1, no primeiro pedido da conversa do VS Code). **É pedido do usuário**, com um bloco de cerca de 4,1 mil caracteres injetado pela extensão na frente. Com o corte de 4 096 unidades do encaminhador, o texto do usuário se perde.
+  - `<browser_instruction>…</browser_instruction>` seguido do pedido do usuário (1, no primeiro pedido da conversa do VS Code). **É pedido do usuário**, com um bloco de cerca de 4,1 mil caracteres injetado pela extensão na frente. O corte do encaminhador guarda 1 KiB do início e 3 KiB do fim, então um pedido curto do usuário sobrevive no fim, mas o título sai do bloco. Um pedido do usuário com mais de cerca de 3 mil caracteres perde o começo. *Correção de 26/10/2026: a versão anterior deste item dizia que o texto do usuário sempre se perdia.* Decisão 13: a captura 0.1.3 tira o bloco antes do corte.
 - **V8 (refutado no relatório):** o `prompt_id` está em todos os eventos dos subagentes e é diferente a cada pedido. Mas o subagente em segundo plano recebe o `prompt_id` **atual da sessão principal**, não o do pedido que o delegou: 6 de 16 subagentes mudaram de `prompt_id` no meio. Os valores novos vêm de retornos (`task-notification`, `agent-message`) e de comandos locais sem UserPromptSubmit (`/compact`, `/clear`, saída). Houve 8 `prompt_id` sem UserPromptSubmit.
 - **V11 (confirmado):** `CLAUDE_PROJECT_DIR` em 340 de 340 eventos; `CLAUDE_CODE_ENTRYPOINT` vale `cli` ou `claude-vscode`.
 - **V12:** 3 turnos interrompidos com Esc, todos sem Stop e com a ferramenta sem Post nem Failure (0 `is_interrupt`). Nenhum subagente interrompido: no 10a, o subagente estava em segundo plano e o Esc não o alcança. O limite de uso estourou no meio do 10a e gerou 2 StopFailure `rate_limit`, um da sessão principal e outro **com `agent_id` de subagente**.
