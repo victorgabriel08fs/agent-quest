@@ -17,6 +17,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,11 +26,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { redact } from '../../server/domain/redact.js';
+import { auditFixture } from '../../tools/probe/sanitize.mjs';
 import { buildSyntheticProbe, CONTENT_MARKERS, HOME as FAKE_HOME, SESSION_VSCODE } from '../unit/tools/probe-synthetic.js';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const SANITIZE = path.join(REPO, 'tools', 'probe', 'sanitize.mjs');
 const REPORT = path.join(REPO, 'tools', 'probe', 'report.mjs');
+const FIXTURES_DIR = path.join(REPO, 'test', 'fixtures', 'hooks');
+
+/** Nome e hash de cada arquivo de test/fixtures/hooks, para conferir que os testes não gravam lá. */
+function snapshotFixtures() {
+  return readdirSync(FIXTURES_DIR).sort().map((name) => `${name} ${createHash('sha256').update(readFileSync(path.join(FIXTURES_DIR, name))).digest('hex')}`);
+}
+// Tirada no carregamento do módulo, antes de qualquer teste rodar um CLI.
+const FIXTURES_AT_START = snapshotFixtures();
 
 const REAL_HOME = os.homedir();
 const pathApi = REAL_HOME.includes('\\') ? path.win32 : path.posix;
@@ -613,7 +623,64 @@ describe('mensagens dos CLIs sem a pasta pessoal', () => {
 });
 
 describe('o CLI nunca grava no repositório durante estes testes', () => {
-  it('test/fixtures/hooks continua só com o .gitkeep', () => {
-    assert.deepEqual(readdirSync(path.join(REPO, 'test', 'fixtures', 'hooks')), ['.gitkeep']);
+  // Antes do T0 a guarda era "a pasta continua só com o .gitkeep". Com os
+  // cenários versionados, a mesma proteção vira: nenhum arquivo da pasta foi
+  // criado, apagado ou alterado enquanto este arquivo de testes rodou.
+  it('test/fixtures/hooks tem os mesmos arquivos, com o mesmo conteúdo, do início dos testes', () => {
+    assert.deepEqual(snapshotFixtures(), FIXTURES_AT_START);
   });
+});
+
+describe('cenários versionados em test/fixtures/hooks (repositório público)', () => {
+  // Cenários que o T0 exige (docs/plano/v1.md, critérios de aceite do T0).
+  const REQUIRED = [
+    'basico', 'comando-com-falha', 'comando-com-falha-subagente', 'teste-falha-depois-passa',
+    'aprovacao-principal', 'aprovacao-subagente', 'paralelo-mesmo-tipo', 'segundo-plano', 'aninhado',
+    'agente-do-projeto', 'interrupcao-esc', 'interrupcao-esc-subagente', 'compactacao-e-clear',
+  ];
+  const files = readdirSync(FIXTURES_DIR).filter((name) => name.endsWith('.json')).sort();
+  const load = (name) => JSON.parse(readFileSync(path.join(FIXTURES_DIR, name), 'utf8'));
+  const strings = (value, out = []) => {
+    if (typeof value === 'string') out.push(value);
+    else if (Array.isArray(value)) value.forEach((v) => strings(v, out));
+    else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) { out.push(k); strings(v, out); }
+    return out;
+  };
+  // Nomes do usuário desta máquina (pasta pessoal e conta), calculados na hora.
+  const forbidden = [USER];
+  try { forbidden.push(os.userInfo().username); } catch { /* sem conta: fica só a pasta pessoal */ }
+
+  it('existem os cenários exigidos pelo T0', () => {
+    const names = files.map((name) => name.replace(/\.json$/, ''));
+    assert.deepEqual(REQUIRED.filter((name) => !names.includes(name)), []);
+  });
+
+  for (const name of files) {
+    it(`${name}: passa na conferência do sanitizador (segredo, string longa, nome do usuário)`, () => {
+      // Os ids reais só existem no JSONL bruto, fora do repositório; aqui a
+      // conferência cobre o resto, com o nome do usuário desta máquina.
+      assert.deepEqual(auditFixture(load(name), { forbidden }), []);
+    });
+
+    it(`${name}: formato do ADR 0010 e nenhuma pasta pessoal, e-mail ou lista de variáveis`, () => {
+      const fixture = load(name);
+      assert.deepEqual(Object.keys(fixture), ['name', 'description', 'events']);
+      assert.equal(`${fixture.name}.json`, name);
+      assert.ok(fixture.events.length > 0);
+      fixture.events.forEach((event, i) => {
+        assert.deepEqual(Object.keys(event), ['dt', 'env', 'payload'], `evento ${i}`);
+        assert.ok(Number.isInteger(event.dt) && event.dt >= 0 && (i > 0 || event.dt === 0), `dt do evento ${i}`);
+        assert.deepEqual(Object.keys(event.env), ['projectDir', 'entrypoint'], `env do evento ${i} (sem env.names)`);
+        assert.equal(typeof event.payload.hook_event_name, 'string', `evento ${i}`);
+      });
+      // Independe da máquina: toda pasta pessoal é a do usuário fictício.
+      const homes = new Set();
+      for (const text of strings(fixture)) {
+        for (const m of text.matchAll(/Users[\\/]+([^\\/"\s]+)/gi)) homes.add(m[1]);
+        for (const m of text.matchAll(/[A-Za-z]--Users-([^-\\/]+)-/g)) homes.add(m[1]);
+        assert.doesNotMatch(text, /[\w.%+-]+@[\w-]+(\.[\w-]+)*\.[A-Za-z]{2,}/, 'e-mail');
+      }
+      assert.deepEqual([...homes].filter((user) => user !== 'usuario'), []);
+    });
+  }
 });

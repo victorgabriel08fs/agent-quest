@@ -1,0 +1,220 @@
+{
+  "name": "basico",
+  "description": "SessionStart, lê o CLAUDE.md e roda um comando aprovado; termina com aviso de ociosidade",
+  "events": [
+    {
+      "dt": 0,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "model": "claude-opus-5-5"
+      }
+    },
+    {
+      "dt": 303749,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "«pedido#1:49»"
+      }
+    },
+    {
+      "dt": 3601,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "PowerShell",
+        "tool_input": {
+          "command": "node -e \"console.log(1)\"",
+          "description": "Run a one-line Node script that prints 1"
+        },
+        "tool_use_id": "toolu_014Uo1eVjVfAWo29tMgULHIH"
+      }
+    },
+    {
+      "dt": 861,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "PowerShell",
+        "tool_input": {
+          "command": "node -e \"console.log(1)\"",
+          "description": "Run a one-line Node script that prints 1"
+        },
+        "permission_suggestions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "PowerShell",
+                "ruleContent": "«texto#1:24»"
+              }
+            ],
+            "behavior": "allow",
+            "destination": "localSettings"
+          }
+        ]
+      }
+    },
+    {
+      "dt": 5975,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "hook_event_name": "Notification",
+        "message": "«mensagem#1:28»",
+        "notification_type": "permission_prompt"
+      }
+    },
+    {
+      "dt": 43483,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PostToolUse",
+        "tool_name": "PowerShell",
+        "tool_input": {
+          "command": "node -e \"console.log(1)\"",
+          "description": "Run a one-line Node script that prints 1"
+        },
+        "tool_response": {
+          "stdout": "«1 linha omitida»",
+          "stderr": "",
+          "interrupted": false,
+          "isImage": false
+        },
+        "tool_use_id": "toolu_014Uo1eVjVfAWo29tMgULHIH",
+        "duration_ms": 3658
+      }
+    },
+    {
+      "dt": 257,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PostToolBatch",
+        "tool_calls": [
+          {
+            "tool_name": "PowerShell",
+            "tool_input": {
+              "command": "node -e \"console.log(1)\"",
+              "description": "Run a one-line Node script that prints 1"
+            },
+            "tool_use_id": "toolu_014Uo1eVjVfAWo29tMgULHIH",
+            "tool_response": "«1 linha omitida»"
+          }
+        ]
+      }
+    },
+    {
+      "dt": 4372,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "«texto#2:1076»",
+        "background_tasks": [],
+        "session_crons": []
+      }
+    },
+    {
+      "dt": 59857,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "d6e48a4a-d5ea-4003-99ad-6f1d7878b1d4",
+        "hook_event_name": "Notification",
+        "message": "«mensagem#2:32»",
+        "notification_type": "idle_prompt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+{
+  "name": "compactacao-e-clear",
+  "description": "/compact manual, /clear (nova sessão) e /exit",
+  "events": [
+    {
+      "dt": 0,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "e85a44e0-5055-4fd9-9e37-f14fc657d9e7",
+        "hook_event_name": "PreCompact",
+        "trigger": "manual",
+        "custom_instructions": null
+      }
+    },
+    {
+      "dt": 35501,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "e85a44e0-5055-4fd9-9e37-f14fc657d9e7",
+        "permission_mode": "default",
+        "agent_id": "afbb118d8173185ed",
+        "agent_type": "",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "SubagentStop",
+        "stop_hook_active": false,
+        "agent_transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\subagents\\agent-afbb118d8173185ed.jsonl",
+        "last_assistant_message": "«texto#1:9295»",
+        "background_tasks": [],
+        "session_crons": []
+      }
+    },
+    {
+      "dt": 53,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "e85a44e0-5055-4fd9-9e37-f14fc657d9e7",
+        "hook_event_name": "SessionStart",
+        "source": "compact",
+        "model": "claude-opus-5-5"
+      }
+    },
+    {
+      "dt": 10,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "e85a44e0-5055-4fd9-9e37-f14fc657d9e7",
+        "hook_event_name": "PostCompact",
+        "trigger": "manual",
+        "compact_summary": "«texto#1:9295»"
+      }
+    },
+    {
+      "dt": 22384,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "1dac17ed-bb1f-4e23-b207-f699e5ac3d54",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\1dac17ed-bb1f-4e23-b207-f699e5ac3d54\\scratchpad",
+        "prompt_id": "a43684b3-5d9f-418d-8cc9-d1bcb46e1be1",
+        "hook_event_name": "SessionEnd",
+        "reason": "clear"
+      }
+    },
+    {
+      "dt": 58,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "c1f1f523-5a7a-490b-9eb5-2ab935bf782d",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\c1f1f523-5a7a-490b-9eb5-2ab935bf782d.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\c1f1f523-5a7a-490b-9eb5-2ab935bf782d\\scratchpad",
+        "hook_event_name": "SessionStart",
+        "source": "clear"
+      }
+    },
+    {
+      "dt": 8036,
+      "env": {
+        "projectDir": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "entrypoint": "cli"
+      },
+      "payload": {
+        "session_id": "c1f1f523-5a7a-490b-9eb5-2ab935bf782d",
+        "transcript_path": "C:\\Users\\usuario\\.claude\\projects\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\c1f1f523-5a7a-490b-9eb5-2ab935bf782d.jsonl",
+        "cwd": "C:\\Users\\usuario\\OneDrive\\Documentos\\Code\\agents-quest",
+        "scratchpad_dir": "C:\\Users\\usuario\\AppData\\Local\\Temp\\claude\\C--Users-usuario-OneDrive-Documentos-Code-agents-quest\\c1f1f523-5a7a-490b-9eb5-2ab935bf782d\\scratchpad",
+        "prompt_id": "d65cdc7d-966b-4b41-8999-bac58594ea15",
+        "hook_event_name": "SessionEnd",
+        "reason": "prompt_input_exit"
+      }
+    }
+  ]
+}
