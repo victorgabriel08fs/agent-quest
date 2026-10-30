@@ -49,9 +49,16 @@
   border-color: color-mix(in srgb, var(--agent) 70%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--agent) 22%, transparent), 0 16px 36px -14px color-mix(in srgb, var(--agent) 60%, transparent);
 }
-.room-label { position: absolute; top: 10px; right: 50px; left: 12px; display: flex; align-items: center; gap: 7px; overflow: hidden; font-size: 11.5px; font-weight: 650; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; }
-:root[data-theme="guilda"] .room-label { font-family: var(--title-font); font-size: 13px; letter-spacing: .02em; }
-.ri { display: grid; flex: none; place-items: center; width: 24px; height: 24px; font-size: 13px; border-radius: 8px; background: color-mix(in srgb, var(--agent) 16%, transparent); }
+/* Nome da sala: ícone menor que o do mockup e nome em até duas linhas, para os
+   nomes caberem inteiros a 1280 px (salas de ~150 px); o que ainda não couber
+   é cortado com "…" e tem o nome inteiro no title. A borda direita deixa livre
+   a primeira decoração ou, em sala com "+N" (has-more), o selo. Duas linhas
+   terminam antes da primeira vaga do arranjo rows (top: 38px). */
+.room-label { position: absolute; top: 8px; right: 40px; left: 10px; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 650; line-height: 1.15; color: var(--muted); }
+.room.has-more .room-label { right: 46px; }
+:root[data-theme="guilda"] .room-label { font-family: var(--title-font); font-size: 12.5px; letter-spacing: .01em; line-height: 1.1; }
+.room-name { display: -webkit-box; min-width: 0; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ri { display: grid; flex: none; place-items: center; width: 20px; height: 20px; font-size: 11.5px; border-radius: 7px; background: color-mix(in srgb, var(--agent) 16%, transparent); }
 .deco { position: absolute; right: 12px; font-size: 18px; opacity: .5; pointer-events: none; }
 .deco.d1 { top: 9px; }
 .deco.d2 { bottom: 9px; }
@@ -217,4 +224,6 @@
   .finale-card h3 { font-size: 20px; }
   .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); grid-template-areas: "hq design" "dev test" "idle docs"; gap: 12px; padding: 12px; }
   .loop, .deco { display: none; }
+  /* Sem decorações, o nome usa a largura até o "+N", se houver. */
+  .room-label { right: 10px; }
 }

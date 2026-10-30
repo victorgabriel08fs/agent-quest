@@ -23,6 +23,11 @@ function sessionWith(/** @type {Record<string, any>} */ contexts) {
 }
 
 test.describe('T16 (QA): contexto fora do contrato', () => {
+  // Primeira leva da suíte, com a máquina carregada: o corpo terminou em 18 s,
+  // mas o fechamento do contexto passou dos 30 s padrão. Mesmo prazo dos
+  // outros arquivos pesados.
+  test.describe.configure({ timeout: 90_000 });
+
   test('pct negativo e acima de 100 são limitados; forma inválida some; tokens enormes não quebram o layout', async ({ page, baseURL }) => {
     const watch = await watchPage(page, /** @type {string} */ (baseURL));
     const dialogs = /** @type {string[]} */ ([]);

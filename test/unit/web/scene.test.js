@@ -103,6 +103,14 @@ describe('arranjos no CSS', () => {
       }
     }
   });
+
+  it('o nome da sala vai até duas linhas e o que não couber é cortado com "…"', () => {
+    const rule = SCENE_CSS.match(/\n\.room-name \{([^}]*)\}/)?.[1] ?? '';
+    for (const declaration of ['min-width: 0', 'overflow: hidden', 'text-overflow: ellipsis', '-webkit-line-clamp: 2']) {
+      assert.ok(rule.includes(declaration), declaration);
+    }
+    assert.match(SCENE_CSS, /\.room\.has-more \.room-label \{[^}]*right:/, 'sala com "+N" reserva o canto do selo');
+  });
 });
 
 describe('renderScene', () => {
@@ -111,7 +119,12 @@ describe('renderScene', () => {
       const html = renderScene({ session: null, theme });
       for (const id of ROOM_IDS) {
         assert.match(html, new RegExp(`<div class="room" data-room="${id}"`));
-        assert.ok(html.includes(esc(theme.rooms[id].name)), id);
+        const name = esc(theme.rooms[id].name);
+        // Nome em elemento próprio (o corte com "…" só vale nele), com o nome
+        // inteiro no title; o ícone é decorativo.
+        assert.ok(html.includes(
+          `<div class="room-label"><span class="ri" aria-hidden="true">${esc(theme.rooms[id].icon)}</span><span class="room-name" title="${name}">${name}</span></div>`,
+        ), id);
       }
       assert.ok(!html.includes('class="token'));
       assert.match(html, /role="img" aria-label="Cena: [^"]*sem agentes"/);
@@ -144,6 +157,8 @@ describe('renderScene', () => {
       const dev = html.split('data-room="dev"')[1].split('data-room="idle"')[0];
       assert.equal((dev.match(/class="token /g) ?? []).length, 3);
       assert.match(dev, /<span class="room-more" title="2 agentes a mais nesta sala">\+2<\/span>/);
+      assert.match(html, /<div class="room( active)? has-more" data-room="dev"/, 'sala com "+N" reserva o canto no nome da sala');
+      assert.doesNotMatch(html, /has-more" data-room="design"/, 'sala sem "+N" não reserva o canto');
       assert.ok(!dev.includes('deco d1'), 'o "+N" ocupa o canto da primeira decoração');
       assert.ok(html.split('data-room="design"')[1].split('data-room="dev"')[0].includes('deco d1'), 'sala sem "+N" mantém a decoração');
     });

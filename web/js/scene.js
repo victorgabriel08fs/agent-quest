@@ -209,9 +209,11 @@ function roomHTML(room, theme, h, bugs) {
   const more = room.overflow > 0
     ? `<span class="room-more" title="${room.overflow} ${room.overflow === 1 ? 'agente a mais' : 'agentes a mais'} nesta sala">+${room.overflow}</span>`
     : '';
-  const classes = `room${room.active ? ' active' : ''}${bugs > 0 ? ' alarm' : ''}`;
+  const classes = `room${room.active ? ' active' : ''}${bugs > 0 ? ' alarm' : ''}${more ? ' has-more' : ''}`;
+  // O nome tem elemento próprio: em até duas linhas e, se ainda não couber,
+  // cortado com "…" pelo CSS, com o nome inteiro no title.
   return `<div class="${classes}" data-room="${room.id}"${owner ? ` data-agent="${owner}"` : ''} data-count="${room.tokens.length}" data-layout="${room.layout}">` +
-    `<div class="room-label"><span class="ri">${esc(words.icon)}</span>${esc(words.name)}</div>` +
+    `<div class="room-label"><span class="ri" aria-hidden="true">${esc(words.icon)}</span><span class="room-name" title="${esc(words.name)}">${esc(words.name)}</span></div>` +
     // Com "+N", o selo ocupa o canto da primeira decoração.
     (more ? '' : `<span class="deco d1">${esc(words.deco[0])}</span>`) +
     `<span class="deco d2">${esc(words.deco[1])}</span>` +

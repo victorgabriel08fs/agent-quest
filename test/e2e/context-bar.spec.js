@@ -41,6 +41,12 @@ const WITH_CONTEXT = {
 const inst = (page, key) => page.locator(`#party li.inst[data-key="${key}"]`);
 
 test.describe('T16: barra de contexto com snapshots escritos à mão', () => {
+  // Este arquivo cai na primeira leva da suíte, junto com as rajadas do feed e
+  // do modo discreto. Com a máquina carregada, o primeiro teste (cerca de 25
+  // passos) passou dos 30 s padrão, inclusive o fechamento do contexto, com
+  // todas as conferências certas. Mesmo prazo dos outros arquivos pesados.
+  test.describe.configure({ timeout: 90_000 });
+
   test('com contexto: valor, "≈" e fonte; some com null; tema, modo discreto e legenda', async ({ page, baseURL }) => {
     const watch = await watchPage(page, /** @type {string} */ (baseURL));
     await mockLiveServer(page, [sessionWith(WITH_CONTEXT)]);
