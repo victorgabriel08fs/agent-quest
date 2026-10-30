@@ -15,7 +15,7 @@ A captura é o que leva ao Agent Quest o que acontece no Claude Code. Ela é um 
 | Pausar | `claude plugin disable agent-quest@agent-quest-local` e `/reload-plugins` |
 | Retomar | `claude plugin enable agent-quest@agent-quest-local` e `/reload-plugins` |
 | Remover tudo | `claude plugin marketplace remove agent-quest-local` |
-| Atualizar depois de mudar `capture/` | `npm run capture:deploy` e `/reload-plugins` (ou sessão nova) |
+| Atualizar uma captura já instalada (uma versão nova, como a 0.1.3) | `npm run capture:deploy` e `/reload-plugins` (ou sessão nova), sem reinstalar |
 
 Quem roda esses comandos é sempre você. O `npm run capture:deploy` só copia arquivos e imprime os comandos; ele nunca executa o `claude`. Neste projeto, os agentes do time também não ligam, pausam nem removem a captura por conta própria.
 
@@ -24,7 +24,7 @@ Quem roda esses comandos é sempre você. O `npm run capture:deploy` só copia a
 - Registra 15 hooks no Claude Code: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`, `PreCompact` e `PostCompact` ([ADR 0001](../adr/0001-captura-por-hooks-command-assincronos.md)).
 - Instalada em escopo de usuário, vale em todas as sessões de todos os projetos, no terminal e na extensão do VS Code, inclusive dentro dos subagentes.
 - A cada evento, o Claude Code inicia em segundo plano `node forward.mjs`, o encaminhador. Ele lê o evento, procura o `runtime.json` no diretório de dados para saber se o servidor está no ar, em que porta e com qual token, envia o evento ao servidor e termina.
-- O que vai para o servidor: o JSON que o Claude Code entrega ao hook (que pode conter trechos de código, comandos, saídas e o seu pedido), com toda string acima de 4 KiB cortada em 1 KiB do início e 3 KiB do fim, mais o caminho do projeto (`CLAUDE_PROJECT_DIR`). Cada envio tem no máximo 1 000 000 bytes: eventos enormes chegam resumidos (veja [Eventos enormes chegam resumidos](#eventos-enormes-chegam-resumidos)). A forma exata está na seção 1 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
+- O que vai para o servidor: o JSON que o Claude Code entrega ao hook (que pode conter trechos de código, comandos, saídas e o seu pedido), com toda string acima de 4 KiB cortada em 1 KiB do início e 3 KiB do fim, mais o caminho do projeto (`CLAUDE_PROJECT_DIR`) e se a sessão é do terminal ou do VS Code (`CLAUDE_CODE_ENTRYPOINT`). Nos pedidos feitos na extensão do VS Code, o bloco de instruções que a extensão põe antes do seu texto sai antes do envio (veja [Pedidos feitos no VS Code](#pedidos-feitos-no-vs-code)). Cada envio tem no máximo 1 000 000 bytes: eventos enormes chegam resumidos (veja [Eventos enormes chegam resumidos](#eventos-enormes-chegam-resumidos)). A forma exata está na seção 1 do [modelo de eventos](../arquitetura/modelo-de-eventos.md).
 - O servidor guarda tudo só em memória, sem gravar eventos em disco (a exceção é o `--debug-dump`; veja o [guia do servidor](servidor.md)). Ele transforma cada evento no estado das sessões que o painel mostra ao vivo, sem conteúdo de arquivo, saída de comando nem o pedido completo, e descarta o evento bruto.
 
 ## O que a captura nunca faz
@@ -32,8 +32,17 @@ Quem roda esses comandos é sempre você. O `npm run capture:deploy` só copia a
 - **Não atrasa o Claude Code.** Os hooks são assíncronos: o Claude Code inicia o encaminhador e segue sem esperar. Cada evento custa iniciar um processo `node` (cerca de 60 ms), fora do caminho do agente. O encaminhador tem um prazo de 2 segundos, contado da partida do processo. O envio espera no máximo 1 segundo, ou menos, se o prazo estiver perto do fim. Mesmo com o servidor travado, o encaminhador se encerra sozinho em cerca de 2 segundos. A exceção são eventos patológicos, com centenas de milhares de chaves; veja [Limite conhecido](#limite-conhecido).
 - **Não incomoda quando o servidor está desligado.** Sem `runtime.json`, ou com o `pid` de um servidor que já terminou, o encaminhador sai na hora, sem enviar nada. Não é preciso pausar a captura só porque o servidor está parado.
 - **Não imprime nada.** O encaminhador nunca escreve na saída nem no erro e sempre sai com código 0. Isso importa porque, num hook assíncrono, o que for impresso chega ao modelo no turno seguinte.
-- **Não envia para fora da máquina.** O único destino possível é `127.0.0.1`, na porta lida do `runtime.json`, e só se ela for um número de 1024 a 65535. Das variáveis de ambiente, só vai o `CLAUDE_PROJECT_DIR`.
+- **Não envia para fora da máquina.** O único destino possível é `127.0.0.1`, na porta lida do `runtime.json`, e só se ela for um número de 1024 a 65535. Das variáveis de ambiente, só vão o `CLAUDE_PROJECT_DIR` e o `CLAUDE_CODE_ENTRYPOINT`; esta, só se for um nome curto, de até 64 letras, dígitos, `_`, `.` ou `-` (senão, vai vazia).
 - **Não mexe em configuração.** Nenhuma parte do Agent Quest edita arquivos de configuração do Claude Code. Quando você roda os comandos `claude plugin`, é o próprio Claude Code que grava, no `~/.claude/settings.json`, as chaves que ele mesmo gerencia (`extraKnownMarketplaces` e `enabledPlugins`).
+
+## Pedidos feitos no VS Code
+
+A captura 0.1.3 trouxe duas mudanças para quem usa a extensão do VS Code:
+
+- **O bloco de instruções da extensão sai do pedido.** No primeiro pedido de uma conversa, a extensão põe antes do seu texto um bloco `<browser_instruction>…</browser_instruction>`, com cerca de 4 mil caracteres. O encaminhador tira esse bloco do início do pedido antes de qualquer corte, e o servidor recebe só o que você escreveu. Assim, o título do ticket sai da primeira linha do seu pedido, e um pedido longo não perde o começo no corte de 4 KiB. Nada novo é enviado: o bloco só deixa de ir. Isso vale só para o evento do pedido (`UserPromptSubmit`), só quando o bloco está no começo do texto e só quando o fechamento dele aparece nos primeiros 65 536 caracteres. Fora disso, o pedido segue como veio, com o corte normal.
+- **O servidor sabe se a sessão é do terminal ou do VS Code.** O encaminhador manda o valor de `CLAUDE_CODE_ENTRYPOINT` (`cli` no terminal, `claude-vscode` na extensão) no campo `env.entrypoint`. O servidor guarda na sessão `terminal` ou `vscode` (o campo `client` do estado, que aparece no `/api/state`). Outro valor, ou nenhum, fica vazio. A interface do painel ainda não mostra esse campo.
+
+Com uma captura anterior à 0.1.3, o servidor também ignora o bloco ao montar o título, mas um pedido longo pode chegar sem o começo, e o título do ticket se perde. Para resolver, [atualize a captura](#atualizar-a-captura).
 
 ## Eventos enormes chegam resumidos
 
@@ -56,7 +65,7 @@ O resumo não pode estourar o prazo de 2 segundos do encaminhador. Por isso, ele
 - **O passo 1 nunca é interrompido pelo tempo.** Um evento que cabe depois dele chega sempre completo, mesmo com a máquina lenta.
 - **Os passos 2 e 3 têm até 1 segundo**, contado do início do resumo, depois de o evento ser lido. Esse orçamento termina, no máximo, 1,75 segundo depois da partida do encaminhador, para sobrar tempo para o envio.
 - **Se o tempo acabar**, o encaminhador desiste do resumo e envia um envelope de emergência: só os campos das duas primeiras listas do passo 3, também com `truncated: true`.
-- **Eventos acima de 8 MiB** vão direto para o envelope de emergência, sem passar pelos três passos. Custo aceito: esses eventos chegam sem o resultado da ferramenta (`tool_response`). Um comando de teste com saída gigante, por exemplo, chega sem o resultado do teste. O limite de 8 MiB é provisório.
+- **Eventos acima de 8 MiB** vão direto para o envelope de emergência, sem passar pelos três passos. Custo aceito: esses eventos chegam sem o resultado da ferramenta (`tool_response`). Um comando de teste com saída gigante, por exemplo, chega sem o resultado do teste.
 - **Eventos acima de 16 MiB** não são enviados.
 
 Nada disso atrasa o Claude Code: o resumo acontece no encaminhador, que roda em segundo plano.
@@ -65,7 +74,7 @@ Nada disso atrasa o Claude Code: o resumo acontece no encaminhador, que roda em 
 
 Em eventos patológicos, com centenas de milhares de chaves, o encaminhador ainda pode passar dos 2 segundos. Duas etapas não podem ser interrompidas: a leitura do JSON do evento e a listagem das chaves de um objeto. Com a máquina calma, isso só acontece perto de 16 MiB; com a máquina carregada, também abaixo de 8 MiB. Nesse caso, o evento se perde em silêncio, e o Claude Code não é afetado.
 
-Os limites provisórios (o corte de 4 KiB, o teto de 1 000 000 bytes e o atalho de 8 MiB) vão ser revistos com os tamanhos reais de evento medidos na sessão de teste do T0 (revisão G0b do [plano da v1](../plano/v1.md)). Os detalhes e as medidas estão na seção 1 do [modelo de eventos](../arquitetura/modelo-de-eventos.md), em "Teto do corpo" e "Orçamento de tempo da redução".
+Os limites (o corte de 4 KiB, o teto de 1 000 000 bytes e o atalho de 8 MiB) foram revistos com os tamanhos reais medidos na sessão de teste do T0 e mantidos: o maior evento real teve 10,6 KB (revisão G0b do [plano da v1](../plano/v1.md) e [ADR 0001](../adr/0001-captura-por-hooks-command-assincronos.md)). Os detalhes e as medidas estão na seção 1 do [modelo de eventos](../arquitetura/modelo-de-eventos.md), em "Teto do corpo" e "Orçamento de tempo da redução".
 
 ## Antes de começar
 
@@ -87,6 +96,7 @@ O script confere a captura em `capture/` (os JSON e os 15 hooks), copia tudo par
 ```text
 Captura copiada para C:\Users\<usuario>\AppData\Local\agent-quest\marketplace
   4 arquivo(s) gravado(s), 0 sem mudança, 0 removido(s).
+  Versão da captura: 0.1.3
 
 Teste curto, sem instalar (vale só nesta sessão):
   claude --plugin-dir "C:\Users\<usuario>\AppData\Local\agent-quest\marketplace\plugins\agent-quest" --debug-file "C:\Users\<usuario>\AppData\Local\agent-quest\smoke-debug.txt"
@@ -107,7 +117,8 @@ Remover: claude plugin marketplace remove agent-quest-local
 Este script não executa o claude: os comandos acima são para você rodar.
 ```
 
-- **Pode rodar de novo quantas vezes quiser.** O resultado é sempre o mesmo, e arquivos iguais nem são regravados (na segunda vez, a linha de contagem mostra `0 arquivo(s) gravado(s), 4 sem mudança`).
+- **A linha `Versão da captura:`** mostra a versão que acabou de ser copiada, lida do `plugin.json` da cópia. Se não der para ler, ela mostra `desconhecida`.
+- **Pode rodar de novo quantas vezes quiser.** O resultado é sempre o mesmo, e arquivos iguais nem são regravados (na segunda vez, a linha de contagem mostra `0 arquivo(s) gravado(s), 4 sem mudança`). Numa atualização, só os arquivos que mudaram são gravados.
 - **Pode rodar com sessões do Claude Code abertas.** Cada arquivo é gravado num temporário e renomeado por cima do anterior, e só depois são removidos os arquivos que não existem mais em `capture/`. Assim, um encaminhador que esteja começando naquele instante nunca encontra um arquivo pela metade.
 - **Se a captura em `capture/` tiver algum problema**, nada é copiado: o script mostra "A captura em capture/ tem problemas; nada foi copiado:" com a lista e sai com código 1.
 - **Se um arquivo da cópia estiver em uso** (um encaminhador começando, o antivírus ou o indexador do Windows), o script tenta de novo por cerca de 2 segundos antes de desistir.
@@ -212,20 +223,26 @@ Na primeira vez que você abre o Claude Code numa pasta, ele pergunta se você c
 
 ## Atualizar a captura
 
-Quando o código em `capture/` muda (uma versão nova do encaminhador, por exemplo):
+Quando o código em `capture/` muda (uma versão nova do encaminhador, como a 0.1.3, por exemplo) e a captura já está instalada:
 
-1. Rode `npm run capture:deploy` de novo. Pode ser com sessões abertas.
+1. Rode `npm run capture:deploy` de novo. Pode ser com sessões abertas. Confira a linha `Versão da captura:` na saída.
 2. Nas sessões abertas, rode `/reload-plugins`, ou abra uma sessão nova. A versão nova vale a partir daí.
 
-Não é preciso instalar de novo: o Claude Code já carrega o plugin da pasta que o deploy atualiza. Mudar só o servidor (porta, reinício, `npm run dev`) não exige nada na captura, porque o encaminhador lê o `runtime.json` a cada evento.
+Não é preciso instalar de novo, nem remover antes: o Claude Code já carrega o plugin da pasta que o deploy atualiza, então os comandos `claude plugin marketplace add` e `claude plugin install` ficam como estão. Mudar só o servidor (porta, reinício, `npm run dev`) não exige nada na captura, porque o encaminhador lê o `runtime.json` a cada evento.
 
 Neste projeto, o deploy da versão nova no diretório de dados real é feito por você, quando o orquestrador avisar que há uma versão aprovada pelo tester.
 
 ### Versão da captura
 
-A captura tem versão própria, separada da do servidor. A versão atual é a 0.1.2, e toda mudança de comportamento em `capture/` sobe a versão. Ela aparece no `plugin.json`, no `marketplace.json` e no campo `forwarder` de cada evento enviado, o que ajuda a saber qual encaminhador mandou cada evento num `--debug-dump`.
+A captura tem versão própria, separada da do servidor. A versão atual é a 0.1.3, e toda mudança de comportamento em `capture/` sobe a versão. Ela aparece no `plugin.json`, no `marketplace.json`, no campo `forwarder` de cada evento enviado (o que ajuda a saber qual encaminhador mandou cada evento num `--debug-dump`) e na linha `Versão da captura:` do `npm run capture:deploy`.
 
-Para ver qual versão está na pasta que o Claude Code carrega:
+| Versão | O que mudou |
+|---|---|
+| 0.1.3 | Tira o bloco `<browser_instruction>` da extensão do VS Code do início do pedido e manda se a sessão é do terminal ou do VS Code (veja [Pedidos feitos no VS Code](#pedidos-feitos-no-vs-code)). |
+| 0.1.2 | Orçamento de tempo no resumo de eventos enormes (veja [Orçamento de tempo](#orçamento-de-tempo)). |
+| 0.1.1 | Teto de 1 000 000 bytes por envio (veja [Eventos enormes chegam resumidos](#eventos-enormes-chegam-resumidos)). |
+
+Para ver qual versão está na pasta que o Claude Code carrega, sem copiar nada:
 
 ```powershell
 (Get-Content -Raw "$env:LOCALAPPDATA\agent-quest\marketplace\plugins\agent-quest\.claude-plugin\plugin.json" | ConvertFrom-Json).version
@@ -288,8 +305,8 @@ No modo não interativo (`claude -p`), o Claude Code encerra os hooks assíncron
 
 - [Primeira luz: ligar o painel e a captura](primeira-luz.md): o roteiro completo, do servidor ao painel.
 - [Iniciar e parar o servidor](servidor.md): porta, diretório de dados, `runtime.json` e `/api/health`.
-- [ADR 0001](../adr/0001-captura-por-hooks-command-assincronos.md): por que hooks `command` assíncronos e quais eventos, com os complementos sobre o teto do corpo e o prazo de 2 s na prática.
+- [ADR 0001](../adr/0001-captura-por-hooks-command-assincronos.md): por que hooks `command` assíncronos e quais eventos, com os complementos sobre o teto do corpo, o prazo de 2 s na prática e o preâmbulo do VS Code.
 - [ADR 0002](../adr/0002-captura-instalada-como-plugin-local.md): por que um plugin de marketplace local, as fontes da documentação do Claude Code e a política de versão da captura.
 - [ADR 0005](../adr/0005-estado-em-memoria.md): diretório de dados e o complemento sobre `AGENT_QUEST_HOME`.
-- [Modelo de eventos](../arquitetura/modelo-de-eventos.md), seção 1: o envelope que o encaminhador envia, o teto do corpo e o orçamento de tempo da redução.
+- [Modelo de eventos](../arquitetura/modelo-de-eventos.md), seção 1: o envelope que o encaminhador envia, o `env.entrypoint`, o preâmbulo do cliente, o teto do corpo e o orçamento de tempo da redução.
 - [Plano da v1](../plano/v1.md): tarefa T4 e o roteiro do marco "Primeira luz".

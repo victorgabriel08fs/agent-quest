@@ -14,13 +14,14 @@ A "Primeira luz" é o primeiro momento em que o painel do Agent Quest mostra eve
 | Passo | Onde | Comando |
 |---|---|---|
 | 1. Iniciar o servidor | terminal que fica aberto | `npm start` (ou `npm run dev`) |
-| 2. Copiar a captura | outro terminal | `npm run capture:deploy` |
+| 2. Copiar a captura | outro terminal | `npm run capture:deploy` (confira `Versão da captura: 0.1.3`) |
 | 3. Testar sem instalar | terminal | `claude --plugin-dir "<pasta do plugin>" --debug-file "<arquivo de log>"` (o deploy imprime o comando pronto) |
 | 4. Instalar (uma vez) | terminal, fora do Claude Code | `claude plugin marketplace add "<pasta do marketplace>"` e `claude plugin install agent-quest@agent-quest-local` |
 | 5. Ligar nas sessões abertas | dentro de cada sessão | `/reload-plugins` |
 | 6. Abrir o painel | navegador | `http://127.0.0.1:47821/` |
 | Pausar | terminal | `claude plugin disable agent-quest@agent-quest-local` e `/reload-plugins` |
 | Remover tudo | terminal | `claude plugin marketplace remove agent-quest-local` |
+| Atualizar a captura já instalada | terminal e cada sessão | `npm run capture:deploy` e `/reload-plugins` (ou sessão nova), sem reinstalar |
 | Parar o servidor | janela do servidor | Ctrl+C |
 
 ## Antes de começar
@@ -61,7 +62,15 @@ Em outro terminal:
 npm run capture:deploy
 ```
 
-O script confere a captura em `capture/`, copia o plugin para `%LOCALAPPDATA%\agent-quest\marketplace\`, fora do OneDrive, e imprime os comandos dos passos 3 a 5 com o caminho completo. Pode rodar com sessões do Claude Code abertas. A saída completa e o que fazer se algo falhar estão em [Copiar a captura](captura.md#1-copiar-a-captura-npm-run-capturedeploy).
+O script confere a captura em `capture/`, copia o plugin para `%LOCALAPPDATA%\agent-quest\marketplace\`, fora do OneDrive, e imprime os comandos dos passos 3 a 5 com o caminho completo. Pode rodar com sessões do Claude Code abertas. A saída começa assim:
+
+```text
+Captura copiada para C:\Users\<usuario>\AppData\Local\agent-quest\marketplace
+  4 arquivo(s) gravado(s), 0 sem mudança, 0 removido(s).
+  Versão da captura: 0.1.3
+```
+
+Confira a linha `Versão da captura:`: a Primeira luz é feita com a 0.1.3. Essa versão tira do pedido o bloco de instruções que a extensão do VS Code põe antes do seu texto, para o título do ticket sair do que você escreveu, e manda se a sessão é do terminal ou do VS Code ([Pedidos feitos no VS Code](captura.md#pedidos-feitos-no-vs-code)). A saída completa e o que fazer se algo falhar estão em [Copiar a captura](captura.md#1-copiar-a-captura-npm-run-capturedeploy).
 
 ## 3. Testar sem instalar (2 a 3 minutos)
 
@@ -133,7 +142,7 @@ Abra `http://127.0.0.1:47821/` no navegador (o projeto é testado no Microsoft E
 
 ### O que você vê
 
-- **Ticket:** cada pedido seu vira um ticket, com título, situação e as etapas do time (Arquitetura, Desenvolvimento, QA e Documentação). Quando ele é entregue, aparece o cartão final com o resumo.
+- **Ticket:** cada pedido seu vira um ticket, com título, situação e as etapas do time (Arquitetura, Desenvolvimento, QA e Documentação). Quando ele é entregue, aparece o cartão final com o resumo. O retorno de um subagente em segundo plano, que o Claude Code entrega como se fosse um pedido, não vira ticket novo ([Retornos de tarefas em segundo plano](painel.md#retornos-de-tarefas-em-segundo-plano)).
 - **Equipe:** o orquestrador e cada subagente que ele chamar, com o papel, a descrição da delegação, o status (trabalhando, aguardando sua aprovação, parado ou encerrado na copa) e a ação atual, como "Editando `server/http/app.js`" ou "Rodando os testes". Dois subagentes em paralelo aparecem como duas instâncias. Cada instância tem a barra de saúde e a barra de contexto (Foco ou Mana), que mostra ≈ o contexto que ainda cabe na janela do agente: começa cheia, esvazia com a conversa e volta a encher depois de uma compactação.
 - **Atividade:** pedidos, delegações, ferramentas, falhas, resultados de testes, aprovações e compactação, em ordem, com comandos e caminhos já redigidos e relativos ao projeto, e filtros por papel ou por agente.
 - **Cena:** um token por agente na sala do seu papel, com a ida à copa, o envelope da delegação, o tranco das falhas, o selo "!" de aprovação e os bugs abertos pelos testes na sala de testes.
@@ -186,7 +195,7 @@ Na janela do servidor, aperte **Ctrl+C**. O terminal mostra `Encerrando o Agent 
 
 - **Código do servidor (`server/`):** com `npm start`, pare e inicie de novo; com `npm run dev`, o reinício é automático. O painel reconecta sozinho, e o estado recomeça vazio e se preenche com os próximos eventos.
 - **Código do painel (`web/`):** F5 no navegador.
-- **Código da captura (`capture/`):** só chega às sessões depois de `npm run capture:deploy` e de `/reload-plugins` (ou de uma sessão nova). Como isso troca o código que roda nos hooks de todas as sessões, quem roda é você, quando o orquestrador avisar que há uma versão nova aprovada pelo tester.
+- **Código da captura (`capture/`):** só chega às sessões depois de `npm run capture:deploy` e de `/reload-plugins` (ou de uma sessão nova). Não é preciso instalar de novo: o Claude Code carrega o plugin da pasta que o deploy atualiza. A linha `Versão da captura:` do deploy mostra a versão copiada. Como isso troca o código que roda nos hooks de todas as sessões, quem roda é você, quando o orquestrador avisar que há uma versão nova aprovada pelo tester ([Atualizar a captura](captura.md#atualizar-a-captura)).
 - **Painel quebrado não atrapalha os agentes:** a captura continua saindo em silêncio, com ou sem servidor.
 
 ## Por que não definir `AGENT_QUEST_HOME`

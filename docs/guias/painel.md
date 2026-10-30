@@ -156,6 +156,16 @@ Como um ticket termina:
 - **Antes do primeiro pedido da sessão,** o cartão mostra "Sem ticket no momento" (ou "Nenhuma quest no quadro").
 - **Cartão final:** quando um ticket é entregue, aparece por alguns segundos sobre a cena um cartão com o resumo (ações, agentes e duração), como "Ticket entregue!" no Escritório ou "Quest concluída!" na Guilda.
 
+#### Retornos de tarefas em segundo plano
+
+Quando um subagente em segundo plano termina, o Claude Code entrega o resultado à sessão principal como se fosse um pedido novo. O servidor reconhece esses retornos pela marca no começo do texto: `<task-notification>` no terminal e `<agent-message>` na extensão do VS Code. Um retorno não é um pedido seu, então não abre ticket novo nem encerra o atual como interrompido:
+
+- com um ticket em andamento, o retorno conta nele;
+- senão, reabre o ticket que estava aguardando a tarefa em segundo plano, ou o último ticket, se ele terminou há menos de 30 minutos;
+- senão, abre o ticket implícito "Retorno de tarefa em segundo plano".
+
+O bloco `<browser_instruction>` que a extensão do VS Code põe antes do primeiro pedido de uma conversa não é retorno: o pedido continua sendo seu, e o título do ticket sai do texto depois do bloco ([Pedidos feitos no VS Code](captura.md#pedidos-feitos-no-vs-code)).
+
 ### Aguardando aprovação
 
 Quando o Claude Code pede a sua aprovação para uma ação, o agente que pediu fica "✋ Aguardando sua aprovação", com a ação em espera. A sessão também fica aguardando, e o indicador de aprovações pendentes do topo sobe e pisca.
@@ -188,6 +198,7 @@ Abaixo do ticket, a cena mostra as seis salas do tema, com um token para cada ag
 | Documentação | Wiki | Biblioteca | Documentador |
 | Testes | Lab de QA | Arena | Tester |
 
+- O nome de cada sala aparece no canto de cima, em até duas linhas, para caber inteiro na tela de 1280 px. Se ainda assim um nome não couber, ele termina em "…"; passe o mouse sobre ele para ver o nome inteiro.
 - Cada agente fica na sala do seu papel e, quando termina, vai para a copa (taverna). A sessão principal não sai da sala dela, mesmo parada.
 - Cabem até 3 tokens por sala; além disso, aparece "+N".
 - Quem está trabalhando ou aguardando aprovação mostra um balão com a ação atual. A sala fica em destaque enquanto alguém trabalha nela.
