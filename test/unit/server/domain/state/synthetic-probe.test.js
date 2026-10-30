@@ -2,10 +2,10 @@
 // (test/unit/tools/probe-synthetic.js), no formato de cenário do ADR 0010.
 // Os payloads seguem a documentação dos hooks; não são capturas reais.
 //
-// Quando as fixtures do T0 chegarem a test/fixtures/hooks/, a primeira parte
-// (forma, atribuição, elos e nenhum conteúdo real) roda sobre cada uma delas
-// (loadFixtureScenarios) sem mudança; a segunda parte, com os ids da sessão
-// sintética, é refeita com o que as fixtures mostrarem.
+// A primeira parte (forma, atribuição e elos) roda também sobre os cenários
+// reais do T0 (bloco "[T0]" no fim). Os critérios [T0] do T7 com os cenários
+// reais estão em fixtures.test.js; esta sessão continua, marcada como
+// sintética, para o que o T0 não mostrou (primeiro plano, is_interrupt).
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -101,8 +101,8 @@ describe('SINTÉTICO: reducer sobre a sessão da sonda', () => {
 describe('[T0] cenários reais (test/fixtures/hooks/)', () => {
   const fixtures = loadFixtureScenarios();
 
-  it('forma, atribuição pelo agent_id e elos em cada cenário', (t) => {
-    if (fixtures.length === 0) return t.skip('nenhum cenário em test/fixtures/hooks/ ainda: chegam com o T0');
+  it('forma, atribuição pelo agent_id e elos em cada cenário', () => {
+    assert.equal(fixtures.length, 16);
     for (const { file, scenario } of fixtures) {
       const result = run(scenario, { homeDir: FIXTURE_HOME });
       assertRunShape(result);

@@ -2,10 +2,11 @@
 // (test/unit/tools/probe-synthetic.js), convertida para o formato de cenário do
 // ADR 0010. Os payloads seguem a documentação dos hooks; não são capturas reais.
 //
-// O T5 só fecha com o critério "fato igual ao esperado para cada evento das
-// fixtures do T0" (plano, T5, condição 5). Quando os cenários reais chegarem a
-// test/fixtures/hooks/, esta tabela é refeita sobre eles (loadFixtureScenarios),
-// com os ajustes que mostrarem.
+// A tabela com os cenários reais do T0 ("fato igual ao esperado para cada
+// evento", fechamento [T0] do T5) está em normalize-fixtures.test.js. Esta
+// continua, marcada como sintética (ADR 0010, complemento de 26/10/2026),
+// porque cobre também o que o T0 não mostrou: primeiro plano (`completed`),
+// `is_interrupt`, `run_in_background` e PermissionDenied.
 
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
